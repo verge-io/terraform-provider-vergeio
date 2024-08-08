@@ -43,7 +43,6 @@ func Provider() *schema.Provider {
 			"vergeio_mediasources": dataSourceMediaSources(),
 			"vergeio_nodes":        dataSourceNodes(),
 			"vergeio_networks":     dataSourceNetworks(),
-			"vergeio_authsources":  dataSourceAuthSources(),
 			"vergeio_groups":       dataSourceGroups(),
 		},
 	}
