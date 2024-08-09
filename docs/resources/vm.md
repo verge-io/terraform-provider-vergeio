@@ -7,7 +7,7 @@ description: |-
 ---
 
 # vergeio_vm (Resource)
-Create and manage Virtual Machies
+Create and manage Virtual Machines
 # Example Input
 ```
 resource "vergeio_vm" "example_vm" {
