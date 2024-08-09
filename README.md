@@ -25,7 +25,7 @@ provider "vergeio" {
 - vergeio_network
 - vergeio_nic
 - vergeio_user
-- verge_vm
+- vergeio_vm
 
 ## Data Sources
 - vergeio_clusters
