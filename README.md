@@ -36,7 +36,7 @@ provider "vergeio" {
 - vergeio_version
 
 ## Building Provider From Source
-Run the following to build and install the provider
+Run the following to build and install the provider.
 
 ```
 - go build -o terraform-provider-vergeio
