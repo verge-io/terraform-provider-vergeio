@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package objchange
 
 import (
@@ -8,7 +11,7 @@ import (
 
 // NormalizeObjectFromLegacySDK takes an object that may have been generated
 // by the legacy Terraform SDK (i.e. returned from a provider with the
-// LegacyTypeSystem opt-out set) and does its best to normalize it for the
+// UnsafeToUseLegacyTypeSystem opt-out set) and does its best to normalize it for the
 // assumptions we would normally enforce if the provider had not opted out.
 //
 // In particular, this function guarantees that a value representing a nested
