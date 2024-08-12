@@ -29,6 +29,7 @@ provider "vergeio" {
 	host = "https://some_url_or_ip"
 	username = "my_user"
 	password = "my_password"
+	insecure = false 
 }
 ```
 
@@ -40,3 +41,4 @@ provider "vergeio" {
 - `host` - (String, **Required**)
 - `password` (String, Sensitive, **Required**)
 - `username` (String, **Required**)
+- `insecure` (Boolean, **Optional**)
