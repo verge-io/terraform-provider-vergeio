@@ -1,8 +1,6 @@
 package vergeio
 
 import (
-	"net/http"
-
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 )
 
@@ -28,13 +26,19 @@ func Provider() *schema.Provider {
 				Sensitive:   true,
 				DefaultFunc: schema.EnvDefaultFunc("VERGEIO_PASSWORD", nil),
 			},
+			"insecure": {
+				Type:        schema.TypeBool,
+				Optional:    true,
+				Default:     false,
+				Description: "Disable SSL certificate verification",
+			},
 		},
 		ResourcesMap: map[string]*schema.Resource{
-			"vergeio_vm":     resourceVM(),
-			"vergeio_drive":  resourceDrive(),
-			"vergeio_nic":    resourceNIC(),
-			"vergeio_user":   resourceUser(),
-			"vergeio_member": resourceMember(),
+			"vergeio_vm":      resourceVM(),
+			"vergeio_drive":   resourceDrive(),
+			"vergeio_nic":     resourceNIC(),
+			"vergeio_user":    resourceUser(),
+			"vergeio_member":  resourceMember(),
 			"vergeio_network": resourceNetwork(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{
@@ -49,16 +53,11 @@ func Provider() *schema.Provider {
 }
 
 func providerConfigure(d *schema.ResourceData) (interface{}, error) {
-	client := &Client{HTTPClient: &http.Client{}}
-
-	if d.Get("username") != nil {
-		client.Username = d.Get("username").(string)
+	client := Client{
+		Username: d.Get("username").(string),
+		Password: d.Get("password").(string),
+		Host:     d.Get("host").(string),
+		Insecure: d.Get("insecure").(bool),
 	}
-	if d.Get("password") != nil {
-		client.Password = d.Get("password").(string)
-	}
-	if d.Get("host") != nil {
-		client.Host = d.Get("host").(string)
-	}
-	return client, nil
+	return &client, nil
 }
