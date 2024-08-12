@@ -13,6 +13,8 @@ dist/
 pkg/
 terraform-provider-vergeio
 .vscode
+db.json
+test/
 
 # Test binary, build with `go test -c`
 *.test

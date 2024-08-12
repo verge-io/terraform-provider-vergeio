@@ -41,4 +41,4 @@ provider "vergeio" {
 - `host` - (String, **Required**)
 - `password` (String, Sensitive, **Required**)
 - `username` (String, **Required**)
-- `insecure` (Boolean, **Optional**)
+- `insecure` (Boolean, **Optional**) - Required for systems with self-signed SSL certificates
