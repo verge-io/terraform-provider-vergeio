@@ -2,6 +2,7 @@ package vergeio
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,12 +42,12 @@ type Client struct {
 	Username   string
 	Password   string
 	Host       string
+	Insecure   bool
 	HTTPClient *http.Client
 }
 
 // Do Will just call the Verge.IO api but also add auth to it and some extra headers
 func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, params *Options) (*http.Response, error) {
-
 	absoluteendpoint := c.Host + "/" + endpoint
 	log.Printf("[DEBUG] Sending %s request to %s", method, absoluteendpoint)
 
@@ -90,6 +91,15 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 		req.Header.Add("Content-Type", "application/json")
 	}
 	req.Close = true
+
+	// Create a custom HTTP client with the insecure option if needed
+	if c.HTTPClient == nil {
+		tr := &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: c.Insecure},
+		}
+		c.HTTPClient = &http.Client{Transport: tr}
+	}
+
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
