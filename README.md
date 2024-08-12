@@ -12,11 +12,13 @@ See the docs folder for examples
 - **host** - (**Required**) URL or IP address for the system or tenant.
 - **username** - (**Required**) Username for the system or tenant. 
 - **password** - (**Required**) Password for the provided username.
+- **insecure** (**Optional**) Required for systems with self-signed SSL certificates
 ```
 provider "vergeio" {
 	host = "https://some_url_or_ip"
 	username = "my_user"
 	password = "my_password"
+	insecure = false
 }
 ```
 ## Resources
