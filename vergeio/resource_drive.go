@@ -27,7 +27,7 @@ type Drive struct {
 	MediaSource         int    `json:"media_source,omitempty"`
 	DiskSize            int    `json:"disksize,omitempty"`
 	PreferredTier       string `json:"preferred_tier,omitempty"`
-	Enabled             bool   `json:"enabled`
+	Enabled             bool   `json:"enabled"`
 	ReadOnly            bool   `json:"readonly"`
 	Serial              string `json:"serial,omitempty"`
 	Asset               string `json:"asset,omitempty"`
@@ -55,7 +55,7 @@ func newDriveFromResource(d *schema.ResourceData) *Drive {
 		drive.MediaSource = d.Get("media_source").(int)
 	}
 	if d.HasChange("disksize") {
-		drive.DiskSize = d.Get("disksize").(int)
+		drive.DiskSize = d.Get("disksize").(int) * 1024 * 1024 * 1024 // Convert GB to bytes
 	}
 	if d.HasChange("preferred_tier") {
 		drive.PreferredTier = d.Get("preferred_tier").(string)
@@ -134,9 +134,10 @@ func resourceDrive() *schema.Resource {
 				Computed: true,
 			},
 			"disksize": {
-				Type:     schema.TypeInt,
-				Optional: true,
-				Computed: true,
+				Type:        schema.TypeInt,
+				Optional:    true,
+				Computed:    true,
+				Description: "Size of the disk in Gigabytes (GB)",
 			},
 			"preferred_tier": {
 				Type: schema.TypeString,
@@ -180,7 +181,6 @@ func resourceDrive() *schema.Resource {
 }
 
 func resourceDriveUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-
 	client := m.(*Client)
 	resource := newDriveFromResource(d)
 	bytedata, err := json.Marshal(resource)
@@ -254,7 +254,6 @@ func resourceDriveRead(ctx context.Context, d *schema.ResourceData, m interface{
 	var drive Drive
 	if request != nil {
 		if request.StatusCode == 200 {
-
 			body, readerr := ioutil.ReadAll(request.Body)
 			if readerr != nil {
 				return diag.FromErr(readerr)
@@ -265,7 +264,6 @@ func resourceDriveRead(ctx context.Context, d *schema.ResourceData, m interface{
 				return diag.FromErr(decodeerr)
 			}
 			log.Printf("[DEBUG] params %#v", drive)
-
 		}
 	} else {
 		return diag.Errorf("Error retrieving drive data")
@@ -277,7 +275,7 @@ func resourceDriveRead(ctx context.Context, d *schema.ResourceData, m interface{
 	d.Set("interface", drive.Interface)
 	d.Set("media", drive.Media)
 	d.Set("media_source", drive.MediaSource)
-	d.Set("disksize", drive.DiskSize)
+	d.Set("disksize", drive.DiskSize / (1024 * 1024 * 1024)) // Convert bytes to GB
 	d.Set("preferred_tier", drive.PreferredTier)
 	d.Set("enabled", drive.Enabled)
 	d.Set("readonly", drive.ReadOnly)

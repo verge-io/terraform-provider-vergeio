@@ -17,7 +17,7 @@ resource "vergeio_drive" "new_drive" {
 	machine = 67
 	name = "OS disk"
 	description = "OS disk"
-	disksize = 10737418240
+	disksize = 100
 	interface = "virtio-scsi"
 	preferred_tier = 3
 }
@@ -76,7 +76,7 @@ resource "vergeio_drive" "efi_drive" {
 
 - `asset` (String)
 - `description` (String)
-- `disksize` (Number) - Formatted in 1024 based bytes. EX: 10737418240 bytes = 10GB
+- `disksize` (Number) - Formatted in 1024 based GB. Ex: 1024GB = 1TB
 - `enabled` (Boolean) - Default = True
 - `interface` (String)
 	- `virtio`                (Virtio Legacy)
@@ -86,7 +86,7 @@ resource "vergeio_drive" "efi_drive" {
 	- `megasas`               (LSI MegaRAID SAS 1078)
 	- `megasas-gen2`          (LSI MegaRAID SAS 2108)
 	- `mptsas1068`            (LSI SAS 1608)
-	- `virtio-scsi`           (Virtio-SCSI) (Default)
+	- `virtio-scsi`           (Virtio-SCSI, **Default**)
 	- `virtio-scsi-dedicated` (Virtio-SCSI Dedicated Controller)
 - `media` (String) - Media type of the resource
 	- `cdrom`   (CD-Rom)
