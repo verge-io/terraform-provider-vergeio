@@ -11,6 +11,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 )
 
 // NetworkEndPoint is the api endpoint representing this resource
@@ -18,10 +19,16 @@ const NetworkEndPoint = "api/v4/vnets"
 
 // Network is the data structure for virtual machines in vergeos
 type Network struct {
-	Name    string `json:"name,omitempty"`
-	Enabled bool   `json:"enabled"`
-	Default_Gateway int `json:"vnet_default_gateway,omitempty"`
-	IPaddress string `json:"ipaddress,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	Default_Gateway int    `json:"vnet_default_gateway,omitempty"`
+	IPaddress       string `json:"ipaddress,omitempty"`
+	DHCP            bool   `json:"dhcp_enabled"`
+	Dynamic_DHCP    bool   `json:"dhcp_dynamic"`
+	DHCP_Sequential bool   `json:"dhcp_sequential"`
+	DynamicIP_Start string `json:"dhcp_start,omitempty"`
+	DynamicIP_Stop  string `json:"dhcp_stop,omitempty"`
+	On_Power_Loss   string `json:"on_power_loss,omitempty"`
 }
 
 func newNetworkFromResource(d *schema.ResourceData) *Network {
@@ -37,6 +44,24 @@ func newNetworkFromResource(d *schema.ResourceData) *Network {
 	}
 	if d.HasChange("ipaddress") {
 		network.IPaddress = d.Get("ipaddress").(string)
+	}
+	if d.HasChange("dhcp_enabled") {
+		network.DHCP = d.Get("dhcp_enabled").(bool)
+	}
+	if d.HasChange("dhcp_dynamic") {
+		network.Dynamic_DHCP = d.Get("dhcp_dynamic").(bool)
+	}
+	if d.HasChange("dhcp_sequential") {
+		network.DHCP_Sequential = d.Get("dhcp_sequential").(bool)
+	}
+	if d.HasChange("dhcp_start") {
+		network.DynamicIP_Start = d.Get("dhcp_start").(string)
+	}
+	if d.HasChange("dhcp_stop") {
+		network.DynamicIP_Stop = d.Get("dhcp_stop").(string)
+	}
+	if d.HasChange("on_power_loss") {
+		network.On_Power_Loss = d.Get("on_power_loss").(string)
 	}
 	return network
 }
@@ -63,6 +88,38 @@ func resourceNetwork() *schema.Resource {
 			},
 			"ipaddress": {
 				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"dhcp_enabled": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
+			},
+			"dynamic_dhcp": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
+			},
+			"dhcp_sequential": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
+			},
+			"dhcp_start": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"dhcp_stop": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"on_power_loss": {
+				Type: schema.TypeString,
+				ValidateFunc: validation.StringInSlice([]string{
+					"power_on",
+					"leave_off",
+					"last_state",
+				}, false),
 				Optional: true,
 			},
 		},
@@ -165,6 +222,12 @@ func resourceNetworkRead(ctx context.Context, d *schema.ResourceData, m interfac
 	d.Set("enabled", network.Enabled)
 	d.Set("vnet_default_gateway", network.Default_Gateway)
 	d.Set("ipaddress", network.IPaddress)
+	d.Set("dhcp_enabled", network.DHCP)
+	d.Set("dhcp_dynamic", network.Dynamic_DHCP)
+	d.Set("dhcp_sequential", network.DHCP_Sequential)
+	d.Set("dhcp_start", network.DynamicIP_Start)
+	d.Set("dhcp_stop", network.DynamicIP_Stop)
+	d.Set("on_power_loss", network.On_Power_Loss)
 	return diags
 }
 
