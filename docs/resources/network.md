@@ -49,4 +49,4 @@ resource "vergeio_network" "example" {
 
 ### Read-Only
 
-- `id` (String) - Key (ID) of this resource.
+- `id` (String) - ID of this resource.

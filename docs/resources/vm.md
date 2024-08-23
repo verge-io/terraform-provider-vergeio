@@ -170,4 +170,4 @@ resource "vergeio_vm" "example_vm" {
 
 ### Read-Only
 
-- `id` (String) - Key (ID) of this resource.
+- `id` (String) - ID of this resource.

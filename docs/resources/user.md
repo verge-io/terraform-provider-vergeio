@@ -52,4 +52,4 @@ resource "vergeio_member" "membership" {
 
 ### Read-Only
 
-- `id` (String) - Key (ID) of this resource.
+- `id` (String) - ID of this resource.

@@ -13,10 +13,16 @@ Add a drive to a Virtual Machine
 
 ### Create a new blank drive
 ```
+data "vergeio_vms" "example_vm" {
+    filter_name = "Example VM"
+}
+output "Virtual_Machines" {
+	value = data.vergeio_vms.example_vm.vms
+}
 resource "vergeio_drive" "new_drive" {
-	machine = 67
-	name = "OS disk"
-	description = "OS disk"
+	machine = data.vergeio_vms.example_vm.vms[0].id
+	name = "New Disk"
+	description = "New Disk"
 	disksize = 100
 	interface = "virtio-scsi"
 	preferred_tier = 3
@@ -24,8 +30,14 @@ resource "vergeio_drive" "new_drive" {
 ```
 ### Create a CD-Rom drive and attach an iso from media images
 ```
+data "vergeio_vms" "example_vm" {
+    filter_name = "Example VM"
+}
+output "Virtual_Machines" {
+	value = data.vergeio_vms.example_vm.vms
+}
 resource "vergeio_drive" "cdrom" {
-	machine = 67
+	machine = data.vergeio_vms.example_vm.vms[0].id
 	name = "cdrom"
 	media = "cdrom"
 	media_source = 33
@@ -33,8 +45,14 @@ resource "vergeio_drive" "cdrom" {
 ```
 ### Clone a drive from another Virtual Machine
 ```
+data "vergeio_vms" "example_vm" {
+    filter_name = "Example VM"
+}
+output "Virtual_Machines" {
+	value = data.vergeio_vms.example_vm.vms
+}
 resource "vergeio_drive" "cloned_drive" {
-	machine = 67
+	machine = data.vergeio_vms.example_vm.vms[0].id
 	name = "Cloned Disk"
 	description = "clone of existing disk"
 	media = "clone"
@@ -45,8 +63,14 @@ resource "vergeio_drive" "cloned_drive" {
 ```
 ### Import an image from media images
 ```
+data "vergeio_vms" "example_vm" {
+    filter_name = "Example VM"
+}
+output "Virtual_Machines" {
+	value = data.vergeio_vms.example_vm.vms
+}
 resource "vergeio_drive" "imported_drive" {
-	machine = 67
+	machine = data.vergeio_vms.example_vm.vms[0].id
 	name = "Imported Disk"
 	description = "Imported Disk from media images"
 	media = "import"
@@ -57,8 +81,14 @@ resource "vergeio_drive" "imported_drive" {
 ```
 ### Create an EFI Drive
 ```
+data "vergeio_vms" "example_vm" {
+    filter_name = "Example VM"
+}
+output "Virtual_Machines" {
+	value = data.vergeio_vms.example_vm.vms
+}
 resource "vergeio_drive" "efi_drive" {
-    machine = 67
+    machine = data.vergeio_vms.example_vm.vms[0].id
     name = "EFI Disk"
     description = "New EFI Disk"
     media = "efidisk"
@@ -69,7 +99,7 @@ resource "vergeio_drive" "efi_drive" {
 
 ### Required
 
-- `machine` (Number) - Key (ID) of the virtual machine the resource will attach to.
+- `machine` (Number) - ID of the virtual machine the resource will attach to
 - `name` (String)
 
 ### Optional
@@ -94,7 +124,7 @@ resource "vergeio_drive" "efi_drive" {
 	- `import`  (Import drive from media images)
 	- `clone`   (Clone an existing VM disk)
 	- `efidisk` (Create a new EFI Disk)
-- `media_source` (Number) - Key (ID) of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom.
+- `media_source` (Number) - ID of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom.
 - `preferred_tier` (String) - Tier to assign the resource to. If one is not specified the default tier in the system settings will be used.
 - `preserve_drive_format` (Boolean) - Default = False
 - `readonly` (Boolean) Default = False
@@ -102,4 +132,4 @@ resource "vergeio_drive" "efi_drive" {
 
 ### Read-Only
 
-- `id` (String) - Key (ID) of this resource.
+- `id` (String) - ID of this resource

@@ -36,6 +36,7 @@ provider "vergeio" {
 - vergeio_networks
 - vergeio_nodes
 - vergeio_version
+- vergeio_vms
 
 ## Building Provider From Source
 Run the following to build and install the provider

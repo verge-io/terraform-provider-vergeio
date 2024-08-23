@@ -20,7 +20,8 @@ VergeIO welcomes pull requests and responds to issues on a best-effort basis. Ve
 terraform {
 	required_providers {
 		vergeio = {
-			source  = "vergeio/cloud/vergeio"
+			source  = "vergeio/vergeio"
+			version = "1.X.X"
 		}
 	}
 }

@@ -48,6 +48,7 @@ func Provider() *schema.Provider {
 			"vergeio_nodes":        dataSourceNodes(),
 			"vergeio_networks":     dataSourceNetworks(),
 			"vergeio_groups":       dataSourceGroups(),
+			"vergeio_vms":			dataSourceVMs(),
 		},
 	}
 }
