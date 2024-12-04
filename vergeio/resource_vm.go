@@ -17,37 +17,86 @@ import (
 // VMEndpoint is the api endpoint representing this resource
 const VMEndpoint = "api/v4/vms"
 
+// CloudInitFile represents a cloud-init file with name and contents
+type CloudInitFile struct {
+	Name     string `json:"name"`
+	Contents string `json:"contents"`
+}
+
 // VM is the data structure for virtual machines in vergeos
 type VM struct {
-	Machine            int    `json:"machine,omitempty"`
-	Name               string `json:"name,omitempty"`
-	Cluster            int    `json:"cluster,omitempty"`
-	Description        string `json:"description,omitempty"`
-	Enabled            bool   `json:"enabled"`
-	MachineType        string `json:"machine_type"`
-	AllowHotplug       bool   `json:"allow_hotplug"`
-	DisablePowercycle  bool   `json:"disable_powercycle"`
-	CPUCores           int    `json:"cpu_cores,omitempty"`
-	CPUType            string `json:"cpu_type,omitempty"`
-	RAM                int    `json:"ram,omitempty"`
-	Console            string `json:"console,omitempty"`
-	Display            string `json:"display,omitempty"`
-	Video              string `json:"video,omitempty"`
-	Sound              string `json:"sound,omitempty"`
-	OSFamily           string `json:"os_family,omitempty"`
-	OSDescription      string `json:"os_description,omitempty"`
-	RTCBase            string `json:"rtc_base,omitempty"`
-	BootOrder          string `json:"boot_order,omitempty"`
-	ConsolePassEnabled bool   `json:"console_pass_enabled"`
-	ConsolePass        string `json:"console_pass,omitempty"`
-	USBTablet          bool   `json:"usb_tablet"`
-	UEFI               bool   `json:"uefi"`
-	SecureBoot         bool   `json:"secure_boot"`
-	SerialPort         bool   `json:"serial_port"`
-	BootDelay          int    `json:"boot_delay,omitempty"`
-	PreferredNode      int    `json:"preferred_node,omitempty"`
-	SnapshotProfile    int    `json:"snapshot_profile,omitempty"`
-	//CloudInitDataSource string `json:"os_description,omitempty"`
+	Machine             int             `json:"machine,omitempty"`
+	Name                string          `json:"name,omitempty"`
+	Cluster             int             `json:"cluster,omitempty"`
+	Description         string          `json:"description,omitempty"`
+	Enabled             bool            `json:"enabled"`
+	MachineType         string          `json:"machine_type"`
+	AllowHotplug        bool            `json:"allow_hotplug"`
+	DisablePowercycle   bool            `json:"disable_powercycle"`
+	CPUCores            int             `json:"cpu_cores,omitempty"`
+	CPUType             string          `json:"cpu_type,omitempty"`
+	RAM                 int             `json:"ram,omitempty"`
+	Console             string          `json:"console,omitempty"`
+	Display             string          `json:"display,omitempty"`
+	Video               string          `json:"video,omitempty"`
+	Sound               string          `json:"sound,omitempty"`
+	OSFamily            string          `json:"os_family,omitempty"`
+	OSDescription       string          `json:"os_description,omitempty"`
+	RTCBase             string          `json:"rtc_base,omitempty"`
+	BootOrder           string          `json:"boot_order,omitempty"`
+	ConsolePassEnabled  bool            `json:"console_pass_enabled"`
+	ConsolePass         string          `json:"console_pass,omitempty"`
+	USBTablet           bool            `json:"usb_tablet"`
+	UEFI                bool            `json:"uefi"`
+	SecureBoot          bool            `json:"secure_boot"`
+	SerialPort          bool            `json:"serial_port"`
+	BootDelay           int             `json:"boot_delay,omitempty"`
+	PreferredNode       int             `json:"preferred_node,omitempty"`
+	SnapshotProfile     int             `json:"snapshot_profile,omitempty"`
+	CloudInitDataSource string          `json:"cloudinit_datasource,omitempty"`
+	CloudInitFiles      []CloudInitFile `json:"cloudinit_files,omitempty"`
+	PowerState          bool            `json:"powerstate,omitempty"`
+}
+
+func expandCloudInitFiles(v interface{}) []CloudInitFile {
+	if v == nil {
+		return nil
+	}
+
+	list := v.([]interface{})
+	if len(list) == 0 {
+		return nil
+	}
+
+	cloudInitFiles := make([]CloudInitFile, 0, len(list))
+	for _, v := range list {
+		if v == nil {
+			continue
+		}
+		
+		m := v.(map[string]interface{})
+		cloudInitFiles = append(cloudInitFiles, CloudInitFile{
+			Name:     m["name"].(string),
+			Contents: m["contents"].(string),
+		})
+	}
+	return cloudInitFiles
+}
+
+func flattenCloudInitFiles(files []CloudInitFile) []interface{} {
+	if files == nil {
+		return []interface{}{}
+	}
+
+	l := make([]interface{}, 0, len(files))
+	for _, file := range files {
+		m := map[string]interface{}{
+			"name":     file.Name,
+			"contents": file.Contents,
+		}
+		l = append(l, m)
+	}
+	return l
 }
 
 func newVMFromResource(d *schema.ResourceData) *VM {
@@ -79,6 +128,9 @@ func newVMFromResource(d *schema.ResourceData) *VM {
 		PreferredNode:      d.Get("preferred_node").(int),
 		SnapshotProfile:    d.Get("snapshot_profile").(int),
 		Cluster:            d.Get("cluster").(int),
+		CloudInitDataSource:d.Get("cloudinit_datasource").(string),
+		CloudInitFiles:     expandCloudInitFiles(d.Get("cloudinit_files")),
+		PowerState:         d.Get("powerstate").(bool),
 	}
 	return vm
 }
@@ -136,6 +188,7 @@ func resourceVM() *schema.Resource {
 					"pc-i440fx-7.2",
 					"pc-i440fx-8.0",
 					"pc-i440fx-8.1",
+					"pc-i440fx-8.2",
 					"pc-i440fx-9.0",
 					"q35",
 					"pc-q35-2.7",
@@ -160,6 +213,7 @@ func resourceVM() *schema.Resource {
 					"pc-q35-7.2",
 					"pc-q35-8.0",
 					"pc-q35-8.1",
+					"pc-q35-8.2",
 					"pc-q35-9.0",
 					"yottabyte",
 				}, false),
@@ -286,6 +340,34 @@ func resourceVM() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
+			"cloudinit_datasource": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+			"cloudinit_files": {
+				Type:     schema.TypeList,
+				Optional: true,
+				ConfigMode: schema.SchemaConfigModeAttr,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"name": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"contents": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+					},
+				},
+				Description: "List of cloud-init files. Example: [{name = \"user-data\", contents = \"cloud-config\"}]",
+			},
+			"powerstate": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
+			},
 		},
 	}
 }
@@ -320,7 +402,8 @@ func resourceVMCreate(ctx context.Context, d *schema.ResourceData, m interface{}
 	if err != nil {
 		return diag.FromErr(err)
 	}
-
+	log.Printf("[DEBUG] Creating VM with payload: %s", string(bytedata)) // Debug logging
+	
 	VMReq, err := c.Post(VMEndpoint, bytes.NewBuffer(bytedata))
 	if err != nil {
 		return diag.FromErr(err)
@@ -344,82 +427,86 @@ func resourceVMCreate(ctx context.Context, d *schema.ResourceData, m interface{}
 
 func resourceVMRead(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
 	c := m.(*Client)
-	// Warning or errors can be collected in a slice type
-	var diags diag.Diagnostics
-
-	VMReq, err := c.Get(fmt.Sprintf("%s/%s",
-		VMEndpoint,
-		url.PathEscape(d.Id()),
-	), nil)
-	if VMReq != nil && VMReq.StatusCode == 404 {
-		log.Printf("ID Not Found: %s", url.PathEscape(d.Id()))
-		d.SetId("")
+	var diags diag.Diagnostics	
+		VMReq, err := c.Get(fmt.Sprintf("%s/%s",
+			VMEndpoint,
+			url.PathEscape(d.Id()),
+		), nil)
+		if VMReq != nil && VMReq.StatusCode == 404 {
+			log.Printf("ID Not Found: %s", url.PathEscape(d.Id()))
+			d.SetId("")
+			return diags
+		}
+		if err != nil {
+			return diag.FromErr(err)
+		}
+	
+		log.Printf("ID: %s", url.PathEscape(d.Id()))
+		var vm VM
+		if VMReq != nil {
+			if VMReq.StatusCode == 200 {
+				body, readerr := ioutil.ReadAll(VMReq.Body)
+				if readerr != nil {
+					return diag.FromErr(readerr)
+				}
+	
+				decodeerr := json.Unmarshal(body, &vm)
+				if decodeerr != nil {
+					return diag.FromErr(decodeerr)
+				}
+				log.Printf("[DEBUG] params %#v", vm)
+			}
+		} else {
+			return diag.Errorf("Error retrieving VM data")
+		}
+	
+		d.Set("machine", vm.Machine)
+		d.Set("name", vm.Name)
+		d.Set("description", vm.Description)
+		d.Set("enabled", vm.Enabled)
+		d.Set("machine_type", vm.MachineType)
+		d.Set("allow_hotplug", vm.AllowHotplug)
+		d.Set("disable_powercycle", vm.DisablePowercycle)
+		d.Set("cpu_cores", vm.CPUCores)
+		d.Set("cpu_type", vm.CPUType)
+		d.Set("ram", vm.RAM)
+		d.Set("console", vm.Console)
+		d.Set("display", vm.Display)
+		d.Set("video", vm.Video)
+		d.Set("sound", vm.Sound)
+		d.Set("os_family", vm.OSFamily)
+		d.Set("os_description", vm.OSDescription)
+		d.Set("rtc_base", vm.RTCBase)
+		d.Set("boot_order", vm.BootOrder)
+		d.Set("console_pass_enabled", vm.ConsolePassEnabled)
+		d.Set("console_pass", vm.ConsolePass)
+		d.Set("usb_tablet", vm.USBTablet)
+		d.Set("uefi", vm.UEFI)
+		d.Set("secure_boot", vm.SecureBoot)
+		d.Set("serial_port", vm.SerialPort)
+		d.Set("boot_delay", vm.BootDelay)
+		d.Set("preferred_node", vm.PreferredNode)
+		d.Set("snapshot_profile", vm.SnapshotProfile)
+		d.Set("cluster", vm.Cluster)
+		d.Set("cloudinit_datasource", vm.CloudInitDataSource)
+		d.Set("powerstate", vm.PowerState)
+	
+		if err := d.Set("cloudinit_files", flattenCloudInitFiles(vm.CloudInitFiles)); err != nil {
+			return diag.FromErr(err)
+		}
+	
 		return diags
 	}
-	if err != nil {
-		return diag.FromErr(err)
-	}
-
-	log.Printf("ID: %s", url.PathEscape(d.Id()))
-	var vm VM
-	if VMReq != nil {
-		if VMReq.StatusCode == 200 {
-
-			body, readerr := ioutil.ReadAll(VMReq.Body)
-			if readerr != nil {
-				return diag.FromErr(readerr)
-			}
-
-			decodeerr := json.Unmarshal(body, &vm)
-			if decodeerr != nil {
-				return diag.FromErr(decodeerr)
-			}
-			log.Printf("[DEBUG] params %#v", vm)
-
+	
+	func resourceVMDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
+		var diags diag.Diagnostics
+		client := m.(*Client)
+		_, err := client.Delete(fmt.Sprintf("%s/%s",
+			VMEndpoint,
+			d.Id(),
+		))
+		if err != nil {
+			return diag.FromErr(err)
 		}
-	} else {
-		return diag.Errorf("Error retrieving VM data")
+		return diags
 	}
-	d.Set("machine", vm.Machine)
-	d.Set("name", vm.Name)
-	d.Set("description", vm.Description)
-	d.Set("enabled", vm.Enabled)
-	d.Set("machine_type", vm.MachineType)
-	d.Set("allow_hotplug", vm.AllowHotplug)
-	d.Set("disable_powercycle", vm.DisablePowercycle)
-	d.Set("cpu_cores", vm.CPUCores)
-	d.Set("cpu_type", vm.CPUType)
-	d.Set("ram", vm.RAM)
-	d.Set("console", vm.Console)
-	d.Set("display", vm.Display)
-	d.Set("video", vm.Video)
-	d.Set("sound", vm.Sound)
-	d.Set("os_family", vm.OSFamily)
-	d.Set("os_description", vm.OSDescription)
-	d.Set("rtc_base", vm.RTCBase)
-	d.Set("boot_order", vm.BootOrder)
-	d.Set("console_pass_enabled", vm.ConsolePassEnabled)
-	d.Set("console_pass", vm.ConsolePass)
-	d.Set("usb_tablet", vm.USBTablet)
-	d.Set("uefi", vm.UEFI)
-	d.Set("secure_boot", vm.SecureBoot)
-	d.Set("serial_port", vm.SerialPort)
-	d.Set("boot_delay", vm.BootDelay)
-	d.Set("preferred_node", vm.PreferredNode)
-	d.Set("snapshot_profile", vm.SnapshotProfile)
-	d.Set("cluster", vm.Cluster)
-	return diags
-}
-
-func resourceVMDelete(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
-	var diags diag.Diagnostics
-	client := m.(*Client)
-	_, err := client.Delete(fmt.Sprintf("%s/%s",
-		VMEndpoint,
-		d.Id(),
-	))
-	if err != nil {
-		return diag.FromErr(err)
-	}
-	return diags
-}

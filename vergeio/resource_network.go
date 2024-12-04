@@ -29,6 +29,7 @@ type Network struct {
 	DynamicIP_Start string `json:"dhcp_start,omitempty"`
 	DynamicIP_Stop  string `json:"dhcp_stop,omitempty"`
 	On_Power_Loss   string `json:"on_power_loss,omitempty"`
+	PowerState		bool   `json:"powerstate,omitempty"`
 }
 
 func newNetworkFromResource(d *schema.ResourceData) *Network {
@@ -62,6 +63,9 @@ func newNetworkFromResource(d *schema.ResourceData) *Network {
 	}
 	if d.HasChange("on_power_loss") {
 		network.On_Power_Loss = d.Get("on_power_loss").(string)
+	}
+	if d.HasChange("powerstate") {
+		network.PowerState = d.Get("powerstate").(bool)
 	}
 	return network
 }
@@ -121,6 +125,11 @@ func resourceNetwork() *schema.Resource {
 					"last_state",
 				}, false),
 				Optional: true,
+			},
+			"powerstate": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Computed: true,
 			},
 		},
 	}
@@ -228,6 +237,7 @@ func resourceNetworkRead(ctx context.Context, d *schema.ResourceData, m interfac
 	d.Set("dhcp_start", network.DynamicIP_Start)
 	d.Set("dhcp_stop", network.DynamicIP_Stop)
 	d.Set("on_power_loss", network.On_Power_Loss)
+	d.Set("powerstate", network.PowerState)
 	return diags
 }
 
