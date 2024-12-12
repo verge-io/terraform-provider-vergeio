@@ -12,6 +12,7 @@ Create and manage Virtual Machines
 ```hcl
 resource "vergeio_vm" "example_vm" {
 	name  = "New VM"
+    powerstate = "true"
 	description = "New Example VM"
 	enabled = true
 	os_family = "linux"
@@ -190,6 +191,7 @@ resource "vergeio_vm" "example_vm" {
     - `qxl`    QXL paravirtualized graphics (recommended for spice)
     - `virtio` Virtio
     - `none`   None (headless)
+- `powerstate` = (Boolean) - Default = False, Sets if VM should be powered on after creation
 - `cloudinit_datasource` (String)  
   Default: None  
   Options:  
