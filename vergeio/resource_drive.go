@@ -17,6 +17,9 @@ import (
 // DriveEndpoint is the api endpoint representing this resource
 const DriveEndpoint = "api/v4/machine_drives"
 
+// FilesEndpoint is the api endpoint representing media images
+const FilesEndpoint = "api/v4/files"
+
 // Drive is the data structure for virtual machines in vergeos
 type Drive struct {
 	Machine             int    `json:"machine,omitempty"`
@@ -78,12 +81,85 @@ func newDriveFromResource(d *schema.ResourceData) *Drive {
 	return drive
 }
 
+// validateMediaSource validates the media_source value based on the media type
+func validateMediaSource(ctx context.Context, d *schema.ResourceDiff, m interface{}) error {
+	mediaSource := d.Get("media_source").(int)
+	media := d.Get("media").(string)
+	client := m.(*Client)
+
+	if mediaSource == 0 {
+		// Skip validation if media_source is not set
+		return nil
+	}
+
+	if media == "clone" {
+		// For clone media type, validate against existing drive IDs
+		opts := Options{Fields: "$key"}
+		resp, err := client.Get(DriveEndpoint, &opts)
+		if err != nil {
+			return fmt.Errorf("error validating drive ID: %v", err)
+		}
+
+		if resp != nil && resp.StatusCode == 200 {
+			var drives []struct {
+				ID int `json:"$key"`
+			}
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("error reading response: %v", err)
+			}
+
+			if err := json.Unmarshal(body, &drives); err != nil {
+				return fmt.Errorf("error parsing drives: %v", err)
+			}
+
+			for _, drive := range drives {
+				if drive.ID == mediaSource {
+					return nil
+				}
+			}
+			return fmt.Errorf("drive ID %d not found for cloning", mediaSource)
+		}
+	} else if media == "cdrom" || media == "import" {
+		// For cdrom and import media types, validate against media images
+		opts := Options{Fields: "$key"}
+		resp, err := client.Get(FilesEndpoint, &opts)
+		if err != nil {
+			return fmt.Errorf("error validating media image: %v", err)
+		}
+
+		if resp != nil && resp.StatusCode == 200 {
+			var files []struct {
+				ID int `json:"$key"`
+			}
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("error reading response: %v", err)
+			}
+
+			if err := json.Unmarshal(body, &files); err != nil {
+				return fmt.Errorf("error parsing media images: %v", err)
+			}
+
+			for _, file := range files {
+				if file.ID == mediaSource {
+					return nil
+				}
+			}
+			return fmt.Errorf("media image ID %d not found", mediaSource)
+		}
+	}
+
+	return nil
+}
+
 func resourceDrive() *schema.Resource {
 	return &schema.Resource{
 		CreateContext: resourceDriveCreate,
 		ReadContext:   resourceDriveRead,
 		UpdateContext: resourceDriveUpdate,
 		DeleteContext: resourceDriveDelete,
+		CustomizeDiff: validateMediaSource,
 		Schema: map[string]*schema.Schema{
 			"machine": {
 				Type:     schema.TypeInt,
