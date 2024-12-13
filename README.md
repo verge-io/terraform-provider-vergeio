@@ -38,13 +38,22 @@ provider "vergeio" {
 - vergeio_version
 - vergeio_vms
 
-## Building Provider From Source
-Run the following to build and install the provider
+# Building Provider From Source
+
+**Prerequisites:**
+- A valid Go development environment
+- Terraform CLI installed
+
+**Note for ARM devices:** If you are building on an ARM-based system (like Apple M1/M2 or ARM Linux), you'll need to modify line 7 in the Makefile. Change `GOARCH=linux_amd64` to `GOARCH=darwin_arm64` before running `make install`.
 
 ```
-- go build -o terraform-provider-vergeio
-- make install
+# Build the provider
+go build -o terraform-provider-vergeio
+
+# Install the provider
+make install
 ```
+
 ### Test sample configuration
 Create a main tf file in a workspace directory using the example below
 ```
