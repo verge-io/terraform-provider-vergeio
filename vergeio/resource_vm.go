@@ -56,6 +56,7 @@ type VM struct {
 	CloudInitDataSource string          `json:"cloudinit_datasource,omitempty"`
 	CloudInitFiles      []CloudInitFile `json:"cloudinit_files,omitempty"`
 	PowerState          bool            `json:"powerstate,omitempty"`
+	GuestAgent          bool            `json:"guest_agent,omitempty"`
 }
 
 func expandCloudInitFiles(v interface{}) []CloudInitFile {
@@ -131,6 +132,7 @@ func newVMFromResource(d *schema.ResourceData) *VM {
 		CloudInitDataSource:d.Get("cloudinit_datasource").(string),
 		CloudInitFiles:     expandCloudInitFiles(d.Get("cloudinit_files")),
 		PowerState:         d.Get("powerstate").(bool),
+		GuestAgent:         d.Get("guest_agent").(bool),
 	}
 	return vm
 }
@@ -340,6 +342,9 @@ func resourceVM() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
+			"guest_agent":{
+
+			},
 			"cloudinit_datasource": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -490,6 +495,7 @@ func resourceVMRead(ctx context.Context, d *schema.ResourceData, m interface{}) 
 		d.Set("cluster", vm.Cluster)
 		d.Set("cloudinit_datasource", vm.CloudInitDataSource)
 		d.Set("powerstate", vm.PowerState)
+		d.Set("guest_agent", vm.GuestAgent)
 	
 		if err := d.Set("cloudinit_files", flattenCloudInitFiles(vm.CloudInitFiles)); err != nil {
 			return diag.FromErr(err)
