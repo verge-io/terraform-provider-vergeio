@@ -93,33 +93,16 @@ func validateMediaSource(ctx context.Context, d *schema.ResourceDiff, m interfac
 	}
 
 	if media == "clone" {
-		// For clone media type, validate against existing drive IDs
-		opts := Options{Fields: "$key"}
-		resp, err := client.Get(DriveEndpoint, &opts)
+		// For clone media type, validate against existing drive ID directly
+		resp, err := client.Get(fmt.Sprintf("%s/%d", DriveEndpoint, mediaSource), nil)
 		if err != nil {
 			return fmt.Errorf("error validating drive ID: %v", err)
 		}
 
-		if resp != nil && resp.StatusCode == 200 {
-			var drives []struct {
-				ID int `json:"$key"`
-			}
-			body, err := ioutil.ReadAll(resp.Body)
-			if err != nil {
-				return fmt.Errorf("error reading response: %v", err)
-			}
-
-			if err := json.Unmarshal(body, &drives); err != nil {
-				return fmt.Errorf("error parsing drives: %v", err)
-			}
-
-			for _, drive := range drives {
-				if drive.ID == mediaSource {
-					return nil
-				}
-			}
+		if resp != nil && resp.StatusCode == 404 {
 			return fmt.Errorf("drive ID %d not found for cloning", mediaSource)
 		}
+		return nil
 	} else if media == "cdrom" || media == "import" {
 		// For cdrom and import media types, validate against media images
 		opts := Options{Fields: "$key"}
@@ -351,7 +334,7 @@ func resourceDriveRead(ctx context.Context, d *schema.ResourceData, m interface{
 	d.Set("interface", drive.Interface)
 	d.Set("media", drive.Media)
 	d.Set("media_source", drive.MediaSource)
-	d.Set("disksize", drive.DiskSize / (1024 * 1024 * 1024)) // Convert bytes to GB
+	d.Set("disksize", drive.DiskSize/(1024*1024*1024)) // Convert bytes to GB
 	d.Set("preferred_tier", drive.PreferredTier)
 	d.Set("enabled", drive.Enabled)
 	d.Set("readonly", drive.ReadOnly)
