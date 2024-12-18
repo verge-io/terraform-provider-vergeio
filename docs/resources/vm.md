@@ -110,6 +110,7 @@ resource "vergeio_vm" "example_vm" {
 - `disable_powercycle` (Boolean) - Default = False
 - `display` (String)
 - `enabled` (Boolean) - Default = True
+- `guest_agent` (Boolean) - Default = False
 - `machine` (Number) - Machine Key (ID)
 - `machine_type` (String)
     - `pc`            i440FX + PIIX, 1996, Latest

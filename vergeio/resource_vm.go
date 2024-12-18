@@ -343,7 +343,9 @@ func resourceVM() *schema.Resource {
 				Computed: true,
 			},
 			"guest_agent":{
-
+				Type:	  schema.TypeBool,
+				Optional: true,
+				Computed: true,
 			},
 			"cloudinit_datasource": {
 				Type:     schema.TypeString,
