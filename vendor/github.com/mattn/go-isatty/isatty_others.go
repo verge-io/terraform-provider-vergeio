@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MIT
+
 //go:build (appengine || js || nacl || tinygo || wasm) && !windows
 // +build appengine js nacl tinygo wasm
 // +build !windows

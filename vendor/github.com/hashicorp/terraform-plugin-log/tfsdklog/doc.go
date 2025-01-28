@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MIT
+
 // Package tfsdklog provides helper functions for logging from SDKs and
 // frameworks for building Terraform plugins.
 //
