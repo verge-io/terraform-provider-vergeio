@@ -19,7 +19,7 @@ See the docs folder for examples
 
 ```
 provider "vergeio" {
-	host = "https://some_url_or_ip"
+	host = "some_url_or_ip"
 	username = "my_user"
 	password = "my_password"
 	insecure = false
