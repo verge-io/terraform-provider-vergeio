@@ -340,6 +340,14 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Optional: true,
 							Computed: true,
 						},
+						"ipaddress": schema.StringAttribute{
+							MarkdownDescription: "IP address assigned to nic. For this attribute to be set, `assign_ip_address` must be set to `true` and vent id should be set to an Internal Vnet.",
+							Optional:            true,
+							Computed:            true,
+						},
+						"assign_ipaddress": schema.BoolAttribute{
+							Optional: true,
+						},
 						"asset": schema.StringAttribute{
 							Optional: true,
 							Computed: true,

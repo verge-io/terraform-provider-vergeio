@@ -79,8 +79,9 @@ type Options struct {
 
 // VergeResponse structure.
 type VergeResponse struct {
-	Key   string `json:"$key,omitempty"`
-	Error string `json:"err,omitempty"`
+	Key      string `json:"$key,omitempty"`
+	Response string `json:"response,omitempty"`
+	Error    string `json:"err,omitempty"`
 }
 
 // Error represents a error from the Verge.IO api.

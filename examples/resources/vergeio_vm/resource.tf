@@ -25,9 +25,10 @@ resource "vergeio_vm" "web-server" {
 
   # NIC
   vergeio_nic {
-    name        = "Web Server Network"
-    description = "NIC for Web Server"
-    interface   = "virtio"
-    enabled     = true
+    name             = "Web Server Network"
+    description      = "NIC for Web Server"
+    interface        = "virtio"
+    enabled          = true
+    assign_ipaddress = true
   }
 }

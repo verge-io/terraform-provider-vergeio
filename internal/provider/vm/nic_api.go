@@ -22,35 +22,39 @@ import (
 
 // NIC Resource Models.
 type nicResourceModel struct {
-	Id          types.String `tfsdk:"id"`
-	Machine     types.Int32  `tfsdk:"machine"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	Interface   types.String `tfsdk:"interface"`
-	Driver      types.String `tfsdk:"driver"`
-	Model       types.String `tfsdk:"model"`
-	Vendor      types.String `tfsdk:"vendor"`
-	Port        types.Int32  `tfsdk:"port"`
-	Enabled     types.Bool   `tfsdk:"enabled"`
-	VNET        types.Int32  `tfsdk:"vnet"`
-	MAC         types.String `tfsdk:"macaddress"`
-	Asset       types.String `tfsdk:"asset"`
+	Id              types.String `tfsdk:"id"`
+	Machine         types.Int32  `tfsdk:"machine"`
+	Name            types.String `tfsdk:"name"`
+	Description     types.String `tfsdk:"description"`
+	Interface       types.String `tfsdk:"interface"`
+	Driver          types.String `tfsdk:"driver"`
+	Model           types.String `tfsdk:"model"`
+	Vendor          types.String `tfsdk:"vendor"`
+	Port            types.Int32  `tfsdk:"port"`
+	Enabled         types.Bool   `tfsdk:"enabled"`
+	VNET            types.Int32  `tfsdk:"vnet"`
+	MAC             types.String `tfsdk:"macaddress"`
+	IPAddress       types.String `tfsdk:"ipaddress"`
+	AssignIPAddress types.Bool   `tfsdk:"assign_ipaddress"`
+	Asset           types.String `tfsdk:"asset"`
 }
 
 type nicAPIResourceModel struct {
-	Id          string `json:"id,omitempty"`
-	Machine     int32  `json:"machine,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Description string `json:"description,omitempty"`
-	Interface   string `json:"interface,omitempty"`
-	Driver      string `json:"driver,omitempty"`
-	Model       string `json:"model,omitempty"`
-	Vendor      string `json:"vendor,omitempty"`
-	Port        int32  `json:"port,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	VNET        int32  `json:"vnet,omitempty"`
-	MAC         string `json:"macaddress,omitempty"`
-	Asset       string `json:"asset,omitempty"`
+	Id              string `json:"id,omitempty"`
+	Machine         int32  `json:"machine,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Description     string `json:"description,omitempty"`
+	Interface       string `json:"interface,omitempty"`
+	Driver          string `json:"driver,omitempty"`
+	Model           string `json:"model,omitempty"`
+	Vendor          string `json:"vendor,omitempty"`
+	Port            int32  `json:"port,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	VNET            int32  `json:"vnet,omitempty"`
+	MAC             string `json:"macaddress,omitempty"`
+	IPAddress       string `json:"ipaddress,omitempty"`
+	AssignIPAddress bool   `json:"assign_ipaddress,omitempty"`
+	Asset           string `json:"asset,omitempty"`
 }
 
 // to get the power status.
@@ -58,9 +62,17 @@ type nicAPIPowerStatus struct {
 	PowerState string `json:"powerstate,omitempty"`
 }
 
-// NIC Endpoint.
+// To assign an IP.
+type nicIPAPIResourceModel struct {
+	VNET int32  `json:"vnet,omitempty"`
+	MAC  string `json:"mac,omitempty"`
+	Type string `json:"type,omitempty"`
+}
+
+// NIC Endpoints.
 const (
 	NICEndpoint = vergeio.APIEndpoint + "/machine_nics"
+	IPEndpoint  = vergeio.APIEndpoint + "/vnet_addresses"
 )
 
 var _ vergeio.IClient = &NICApi{}
@@ -130,6 +142,56 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 	// Read it back from the API to get all the fields
 	if readError := nc.readNIC(ctx, data); readError != nil {
 		return errors.New("Error reading the nic: " + readError.Error())
+	}
+
+	// After creating the nic, assign an IP to it.
+	if data.AssignIPAddress.ValueBool() {
+		if ipError := nc.assignIP(data); ipError != nil {
+			return errors.New("Error assigning an IP to the nic: " + ipError.Error())
+		}
+	} else {
+		data.IPAddress = types.StringValue("N/A")
+	}
+
+	return nil
+}
+
+// Assign an IP to the NIC in the API.
+func (nc *NICApi) assignIP(data *nicResourceModel) error {
+
+	tflog.Debug(context.Background(), fmt.Sprintf("Assigning an IP to the nic %v", data.Id.ValueString()))
+	tflog.Debug(context.Background(), fmt.Sprintf("MAC of the nic %v", data.MAC.ValueString()))
+
+	apiData := nicIPAPIResourceModel{
+		VNET: data.VNET.ValueInt32(),
+		MAC:  data.MAC.ValueString(),
+		Type: "static",
+	}
+
+	// Encode the API data
+	encodedBuffer := new(bytes.Buffer)
+	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
+		return errors.New("invalid format received for the IP")
+	}
+
+	// Call the API and check the response
+	apiResp, err := nc.client.Post(IPEndpoint, encodedBuffer)
+	if err != nil {
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	if apiResp.StatusCode != 201 {
+		return fmt.Errorf("missing response from the API %d", apiResp.StatusCode)
+	}
+
+	// Decode the API response
+	var nicAPIResp vergeio.VergeResponse
+	if err := json.NewDecoder(apiResp.Body).Decode(&nicAPIResp); err != nil {
+		return errors.New("invalid format received for creating the NIC")
+	} else {
+		data.IPAddress = types.StringValue(nicAPIResp.Response)
 	}
 
 	return nil
