@@ -50,6 +50,12 @@ type NetworkResourceModel struct {
 	DynamicIP_Stop  types.String `tfsdk:"dhcp_stop"`
 	On_Power_Loss   types.String `tfsdk:"on_power_loss"`
 	PowerState      types.String `tfsdk:"powerstate"`
+	Type            types.String `tfsdk:"type"`
+	VLAN_TAG        types.Int32  `tfsdk:"layer2_id"`
+	MTU             types.Int32  `tfsdk:"mtu"`
+	Interface_Vnet  types.Int32  `tfsdk:"interface_vnet"`
+	IPaddress_Type  types.String `tfsdk:"ipaddress_type"`
+	Layer2_Type     types.String `tfsdk:"layer2_type"`
 }
 
 // Metadata returns the resource type name.
@@ -82,7 +88,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"vnet_default_gateway": schema.Int32Attribute{
 				MarkdownDescription: "Vnet default gateway",
 				Optional:            true,
-				// Computed:            true,
+				Computed:            true,
 			},
 			"ipaddress": schema.StringAttribute{
 				MarkdownDescription: "IP address assigned to network",
@@ -132,9 +138,40 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Power state of the network",
 				Optional:            true,
 			},
+			"type": schema.StringAttribute{
+				MarkdownDescription: "Type of Network",
+				Optional:            true,
+				Computed:            true,
+			},
+			"layer2_id": schema.Int32Attribute{
+				MarkdownDescription: "VLAN ID",
+				Optional:            true,
+				Computed:            true,
+		    },
+			"mtu": schema.Int32Attribute{
+				MarkdownDescription: "Network MTU",
+				Optional:            true,
+				Computed:            true,
+			},
+			"interface_vnet": schema.Int32Attribute{
+				MarkdownDescription: "Key/ID of the physical network",
+				Optional:            true,
+				Computed:            true,	
+			},
+			"ipaddress_type": schema.StringAttribute{
+				MarkdownDescription: "IP address type of the vnet",
+				Optional:            true,
+				Computed:            true,
+			},
+			"layer2_type": schema.StringAttribute{
+				MarkdownDescription: "Layer2 type of the vnet",
+				Optional:            true,
+				Computed: 			 true,	
+			},
+
 		},
 	}
-}
+}	
 
 func (r *NetworkResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	// Prevent panic if the provider has not been configured.

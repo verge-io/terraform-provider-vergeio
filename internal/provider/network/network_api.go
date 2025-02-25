@@ -58,6 +58,12 @@ type NetworkAPIResourceModel struct {
 	DynamicIP_Stop  string `json:"dhcp_stop,omitempty"`
 	On_Power_Loss   string `json:"on_power_loss,omitempty"`
 	PowerState      string `json:"powerstate,omitempty"`
+	Type            string `json:"type,omitempty"`
+	VLAN_TAG        int32  `json:"layer2_id,omitempty"`
+	MTU             int32  `json:"mtu,omitempty"`
+	Interface_Vnet  int32  `json:"interface_vnet,omitempty"`
+	IPaddress_Type  string `json:"ipaddress_type,omitempty"`
+	Layer2_Type     string `json:"layer2_type,omitempty"`
 }
 
 type NetworkAPIDataSourceModel struct {
@@ -89,6 +95,13 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		DynamicIP_Stop:  data.DynamicIP_Stop.ValueString(),
 		On_Power_Loss:   data.On_Power_Loss.ValueString(),
 		PowerState:      data.PowerState.ValueString(),
+		Type:            data.Type.ValueString(),
+		VLAN_TAG:        data.VLAN_TAG.ValueInt32(),
+		MTU:             data.MTU.ValueInt32(),
+		Interface_Vnet:  data.Interface_Vnet.ValueInt32(),
+		IPaddress_Type:  data.IPaddress_Type.ValueString(),
+		Layer2_Type:     data.Layer2_Type.ValueString(),
+	
 	}
 
 	// Encode the API data
@@ -127,12 +140,17 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResourceModel, stateData *NetworkResourceModel) error {
 
 	// Prepare the API data packet from the plan
+	var defaultGateway int32
+    if !planData.Default_Gateway.IsNull() {
+        defaultGateway = planData.Default_Gateway.ValueInt32()
+    }
 	apiData := NetworkAPIResourceModel{
 
 		Id:              vergeio.StringToNil(planData.Id, stateData.Id, ""),
 		Name:            vergeio.StringToNil(planData.Name, stateData.Name, ""),
 		Enabled:         vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
-		Default_Gateway: vergeio.Int32ToNil(planData.Default_Gateway, stateData.Default_Gateway, 0),
+		Default_Gateway: defaultGateway,
+//		Default_Gateway: vergeio.Int32ToNil(planData.Default_Gateway, stateData.Default_Gateway, 0),
 		IPaddress:       vergeio.StringToNil(planData.IPaddress, stateData.IPaddress, ""),
 		Network:         vergeio.StringToNil(planData.Network, stateData.Network, ""),
 		DHCP:            vergeio.BoolToNil(planData.DHCP, stateData.DHCP, false),
@@ -142,6 +160,13 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 		DynamicIP_Stop:  vergeio.StringToNil(planData.DynamicIP_Stop, stateData.DynamicIP_Stop, ""),
 		On_Power_Loss:   vergeio.StringToNil(planData.On_Power_Loss, stateData.On_Power_Loss, ""),
 		PowerState:      vergeio.StringToNil(planData.PowerState, stateData.PowerState, ""),
+		Type:            vergeio.StringToNil(planData.Type, stateData.Type, ""),
+		VLAN_TAG:        vergeio.Int32ToNil(planData.VLAN_TAG, stateData.VLAN_TAG, 0),
+		MTU:             vergeio.Int32ToNil(planData.MTU, stateData.MTU, 0),
+		Interface_Vnet:  vergeio.Int32ToNil(planData.Interface_Vnet, stateData.Interface_Vnet, 0),
+		IPaddress_Type:  vergeio.StringToNil(planData.IPaddress_Type, stateData.IPaddress_Type, ""),
+		Layer2_Type:     vergeio.StringToNil(planData.Layer2_Type, stateData.Layer2_Type, ""),
+		
 	}
 
 	// Encode the API data
@@ -283,7 +308,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
 		NetworkEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "name,enabled,ipaddress,network,dhcp_enabled,dhcp_dynamic,dhcp_sequential,dhcp_start,dhcp_stop,on_power_loss"})
+	), &vergeio.Options{Fields: "name,enabled,ipaddress,network,dhcp_enabled,dhcp_dynamic,dhcp_sequential,dhcp_start,dhcp_stop,on_power_loss,type,layer2_id,mtu,interface_vnet,ipaddress_type,layer2_type"})
 
 	// error checking
 	if err != nil {
@@ -303,7 +328,11 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	if err := json.NewDecoder(apiResp.Body).Decode(&networkAPIResp); err != nil {
 		return errors.New("invalid format received for Item")
 	}
-
+    if networkAPIResp.Default_Gateway != 0 {
+        data.Default_Gateway = types.Int32Value(networkAPIResp.Default_Gateway)
+    } else {
+        data.Default_Gateway = types.Int32Null()
+    }
 	// save into the resource model
 	data.Name = types.StringValue(networkAPIResp.Name)
 	data.Enabled = types.BoolValue(networkAPIResp.Enabled)
@@ -315,6 +344,12 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.DynamicIP_Start = types.StringValue(networkAPIResp.DynamicIP_Start)
 	data.DynamicIP_Stop = types.StringValue(networkAPIResp.DynamicIP_Stop)
 	data.On_Power_Loss = types.StringValue(networkAPIResp.On_Power_Loss)
+	data.Type = types.StringValue(networkAPIResp.Type)
+	data.VLAN_TAG = types.Int32Value(networkAPIResp.VLAN_TAG)
+	data.MTU = types.Int32Value(networkAPIResp.MTU)
+	data.Interface_Vnet = types.Int32Value(networkAPIResp.Interface_Vnet)
+	data.IPaddress_Type = types.StringValue(networkAPIResp.IPaddress_Type)
+	data.Layer2_Type = types.StringValue(networkAPIResp.Layer2_Type)
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
