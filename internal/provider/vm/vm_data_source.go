@@ -29,10 +29,14 @@ type VMDataSource struct {
 
 // VMDataSourceModel describes the data source data model.
 type VMModel struct {
-	Id         types.Int32  `tfsdk:"id"`
-	Name       types.String `tfsdk:"name"`
-	Key        types.Int32  `tfsdk:"key"`
-	IsSnapshot types.Bool   `tfsdk:"is_snapshot"`
+	Id          types.Int32  `tfsdk:"id"`
+	Name        types.String `tfsdk:"name"`
+	Key         types.Int32  `tfsdk:"key"`
+	IsSnapshot  types.Bool   `tfsdk:"is_snapshot"`
+	CPUType     types.String `tfsdk:"cpu_type"`
+	MachineType types.String `tfsdk:"machine_type"`
+	OSFamily    types.String `tfsdk:"os_family"`
+	UEFI        types.Bool   `tfsdk:"uefi"`
 }
 
 type VMDataSourceModel struct {
@@ -78,6 +82,22 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 						},
 						"is_snapshot": schema.BoolAttribute{
 							MarkdownDescription: "Is snapshot",
+							Computed:            true,
+						},
+						"cpu_type": schema.StringAttribute{
+							MarkdownDescription: "Cpu type",
+							Computed:            true,
+						},
+						"machine_type": schema.StringAttribute{
+							MarkdownDescription: "Machine type",
+							Computed:            true,
+						},
+						"os_family": schema.StringAttribute{
+							MarkdownDescription: "Os family",
+							Computed:            true,
+						},
+						"uefi": schema.BoolAttribute{
+							MarkdownDescription: "Uefi",
 							Computed:            true,
 						},
 					},

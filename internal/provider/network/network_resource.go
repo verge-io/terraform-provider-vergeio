@@ -88,7 +88,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"vnet_default_gateway": schema.Int32Attribute{
 				MarkdownDescription: "Vnet default gateway",
 				Optional:            true,
-				Computed:            true,
+				// Computed:            true,
 			},
 			"ipaddress": schema.StringAttribute{
 				MarkdownDescription: "IP address assigned to network",
@@ -147,7 +147,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "VLAN ID",
 				Optional:            true,
 				Computed:            true,
-		    },
+			},
 			"mtu": schema.Int32Attribute{
 				MarkdownDescription: "Network MTU",
 				Optional:            true,
@@ -156,7 +156,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"interface_vnet": schema.Int32Attribute{
 				MarkdownDescription: "Key/ID of the physical network",
 				Optional:            true,
-				Computed:            true,	
+				Computed:            true,
 			},
 			"ipaddress_type": schema.StringAttribute{
 				MarkdownDescription: "IP address type of the vnet",
@@ -166,12 +166,11 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"layer2_type": schema.StringAttribute{
 				MarkdownDescription: "Layer2 type of the vnet",
 				Optional:            true,
-				Computed: 			 true,	
+				Computed:            true,
 			},
-
 		},
 	}
-}	
+}
 
 func (r *NetworkResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	// Prevent panic if the provider has not been configured.

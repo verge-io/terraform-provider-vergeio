@@ -108,10 +108,14 @@ func getValidMachineTypes() []string {
 }
 
 type VMAPIDataSourceModel struct {
-	Id         int32  `json:"machine,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Key        int32  `json:"$key,omitempty"`
-	IsSnapshot bool   `json:"is_snapshot,omitempty"`
+	Id          int32  `json:"machine,omitempty"`
+	Name        string `json:"name,omitempty"`
+	Key         int32  `json:"$key,omitempty"`
+	IsSnapshot  bool   `json:"is_snapshot,omitempty"`
+	CPUType     string `json:"cpu_type,omitempty"`
+	MachineType string `json:"machine_type,omitempty"`
+	OSFamily    string `json:"os_family,omitempty"`
+	UEFI        bool   `json:"uefi,omitempty"`
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
@@ -168,6 +172,15 @@ type VMAction struct {
 type VMActionParams struct {
 	Device string `json:"device,omitempty"`
 	Unplug bool   `json:"unplug,omitempty"`
+}
+
+type NewResponse struct {
+	Key      string             `json:"$key,omitempty"`
+	Response NewResponseMachine `json:"response,omitempty"`
+}
+
+type NewResponseMachine struct {
+	Machine string `json:"machine,omitempty"`
 }
 
 // Create a new VM.
@@ -239,12 +252,12 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	}
 
 	// Decode the API response
-	var vmAPIResp vergeio.VergeResponse
+	var vmAPIResp NewResponse
 	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
+		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vmAPIResp.Key))
+	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vmAPIResp.Response))
 
 	// save into the Terraform state.
 	data.Id = types.StringValue(vmAPIResp.Key)
@@ -302,7 +315,7 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for VM Item")
+		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
 	// Time to call the API
@@ -371,7 +384,7 @@ func (va *VMApi) checkVMPowerState(ctx context.Context, data *VMResourceModel) e
 	// Decode the API response
 	var vmAPIResp VMAPIResourceModel
 	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
+		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
 	// save into the resource model
@@ -497,7 +510,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	tflog.Debug(ctx, "Reading the vm data")
 
 	// Define the fields. Not all the fields are returned by default
-	opts := vergeio.Options{Fields: "machine,name,$key,is_snapshot"}
+	opts := vergeio.Options{Fields: "machine,name,$key,is_snapshot,cpu_type, machine_type, os_family, uefi"}
 
 	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
@@ -524,7 +537,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	// Decode the API response
 	var vmAPIResp []VMAPIDataSourceModel
 	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
 	// Filter the response for snapshots
@@ -539,10 +552,14 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 			}
 		}
 		data.Vms = append(data.Vms, &VMModel{
-			Id:         types.Int32Value(vmAPIResp.Id),
-			Name:       types.StringValue(vmAPIResp.Name),
-			Key:        types.Int32Value(vmAPIResp.Key),
-			IsSnapshot: types.BoolValue(vmAPIResp.IsSnapshot),
+			Id:          types.Int32Value(vmAPIResp.Id),
+			Name:        types.StringValue(vmAPIResp.Name),
+			Key:         types.Int32Value(vmAPIResp.Key),
+			IsSnapshot:  types.BoolValue(vmAPIResp.IsSnapshot),
+			CPUType:     types.StringValue(vmAPIResp.CPUType),
+			MachineType: types.StringValue(vmAPIResp.MachineType),
+			OSFamily:    types.StringValue(vmAPIResp.OSFamily),
+			UEFI:        types.BoolValue(vmAPIResp.UEFI),
 		})
 
 	}
