@@ -160,6 +160,7 @@ type VMAPIResourceModel struct {
 	PowerState          string             `json:"powerstate,omitempty"`
 	GuestAgent          bool               `json:"guest_agent,omitempty"`
 	HAGroup             string             `json:"ha_group,omitempty"`
+	Advanced            string             `json:"advanced,omitempty"`
 }
 
 // VNetAction represents the structure for virtual vm action requests.
@@ -220,6 +221,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		PowerState:          data.PowerState.ValueString(),
 		GuestAgent:          data.GuestAgent.ValueBool(),
 		HAGroup:             data.HAGroup.ValueString(),
+		Advanced:            data.Advanced.ValueString(),
 	}
 
 	// Add the cloud init files
@@ -310,6 +312,7 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		PowerState:          vergeio.StringToNil(planData.PowerState, stateData.PowerState, ""),
 		GuestAgent:          vergeio.BoolToNil(planData.GuestAgent, stateData.GuestAgent, false),
 		HAGroup:             vergeio.StringToNil(planData.HAGroup, stateData.HAGroup, ""),
+		Advanced:            vergeio.StringToNil(planData.Advanced, stateData.Advanced, ""),
 	}
 
 	// Encode the API data
@@ -436,7 +439,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,powerstate,guest_agent"})
+	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,powerstate,guest_agent,advanced"})
 
 	// error checking
 	if err != nil {
@@ -489,6 +492,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.CloudInitDataSource = types.StringValue(vmAPIResp.CloudInitDataSource)
 	data.GuestAgent = types.BoolValue(vmAPIResp.GuestAgent)
 	data.HAGroup = types.StringValue(vmAPIResp.HAGroup)
+	data.Advanced = types.StringValue(vmAPIResp.Advanced)
 
 	if vmAPIResp.CloudInitFiles != nil {
 		for _, cloudInitFileAPI := range vmAPIResp.CloudInitFiles {

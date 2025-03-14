@@ -80,6 +80,7 @@ type VMResourceModel struct {
 	CloudInitFiles      []CloudInitFile      `tfsdk:"cloudinit_files"`
 	PowerState          types.String         `tfsdk:"powerstate"`
 	GuestAgent          types.Bool           `tfsdk:"guest_agent"`
+	Advanced            types.String         `tfsdk:"advanced"`
 	Disks               []*diskResourceModel `tfsdk:"vergeio_drive"`
 	NICs                []*nicResourceModel  `tfsdk:"vergeio_nic"`
 }
@@ -283,6 +284,11 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			},
 			"powerstate": schema.StringAttribute{
 				MarkdownDescription: "Power state of the vm",
+				Optional:            true,
+				Computed:            true,
+			},
+			"advanced": schema.StringAttribute{
+				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
 				Optional:            true,
 				Computed:            true,
 			},
