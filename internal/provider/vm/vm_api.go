@@ -108,7 +108,7 @@ func getValidMachineTypes() []string {
 }
 
 type VMAPIDataSourceModel struct {
-	Id          int32  `json:"machine,omitempty"`
+	Id          int32  `json:"id,omitempty"`
 	Name        string `json:"name,omitempty"`
 	Key         int32  `json:"$key,omitempty"`
 	IsSnapshot  bool   `json:"is_snapshot,omitempty"`
@@ -116,6 +116,28 @@ type VMAPIDataSourceModel struct {
 	MachineType string `json:"machine_type,omitempty"`
 	OSFamily    string `json:"os_family,omitempty"`
 	UEFI        bool   `json:"uefi,omitempty"`
+	Machine     struct {
+		Drives []*VMDriveAPIDataSourceModel `json:"drives,omitempty"`
+		Nics   []*VMNICAPIDataSourceModel   `json:"nics,omitempty"`
+	} `json:"machine,omitempty"`
+}
+
+type VMDriveAPIDataSourceModel struct {
+	Key           int32  `json:"$key,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Interface     string `json:"interface,omitempty"`
+	Media         string `json:"media,omitempty"`
+	Description   string `json:"description,omitempty"`
+	PreferredTier string `json:"preferred_tier,omitempty"`
+}
+
+type VMNICAPIDataSourceModel struct {
+	Key       int32  `json:"$key,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Interface string `json:"interface,omitempty"`
+	Vnet      string `json:"vnet,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Ipaddress string `json:"ipaddress,omitempty"`
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
@@ -514,7 +536,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	tflog.Debug(ctx, "Reading the vm data")
 
 	// Define the fields. Not all the fields are returned by default
-	opts := vergeio.Options{Fields: "machine,name,$key,is_snapshot,cpu_type, machine_type, os_family, uefi"}
+	opts := vergeio.Options{Fields: "machine#$key as id, dashboard"} //"machine,name,$key,is_snapshot,cpu_type,machine_type,os_family,uefi"}
 
 	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
@@ -536,7 +558,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the VMs %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the VMs %#v", apiResp.Body))
 
 	// Decode the API response
 	var vmAPIResp []VMAPIDataSourceModel
@@ -544,11 +566,13 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
+	tflog.Debug(ctx, fmt.Sprintf("vmAPIResp %v", vmAPIResp))
+
 	// Filter the response for snapshots
 	isSnapshotFilterSet := !data.IsSnapshot.IsNull()
 	isSnapshotFilter := data.IsSnapshot.ValueBool()
 
-	for _, vmAPIResp := range vmAPIResp {
+	for i, vmAPIResp := range vmAPIResp {
 
 		if isSnapshotFilterSet {
 			if isSnapshotFilter != vmAPIResp.IsSnapshot {
@@ -566,6 +590,39 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 			UEFI:        types.BoolValue(vmAPIResp.UEFI),
 		})
 
+		if vmAPIResp.Machine.Drives != nil {
+			var drives []*VMDriveModel
+
+			for _, vmDrive := range vmAPIResp.Machine.Drives {
+				drive := &VMDriveModel{
+					Key:           types.Int32Value(vmDrive.Key),
+					Name:          types.StringValue(vmDrive.Name),
+					Interface:     types.StringValue(vmDrive.Interface),
+					Media:         types.StringValue(vmDrive.Media),
+					Description:   types.StringValue(vmDrive.Description),
+					PreferredTier: types.StringValue(vmDrive.PreferredTier),
+				}
+				drives = append(drives, drive)
+			}
+			data.Vms[i].Drives = drives
+		}
+
+		if vmAPIResp.Machine.Nics != nil {
+			var nics []*VMNicModel
+
+			for _, vmNic := range vmAPIResp.Machine.Nics {
+				nic := &VMNicModel{
+					Key:       types.Int32Value(vmNic.Key),
+					Name:      types.StringValue(vmNic.Name),
+					Interface: types.StringValue(vmNic.Interface),
+					Vnet:      types.StringValue(vmNic.Vnet),
+					Status:    types.StringValue(vmNic.Status),
+					Ipaddress: types.StringValue(vmNic.Ipaddress),
+				}
+				nics = append(nics, nic)
+			}
+			data.Vms[i].Nics = nics
+		}
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")

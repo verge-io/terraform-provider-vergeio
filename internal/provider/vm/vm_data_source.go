@@ -29,14 +29,34 @@ type VMDataSource struct {
 
 // VMDataSourceModel describes the data source data model.
 type VMModel struct {
-	Id          types.Int32  `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Key         types.Int32  `tfsdk:"key"`
-	IsSnapshot  types.Bool   `tfsdk:"is_snapshot"`
-	CPUType     types.String `tfsdk:"cpu_type"`
-	MachineType types.String `tfsdk:"machine_type"`
-	OSFamily    types.String `tfsdk:"os_family"`
-	UEFI        types.Bool   `tfsdk:"uefi"`
+	Id          types.Int32     `tfsdk:"id"`
+	Name        types.String    `tfsdk:"name"`
+	Key         types.Int32     `tfsdk:"key"`
+	IsSnapshot  types.Bool      `tfsdk:"is_snapshot"`
+	CPUType     types.String    `tfsdk:"cpu_type"`
+	MachineType types.String    `tfsdk:"machine_type"`
+	OSFamily    types.String    `tfsdk:"os_family"`
+	UEFI        types.Bool      `tfsdk:"uefi"`
+	Drives      []*VMDriveModel `tfsdk:"drives"`
+	Nics        []*VMNicModel   `tfsdk:"nics"`
+}
+
+type VMDriveModel struct {
+	Key           types.Int32  `tfsdk:"key"`
+	Name          types.String `tfsdk:"name"`
+	Interface     types.String `tfsdk:"interface"`
+	Media         types.String `tfsdk:"media"`
+	Description   types.String `tfsdk:"description"`
+	PreferredTier types.String `tfsdk:"preferred_tier"`
+}
+
+type VMNicModel struct {
+	Key       types.Int32  `tfsdk:"key"`
+	Name      types.String `tfsdk:"name"`
+	Interface types.String `tfsdk:"interface"`
+	Vnet      types.String `tfsdk:"vnet"`
+	Status    types.String `tfsdk:"status"`
+	Ipaddress types.String `tfsdk:"ipaddress"`
 }
 
 type VMDataSourceModel struct {
@@ -99,6 +119,70 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 						"uefi": schema.BoolAttribute{
 							MarkdownDescription: "Uefi",
 							Computed:            true,
+						},
+						"drives": schema.ListNestedAttribute{
+							MarkdownDescription: "Drives",
+							Computed:            true,
+							NestedObject: schema.NestedAttributeObject{
+								Attributes: map[string]schema.Attribute{
+									"key": schema.Int32Attribute{
+										MarkdownDescription: "Key",
+										Computed:            true,
+									},
+									"name": schema.StringAttribute{
+										MarkdownDescription: "Name",
+										Computed:            true,
+									},
+									"interface": schema.StringAttribute{
+										MarkdownDescription: "Interface",
+										Computed:            true,
+									},
+									"media": schema.StringAttribute{
+										MarkdownDescription: "Media",
+										Computed:            true,
+									},
+									"description": schema.StringAttribute{
+										MarkdownDescription: "Description",
+										Computed:            true,
+									},
+									"preferred_tier": schema.StringAttribute{
+										MarkdownDescription: "Preferred tier",
+										Computed:            true,
+									},
+								},
+							},
+						},
+						"nics": schema.ListNestedAttribute{
+							MarkdownDescription: "Nics",
+							Computed:            true,
+							NestedObject: schema.NestedAttributeObject{
+								Attributes: map[string]schema.Attribute{
+									"key": schema.Int32Attribute{
+										MarkdownDescription: "Key",
+										Computed:            true,
+									},
+									"name": schema.StringAttribute{
+										MarkdownDescription: "Name",
+										Computed:            true,
+									},
+									"interface": schema.StringAttribute{
+										MarkdownDescription: "Interface",
+										Computed:            true,
+									},
+									"vnet": schema.StringAttribute{
+										MarkdownDescription: "Vnet",
+										Computed:            true,
+									},
+									"status": schema.StringAttribute{
+										MarkdownDescription: "Status",
+										Computed:            true,
+									},
+									"ipaddress": schema.StringAttribute{
+										MarkdownDescription: "Ipaddress",
+										Computed:            true,
+									},
+								},
+							},
 						},
 					},
 				},
