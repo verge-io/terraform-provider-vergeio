@@ -27,7 +27,7 @@ terraform {
 }
 
 provider "vergeio" {
-	host = "https://some_url_or_ip"
+	host = "Hostname_or_IP"
 	username = "my_user"
 	password = "my_password"
 	insecure = false 

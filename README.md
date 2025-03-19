@@ -19,7 +19,7 @@ See the docs folder for examples
 
 ```
 provider "vergeio" {
-	host = "some_url_or_ip"
+	host = "Hostname_or_ip"
 	username = "my_user"
 	password = "my_password"
 	insecure = false
@@ -80,9 +80,10 @@ terraform {
 }
 
 provider "vergeio" {
-	host = "someURLorIP"
+	host = "Hostname_or_IP"
 	username = "username"
 	password = "password"
+	insecure = false
 }
 
 resource "vergeio_vm" "new_vm" {
