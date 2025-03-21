@@ -123,12 +123,20 @@ type VMAPIDataSourceModel struct {
 }
 
 type VMDriveAPIDataSourceModel struct {
-	Key           int32  `json:"$key,omitempty"`
-	Name          string `json:"name,omitempty"`
-	Interface     string `json:"interface,omitempty"`
-	Media         string `json:"media,omitempty"`
-	Description   string `json:"description,omitempty"`
-	PreferredTier string `json:"preferred_tier,omitempty"`
+	Key           int32                              `json:"$key,omitempty"`
+	Name          string                             `json:"name,omitempty"`
+	Interface     string                             `json:"interface,omitempty"`
+	Media         string                             `json:"media,omitempty"`
+	Description   string                             `json:"description,omitempty"`
+	PreferredTier string                             `json:"preferred_tier,omitempty"`
+	MediaSource   *VMDriveMediaSourceDataSourceModel `json:"media_source,omitempty"`
+}
+
+type VMDriveMediaSourceDataSourceModel struct {
+	Key            int32 `json:"$key,omitempty"`
+	UsedBytes      int64 `json:"used_bytes,omitempty"`
+	AllocatedBytes int64 `json:"allocated_bytes,omitempty"`
+	Filesize       int64 `json:"filesize,omitempty"`
 }
 
 type VMNICAPIDataSourceModel struct {
@@ -558,7 +566,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the VMs %#v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("===Read the VMs %#v", apiResp.Body))
 
 	// Decode the API response
 	var vmAPIResp []VMAPIDataSourceModel
@@ -566,7 +574,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("vmAPIResp %v", vmAPIResp))
+	tflog.Debug(ctx, fmt.Sprintf("===vmAPIResp after marshaling %v", vmAPIResp[0].Machine.Drives[0].MediaSource))
 
 	// Filter the response for snapshots
 	isSnapshotFilterSet := !data.IsSnapshot.IsNull()
@@ -602,6 +610,17 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 					Description:   types.StringValue(vmDrive.Description),
 					PreferredTier: types.StringValue(vmDrive.PreferredTier),
 				}
+				if vmDrive.MediaSource != nil {
+					msBlock := vmDrive.MediaSource
+					mediaSource := VMDriveMediasourceModel{
+						Key:            types.Int32Value(msBlock.Key),
+						UsedBytes:      types.Int64Value(vmDrive.MediaSource.UsedBytes),
+						AllocatedBytes: types.Int64Value(vmDrive.MediaSource.AllocatedBytes),
+						Filesize:       types.Int64Value(vmDrive.MediaSource.Filesize),
+					}
+					drive.MediaSource = &mediaSource
+				}
+
 				drives = append(drives, drive)
 			}
 			data.Vms[i].Drives = drives

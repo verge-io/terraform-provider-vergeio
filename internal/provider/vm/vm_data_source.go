@@ -42,12 +42,20 @@ type VMModel struct {
 }
 
 type VMDriveModel struct {
-	Key           types.Int32  `tfsdk:"key"`
-	Name          types.String `tfsdk:"name"`
-	Interface     types.String `tfsdk:"interface"`
-	Media         types.String `tfsdk:"media"`
-	Description   types.String `tfsdk:"description"`
-	PreferredTier types.String `tfsdk:"preferred_tier"`
+	Key           types.Int32              `tfsdk:"key"`
+	Name          types.String             `tfsdk:"name"`
+	Interface     types.String             `tfsdk:"interface"`
+	Media         types.String             `tfsdk:"media"`
+	Description   types.String             `tfsdk:"description"`
+	PreferredTier types.String             `tfsdk:"preferred_tier"`
+	MediaSource   *VMDriveMediasourceModel `tfsdk:"media_source"`
+}
+
+type VMDriveMediasourceModel struct {
+	Key            types.Int32 `tfsdk:"key"`
+	UsedBytes      types.Int64 `tfsdk:"used_bytes"`
+	AllocatedBytes types.Int64 `tfsdk:"allocated_bytes"`
+	Filesize       types.Int64 `tfsdk:"filesize"`
 }
 
 type VMNicModel struct {
@@ -148,6 +156,29 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 									"preferred_tier": schema.StringAttribute{
 										MarkdownDescription: "Preferred tier",
 										Computed:            true,
+									},
+									"media_source": schema.SingleNestedAttribute{
+										MarkdownDescription: "Mediasource",
+										Computed:            true,
+										Optional:            true,
+										Attributes: map[string]schema.Attribute{
+											"key": schema.Int32Attribute{
+												MarkdownDescription: "Key",
+												Computed:            true,
+											},
+											"used_bytes": schema.Int64Attribute{
+												MarkdownDescription: "Used bytes",
+												Computed:            true,
+											},
+											"allocated_bytes": schema.Int64Attribute{
+												MarkdownDescription: "Allocated byters",
+												Computed:            true,
+											},
+											"filesize": schema.Int64Attribute{
+												MarkdownDescription: "Fileszie",
+												Computed:            true,
+											},
+										},
 									},
 								},
 							},
