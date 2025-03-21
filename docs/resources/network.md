@@ -12,9 +12,9 @@ Create an Internal or External vNET resource in VergeIO
 
 ## Example Usage
 
-```terraform
-# Create an Internal vNET with all parameters
 
+Create an Internal vNET with all parameters
+```
 resource "vergeio_network" "example" {
   name                 = "Example Net"
   enabled              = true
