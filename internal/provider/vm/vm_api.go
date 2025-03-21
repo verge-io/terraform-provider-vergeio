@@ -140,12 +140,13 @@ type VMDriveMediaSourceDataSourceModel struct {
 }
 
 type VMNICAPIDataSourceModel struct {
-	Key       int32  `json:"$key,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Interface string `json:"interface,omitempty"`
-	Vnet      string `json:"vnet,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Ipaddress string `json:"ipaddress,omitempty"`
+	Key        int32  `json:"$key,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Interface  string `json:"interface,omitempty"`
+	Vnet       string `json:"vnet,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Ipaddress  string `json:"ipaddress,omitempty"`
+	MacAddress string `json:"macaddress,omitempty"`
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
@@ -631,12 +632,13 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 			for _, vmNic := range vmAPIResp.Machine.Nics {
 				nic := &VMNicModel{
-					Key:       types.Int32Value(vmNic.Key),
-					Name:      types.StringValue(vmNic.Name),
-					Interface: types.StringValue(vmNic.Interface),
-					Vnet:      types.StringValue(vmNic.Vnet),
-					Status:    types.StringValue(vmNic.Status),
-					Ipaddress: types.StringValue(vmNic.Ipaddress),
+					Key:        types.Int32Value(vmNic.Key),
+					Name:       types.StringValue(vmNic.Name),
+					Interface:  types.StringValue(vmNic.Interface),
+					Vnet:       types.StringValue(vmNic.Vnet),
+					Status:     types.StringValue(vmNic.Status),
+					Ipaddress:  types.StringValue(vmNic.Ipaddress),
+					MacAddress: types.StringValue(vmNic.MacAddress),
 				}
 				nics = append(nics, nic)
 			}

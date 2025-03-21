@@ -59,12 +59,13 @@ type VMDriveMediasourceModel struct {
 }
 
 type VMNicModel struct {
-	Key       types.Int32  `tfsdk:"key"`
-	Name      types.String `tfsdk:"name"`
-	Interface types.String `tfsdk:"interface"`
-	Vnet      types.String `tfsdk:"vnet"`
-	Status    types.String `tfsdk:"status"`
-	Ipaddress types.String `tfsdk:"ipaddress"`
+	Key        types.Int32  `tfsdk:"key"`
+	Name       types.String `tfsdk:"name"`
+	Interface  types.String `tfsdk:"interface"`
+	Vnet       types.String `tfsdk:"vnet"`
+	Status     types.String `tfsdk:"status"`
+	Ipaddress  types.String `tfsdk:"ipaddress"`
+	MacAddress types.String `tfsdk:"macaddress"`
 }
 
 type VMDataSourceModel struct {
@@ -210,6 +211,10 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 									},
 									"ipaddress": schema.StringAttribute{
 										MarkdownDescription: "Ipaddress",
+										Computed:            true,
+									},
+									"macaddress": schema.StringAttribute{
+										MarkdownDescription: "Macaddress",
 										Computed:            true,
 									},
 								},
