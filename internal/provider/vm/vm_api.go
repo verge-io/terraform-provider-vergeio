@@ -123,21 +123,30 @@ type VMAPIDataSourceModel struct {
 }
 
 type VMDriveAPIDataSourceModel struct {
-	Key           int32  `json:"$key,omitempty"`
-	Name          string `json:"name,omitempty"`
-	Interface     string `json:"interface,omitempty"`
-	Media         string `json:"media,omitempty"`
-	Description   string `json:"description,omitempty"`
-	PreferredTier string `json:"preferred_tier,omitempty"`
+	Key           int32                              `json:"$key,omitempty"`
+	Name          string                             `json:"name,omitempty"`
+	Interface     string                             `json:"interface,omitempty"`
+	Media         string                             `json:"media,omitempty"`
+	Description   string                             `json:"description,omitempty"`
+	PreferredTier string                             `json:"preferred_tier,omitempty"`
+	MediaSource   *VMDriveMediaSourceDataSourceModel `json:"media_source,omitempty"`
+}
+
+type VMDriveMediaSourceDataSourceModel struct {
+	Key            int32 `json:"$key,omitempty"`
+	UsedBytes      int64 `json:"used_bytes,omitempty"`
+	AllocatedBytes int64 `json:"allocated_bytes,omitempty"`
+	Filesize       int64 `json:"filesize,omitempty"`
 }
 
 type VMNICAPIDataSourceModel struct {
-	Key       int32  `json:"$key,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Interface string `json:"interface,omitempty"`
-	Vnet      string `json:"vnet,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Ipaddress string `json:"ipaddress,omitempty"`
+	Key        int32  `json:"$key,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Interface  string `json:"interface,omitempty"`
+	Vnet       string `json:"vnet,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Ipaddress  string `json:"ipaddress,omitempty"`
+	MacAddress string `json:"macaddress,omitempty"`
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
@@ -558,7 +567,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the VMs %#v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("===Read the VMs %#v", apiResp.Body))
 
 	// Decode the API response
 	var vmAPIResp []VMAPIDataSourceModel
@@ -566,34 +575,33 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("vmAPIResp %v", vmAPIResp))
-
 	// Filter the response for snapshots
 	isSnapshotFilterSet := !data.IsSnapshot.IsNull()
 	isSnapshotFilter := data.IsSnapshot.ValueBool()
 
-	for i, vmAPIResp := range vmAPIResp {
+	for _, vmAPIRespItem := range vmAPIResp {
 
 		if isSnapshotFilterSet {
-			if isSnapshotFilter != vmAPIResp.IsSnapshot {
+			if isSnapshotFilter != vmAPIRespItem.IsSnapshot {
 				continue
 			}
 		}
-		data.Vms = append(data.Vms, &VMModel{
-			Id:          types.Int32Value(vmAPIResp.Id),
-			Name:        types.StringValue(vmAPIResp.Name),
-			Key:         types.Int32Value(vmAPIResp.Key),
-			IsSnapshot:  types.BoolValue(vmAPIResp.IsSnapshot),
-			CPUType:     types.StringValue(vmAPIResp.CPUType),
-			MachineType: types.StringValue(vmAPIResp.MachineType),
-			OSFamily:    types.StringValue(vmAPIResp.OSFamily),
-			UEFI:        types.BoolValue(vmAPIResp.UEFI),
-		})
 
-		if vmAPIResp.Machine.Drives != nil {
+		vmModel := VMModel{
+			Id:          types.Int32Value(vmAPIRespItem.Id),
+			Name:        types.StringValue(vmAPIRespItem.Name),
+			Key:         types.Int32Value(vmAPIRespItem.Key),
+			IsSnapshot:  types.BoolValue(vmAPIRespItem.IsSnapshot),
+			CPUType:     types.StringValue(vmAPIRespItem.CPUType),
+			MachineType: types.StringValue(vmAPIRespItem.MachineType),
+			OSFamily:    types.StringValue(vmAPIRespItem.OSFamily),
+			UEFI:        types.BoolValue(vmAPIRespItem.UEFI),
+		}
+
+		if vmAPIRespItem.Machine.Drives != nil {
 			var drives []*VMDriveModel
 
-			for _, vmDrive := range vmAPIResp.Machine.Drives {
+			for _, vmDrive := range vmAPIRespItem.Machine.Drives {
 				drive := &VMDriveModel{
 					Key:           types.Int32Value(vmDrive.Key),
 					Name:          types.StringValue(vmDrive.Name),
@@ -602,27 +610,41 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 					Description:   types.StringValue(vmDrive.Description),
 					PreferredTier: types.StringValue(vmDrive.PreferredTier),
 				}
+				if vmDrive.MediaSource != nil {
+					msBlock := vmDrive.MediaSource
+					mediaSource := VMDriveMediasourceModel{
+						Key:            types.Int32Value(msBlock.Key),
+						UsedBytes:      types.Int64Value(vmDrive.MediaSource.UsedBytes),
+						AllocatedBytes: types.Int64Value(vmDrive.MediaSource.AllocatedBytes),
+						Filesize:       types.Int64Value(vmDrive.MediaSource.Filesize),
+					}
+					drive.MediaSource = &mediaSource
+				}
+
 				drives = append(drives, drive)
 			}
-			data.Vms[i].Drives = drives
+			vmModel.Drives = drives
 		}
 
-		if vmAPIResp.Machine.Nics != nil {
+		if vmAPIRespItem.Machine.Nics != nil {
 			var nics []*VMNicModel
 
-			for _, vmNic := range vmAPIResp.Machine.Nics {
+			for _, vmNic := range vmAPIRespItem.Machine.Nics {
 				nic := &VMNicModel{
-					Key:       types.Int32Value(vmNic.Key),
-					Name:      types.StringValue(vmNic.Name),
-					Interface: types.StringValue(vmNic.Interface),
-					Vnet:      types.StringValue(vmNic.Vnet),
-					Status:    types.StringValue(vmNic.Status),
-					Ipaddress: types.StringValue(vmNic.Ipaddress),
+					Key:        types.Int32Value(vmNic.Key),
+					Name:       types.StringValue(vmNic.Name),
+					Interface:  types.StringValue(vmNic.Interface),
+					Vnet:       types.StringValue(vmNic.Vnet),
+					Status:     types.StringValue(vmNic.Status),
+					Ipaddress:  types.StringValue(vmNic.Ipaddress),
+					MacAddress: types.StringValue(vmNic.MacAddress),
 				}
 				nics = append(nics, nic)
 			}
-			data.Vms[i].Nics = nics
+			vmModel.Nics = nics
 		}
+
+		data.Vms = append(data.Vms, &vmModel)
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
