@@ -575,34 +575,33 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("===vmAPIResp after marshaling %v", vmAPIResp[0].Machine.Drives[0].MediaSource))
-
 	// Filter the response for snapshots
 	isSnapshotFilterSet := !data.IsSnapshot.IsNull()
 	isSnapshotFilter := data.IsSnapshot.ValueBool()
 
-	for i, vmAPIResp := range vmAPIResp {
+	for _, vmAPIRespItem := range vmAPIResp {
 
 		if isSnapshotFilterSet {
-			if isSnapshotFilter != vmAPIResp.IsSnapshot {
+			if isSnapshotFilter != vmAPIRespItem.IsSnapshot {
 				continue
 			}
 		}
-		data.Vms = append(data.Vms, &VMModel{
-			Id:          types.Int32Value(vmAPIResp.Id),
-			Name:        types.StringValue(vmAPIResp.Name),
-			Key:         types.Int32Value(vmAPIResp.Key),
-			IsSnapshot:  types.BoolValue(vmAPIResp.IsSnapshot),
-			CPUType:     types.StringValue(vmAPIResp.CPUType),
-			MachineType: types.StringValue(vmAPIResp.MachineType),
-			OSFamily:    types.StringValue(vmAPIResp.OSFamily),
-			UEFI:        types.BoolValue(vmAPIResp.UEFI),
-		})
 
-		if vmAPIResp.Machine.Drives != nil {
+		vmModel := VMModel{
+			Id:          types.Int32Value(vmAPIRespItem.Id),
+			Name:        types.StringValue(vmAPIRespItem.Name),
+			Key:         types.Int32Value(vmAPIRespItem.Key),
+			IsSnapshot:  types.BoolValue(vmAPIRespItem.IsSnapshot),
+			CPUType:     types.StringValue(vmAPIRespItem.CPUType),
+			MachineType: types.StringValue(vmAPIRespItem.MachineType),
+			OSFamily:    types.StringValue(vmAPIRespItem.OSFamily),
+			UEFI:        types.BoolValue(vmAPIRespItem.UEFI),
+		}
+
+		if vmAPIRespItem.Machine.Drives != nil {
 			var drives []*VMDriveModel
 
-			for _, vmDrive := range vmAPIResp.Machine.Drives {
+			for _, vmDrive := range vmAPIRespItem.Machine.Drives {
 				drive := &VMDriveModel{
 					Key:           types.Int32Value(vmDrive.Key),
 					Name:          types.StringValue(vmDrive.Name),
@@ -624,13 +623,13 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 				drives = append(drives, drive)
 			}
-			data.Vms[i].Drives = drives
+			vmModel.Drives = drives
 		}
 
-		if vmAPIResp.Machine.Nics != nil {
+		if vmAPIRespItem.Machine.Nics != nil {
 			var nics []*VMNicModel
 
-			for _, vmNic := range vmAPIResp.Machine.Nics {
+			for _, vmNic := range vmAPIRespItem.Machine.Nics {
 				nic := &VMNicModel{
 					Key:        types.Int32Value(vmNic.Key),
 					Name:       types.StringValue(vmNic.Name),
@@ -642,8 +641,10 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 				}
 				nics = append(nics, nic)
 			}
-			data.Vms[i].Nics = nics
+			vmModel.Nics = nics
 		}
+
+		data.Vms = append(data.Vms, &vmModel)
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
