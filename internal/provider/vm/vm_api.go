@@ -147,12 +147,34 @@ type VMNICAPIDataSourceModel struct {
 	Status     string `json:"status,omitempty"`
 	Ipaddress  string `json:"ipaddress,omitempty"`
 	MacAddress string `json:"macaddress,omitempty"`
+	// ExternalIP string `json:"external_ip,omitempty"`
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
 type CloudInitFileAPI struct {
 	Name     string `json:"name"`
 	Contents string `json:"contents"`
+}
+
+type VMAPIGuestAgentModel struct {
+	Machine struct {
+		Status struct {
+			AgentGuestInfo *VMAPIAgentGuestInfoModel `json:"agent_guest_info,omitempty"`
+		} `json:"status,omitempty"`
+	} `json:"machine,omitempty"`
+}
+
+type VMAPIAgentGuestInfoModel struct {
+	Network []*VMAPIGuestAgentNetworkModel `json:"network,omitempty"`
+}
+type VMAPIGuestAgentNetworkModel struct {
+	Name        string                        `json:"name,omitempty"`
+	IPAddresses []*VMAPIGuestAgentIPAddresses `json:"ip-addresses,omitempty"`
+}
+
+type VMAPIGuestAgentIPAddresses struct {
+	IPAddressType string `json:"ip-address-type,omitempty"`
+	IPAddress     string `json:"ip-address,omitempty"`
 }
 
 // VMAPIResourceModel describes the data model received from the Verge API.
@@ -539,7 +561,73 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	return nil
 }
 
-// Read the VM from the API.
+// Read the guest agent info to get the ip addresses
+func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel) error {
+
+	tflog.Debug(ctx, "Reading the guest agent data")
+
+	// Now read the guest agent info
+	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
+		VMEndpoint,
+		url.PathEscape(data.Id.ValueString()),
+	), &vergeio.Options{Fields: "dashboard"})
+
+	// error checking
+	if err != nil {
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	if apiResp.StatusCode != 200 {
+		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
+	}
+	tflog.Debug(ctx, fmt.Sprintf("Read the guest agent info %v", apiResp.Body))
+
+	// If there is no body, return
+	if apiResp.Body == nil {
+		return nil
+	}
+
+	// Decode the API response
+	var gaResp VMAPIGuestAgentModel
+	if err := json.NewDecoder(apiResp.Body).Decode(&gaResp); err != nil {
+		// return fmt.Errorf("invalid format received for VM Item: %v", err)
+		// Instead of rutning the error, return nil
+		data.GuestAgentIPs = types.ListNull(types.StringType)
+		return nil
+	}
+
+	// If there is no guest agent info, return
+	if gaResp.Machine.Status.AgentGuestInfo == nil {
+		data.GuestAgentIPs = types.ListNull(types.StringType)
+		return nil
+	}
+
+	// Get the IP addresses
+	var Ips []*types.String
+	for _, network := range gaResp.Machine.Status.AgentGuestInfo.Network {
+		for _, ip := range network.IPAddresses {
+			if ip.IPAddressType == "ipv4" {
+				var pointer = types.StringPointerValue(&ip.IPAddress)
+				if !pointer.IsNull() {
+					Ips = append(Ips, &pointer)
+				}
+			}
+		}
+	}
+	if len(Ips) > 0 {
+		data.GuestAgentIPs, _ = types.ListValueFrom(ctx, types.StringType, Ips)
+	} else {
+		data.GuestAgentIPs = types.ListNull(types.StringType)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Guest Agent IPs %v", data.GuestAgentIPs))
+
+	return nil
+}
+
+// Read VMs from the API. Used by the data source
 func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 	tflog.Debug(ctx, "Reading the vm data")
