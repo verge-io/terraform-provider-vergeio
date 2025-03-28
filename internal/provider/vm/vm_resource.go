@@ -46,43 +46,46 @@ type CloudInitFile struct {
 
 // VMResourceModel describes the resource data model.
 type VMResourceModel struct {
-	Id                  types.String         `tfsdk:"id"`
-	Machine             types.Int32          `tfsdk:"machine"`
-	Name                types.String         `tfsdk:"name"`
-	Cluster             types.String         `tfsdk:"cluster"`
-	Description         types.String         `tfsdk:"description"`
-	Enabled             types.Bool           `tfsdk:"enabled"`
-	MachineType         types.String         `tfsdk:"machine_type"`
-	AllowHotplug        types.Bool           `tfsdk:"allow_hotplug"`
-	DisablePowercycle   types.Bool           `tfsdk:"disable_powercycle"`
-	CPUCores            types.Int32          `tfsdk:"cpu_cores"`
-	CPUType             types.String         `tfsdk:"cpu_type"`
-	RAM                 types.Int32          `tfsdk:"ram"`
-	Console             types.String         `tfsdk:"console"`
-	Display             types.String         `tfsdk:"display"`
-	Video               types.String         `tfsdk:"video"`
-	Sound               types.String         `tfsdk:"sound"`
-	OSFamily            types.String         `tfsdk:"os_family"`
-	OSDescription       types.String         `tfsdk:"os_description"`
-	RTCBase             types.String         `tfsdk:"rtc_base"`
-	BootOrder           types.String         `tfsdk:"boot_order"`
-	ConsolePassEnabled  types.Bool           `tfsdk:"console_pass_enabled"`
-	ConsolePass         types.String         `tfsdk:"console_pass"`
-	USBTablet           types.Bool           `tfsdk:"usb_tablet"`
-	UEFI                types.Bool           `tfsdk:"uefi"`
-	SecureBoot          types.Bool           `tfsdk:"secure_boot"`
-	SerialPort          types.Bool           `tfsdk:"serial_port"`
-	BootDelay           types.Int32          `tfsdk:"boot_delay"`
-	PreferredNode       types.String         `tfsdk:"preferred_node"`
-	SnapshotProfile     types.String         `tfsdk:"snapshot_profile"`
-	CloudInitDataSource types.String         `tfsdk:"cloudinit_datasource"`
-	HAGroup             types.String         `tfsdk:"ha_group"`
-	CloudInitFiles      []CloudInitFile      `tfsdk:"cloudinit_files"`
-	PowerState          types.String         `tfsdk:"powerstate"`
-	GuestAgent          types.Bool           `tfsdk:"guest_agent"`
-	Advanced            types.String         `tfsdk:"advanced"`
-	Disks               []*diskResourceModel `tfsdk:"vergeio_drive"`
-	NICs                []*nicResourceModel  `tfsdk:"vergeio_nic"`
+	Id                    types.String    `tfsdk:"id"`
+	Machine               types.Int32     `tfsdk:"machine"`
+	Name                  types.String    `tfsdk:"name"`
+	Cluster               types.String    `tfsdk:"cluster"`
+	Description           types.String    `tfsdk:"description"`
+	Enabled               types.Bool      `tfsdk:"enabled"`
+	MachineType           types.String    `tfsdk:"machine_type"`
+	AllowHotplug          types.Bool      `tfsdk:"allow_hotplug"`
+	DisablePowercycle     types.Bool      `tfsdk:"disable_powercycle"`
+	CPUCores              types.Int32     `tfsdk:"cpu_cores"`
+	CPUType               types.String    `tfsdk:"cpu_type"`
+	RAM                   types.Int32     `tfsdk:"ram"`
+	Console               types.String    `tfsdk:"console"`
+	Display               types.String    `tfsdk:"display"`
+	Video                 types.String    `tfsdk:"video"`
+	Sound                 types.String    `tfsdk:"sound"`
+	OSFamily              types.String    `tfsdk:"os_family"`
+	OSDescription         types.String    `tfsdk:"os_description"`
+	RTCBase               types.String    `tfsdk:"rtc_base"`
+	BootOrder             types.String    `tfsdk:"boot_order"`
+	ConsolePassEnabled    types.Bool      `tfsdk:"console_pass_enabled"`
+	ConsolePass           types.String    `tfsdk:"console_pass"`
+	USBTablet             types.Bool      `tfsdk:"usb_tablet"`
+	UEFI                  types.Bool      `tfsdk:"uefi"`
+	SecureBoot            types.Bool      `tfsdk:"secure_boot"`
+	SerialPort            types.Bool      `tfsdk:"serial_port"`
+	BootDelay             types.Int32     `tfsdk:"boot_delay"`
+	PreferredNode         types.String    `tfsdk:"preferred_node"`
+	SnapshotProfile       types.String    `tfsdk:"snapshot_profile"`
+	CloudInitDataSource   types.String    `tfsdk:"cloudinit_datasource"`
+	HAGroup               types.String    `tfsdk:"ha_group"`
+	CloudInitFiles        []CloudInitFile `tfsdk:"cloudinit_files"`
+	PowerState            types.String    `tfsdk:"powerstate"`
+	GuestAgent            types.Bool      `tfsdk:"guest_agent"`
+	Advanced              types.String    `tfsdk:"advanced"`
+	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
+	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
+	Disks         []*diskResourceModel `tfsdk:"vergeio_drive"`
+	NICs          []*nicResourceModel  `tfsdk:"vergeio_nic"`
+	GuestAgentIPs types.List           `tfsdk:"guest_agent_ips"`
 }
 
 // Metadata returns the resource type name.
@@ -289,6 +292,16 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			},
 			"advanced": schema.StringAttribute{
 				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
+				Optional:            true,
+				Computed:            true,
+			},
+			"wait_for_guest_agent_info": schema.Int32Attribute{
+				MarkdownDescription: "Wait time in seconds for guest agent to be ready",
+				Optional:            true,
+			},
+			"guest_agent_ips": schema.ListAttribute{
+				ElementType:         types.StringType,
+				MarkdownDescription: "Guest agent Ips",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -521,6 +534,21 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				return
 			}
 		}
+	}
+
+	// Wait for the guest agent to be ready
+	if data.WaitForGuestAgentInfo.ValueInt32() > 0 {
+		tflog.Debug(ctx, fmt.Sprintf("Waiting for %v seconds for guest agent to be ready", data.WaitForGuestAgentInfo.ValueInt32()))
+		time.Sleep(time.Duration(data.WaitForGuestAgentInfo.ValueInt32()) * time.Second)
+	}
+
+	// Read the VM from the API to get all the data.
+	if readError := r.vmApi.readGuestAgentInfo(ctx, &data); readError != nil {
+		resp.Diagnostics.AddError(
+			"Error reading guest agent info",
+			readError.Error(),
+		)
+		return
 	}
 
 	// Save data into Terraform state
