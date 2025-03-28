@@ -20,7 +20,8 @@ data "vergeio_vms" "all" {
 output "Virtual_Machines" {
   value = data.vergeio_vms.all.vms
 }
-
+```
+```
 # Add a filter to see information on a specific virtual machine or ignore VM snapshots
 
 data "vergeio_vms" "all" {
@@ -29,6 +30,13 @@ data "vergeio_vms" "all" {
 }
 output "Virtual_Machines" {
   value = data.vergeio_vms.all.vms
+}
+```
+```
+# View the VM IP via the guest agent on resource creation
+
+output "guest_agent_ip" {
+  value = vergeio_vm.{RESOURCE NAME HERE}.guest_agent_ips
 }
 ```
 
