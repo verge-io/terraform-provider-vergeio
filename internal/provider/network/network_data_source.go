@@ -36,6 +36,7 @@ type NetworkModel struct {
 
 type NetworkDataSourceModel struct {
 	FilterName types.String    `tfsdk:"filter_name"`
+	FilterType types.String    `tfsdk:"filter_type"`
 	Networks   []*NetworkModel `tfsdk:"networks"`
 }
 
@@ -51,6 +52,10 @@ func (d *NetworkDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 		Attributes: map[string]schema.Attribute{
 			"filter_name": schema.StringAttribute{
 				MarkdownDescription: "Filter by name",
+				Optional:            true,
+			},
+			"filter_type": schema.StringAttribute{
+				MarkdownDescription: "Filter by type",
 				Optional:            true,
 			},
 			"networks": schema.ListNestedAttribute{

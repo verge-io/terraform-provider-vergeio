@@ -23,6 +23,7 @@ func BoolToNil(planValue types.Bool, stateValue types.Bool, defaultValue bool) b
 	}
 	return planValue.ValueBool()
 }
+
 func Int32ToNil(planValue types.Int32, stateValue types.Int32, defaultValue int32) int32 {
 	if planValue.IsUnknown() {
 		if stateValue.IsUnknown() {
