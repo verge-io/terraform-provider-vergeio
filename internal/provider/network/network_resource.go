@@ -37,27 +37,25 @@ type NetworkResource struct {
 
 // NetworkResourceModel describes the resource data model.
 type NetworkResourceModel struct {
-	Id                   types.String `tfsdk:"id"`
-	Name                 types.String `tfsdk:"name"`
-	Enabled              types.Bool   `tfsdk:"enabled"`
-	Default_Gateway      types.Int32  `tfsdk:"vnet_default_gateway"`
-	IPaddress            types.String `tfsdk:"ipaddress"`
-	Network              types.String `tfsdk:"network"`
-	DHCP                 types.Bool   `tfsdk:"dhcp_enabled"`
-	Dynamic_DHCP         types.Bool   `tfsdk:"dynamic_dhcp"`
-	DHCP_Sequential      types.Bool   `tfsdk:"dhcp_sequential"`
-	DynamicIP_Start      types.String `tfsdk:"dhcp_start"`
-	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
-	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
-	PowerState           types.String `tfsdk:"powerstate"`
-	Type                 types.String `tfsdk:"type"`
-	VLAN_TAG             types.Int32  `tfsdk:"layer2_id"`
-	MTU                  types.Int32  `tfsdk:"mtu"`
-	Interface_Vnet       types.Int32  `tfsdk:"interface_vnet"`
-	IPaddress_Type       types.String `tfsdk:"ipaddress_type"`
-	Layer2_Type          types.String `tfsdk:"layer2_type"`
-	Enable_Bonding       types.Bool   `tfsdk:"enable_bonding"`
-	Bond_Interfaces_Args types.List   `tfsdk:"bond_interfaces_args"`
+	Id              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Enabled         types.Bool   `tfsdk:"enabled"`
+	Default_Gateway types.Int32  `tfsdk:"vnet_default_gateway"`
+	IPaddress       types.String `tfsdk:"ipaddress"`
+	Network         types.String `tfsdk:"network"`
+	DHCP            types.Bool   `tfsdk:"dhcp_enabled"`
+	Dynamic_DHCP    types.Bool   `tfsdk:"dynamic_dhcp"`
+	DHCP_Sequential types.Bool   `tfsdk:"dhcp_sequential"`
+	DynamicIP_Start types.String `tfsdk:"dhcp_start"`
+	DynamicIP_Stop  types.String `tfsdk:"dhcp_stop"`
+	On_Power_Loss   types.String `tfsdk:"on_power_loss"`
+	PowerState      types.String `tfsdk:"powerstate"`
+	Type            types.String `tfsdk:"type"`
+	VLAN_TAG        types.Int32  `tfsdk:"layer2_id"`
+	MTU             types.Int32  `tfsdk:"mtu"`
+	Interface_Vnet  types.Int32  `tfsdk:"interface_vnet"`
+	IPaddress_Type  types.String `tfsdk:"ipaddress_type"`
+	Layer2_Type     types.String `tfsdk:"layer2_type"`
 }
 
 // Metadata returns the resource type name.
@@ -169,16 +167,6 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				MarkdownDescription: "Layer2 type of the vnet",
 				Optional:            true,
 				Computed:            true,
-			},
-			"enable_bonding": schema.BoolAttribute{
-				MarkdownDescription: "Enable bonding",
-				Optional:            true,
-				Computed:            true,
-			},
-			"bond_interfaces_args": schema.ListAttribute{
-				ElementType:         types.Int32Type,
-				MarkdownDescription: "Bonding interfaces arguments",
-				Optional:            true,
 			},
 		},
 	}

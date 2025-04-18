@@ -45,27 +45,25 @@ func (nc *NetworkApi) Name() string {
 
 // NetworkAPIResourceModel describes the data model received from the Verge API.
 type NetworkAPIResourceModel struct {
-	Id                   string  `json:"id,omitempty"`
-	Name                 string  `json:"name,omitempty"`
-	Enabled              bool    `json:"enabled,omitempty"`
-	Default_Gateway      int32   `json:"vnet_default_gateway,omitempty"`
-	IPaddress            string  `json:"ipaddress,omitempty"`
-	Network              string  `json:"network,omitempty"`
-	DHCP                 bool    `json:"dhcp_enabled,omitempty"`
-	Dynamic_DHCP         bool    `json:"dhcp_dynamic,omitempty"`
-	DHCP_Sequential      bool    `json:"dhcp_sequential,omitempty"`
-	DynamicIP_Start      string  `json:"dhcp_start,omitempty"`
-	DynamicIP_Stop       string  `json:"dhcp_stop,omitempty"`
-	On_Power_Loss        string  `json:"on_power_loss,omitempty"`
-	PowerState           string  `json:"powerstate,omitempty"`
-	Type                 string  `json:"type,omitempty"`
-	VLAN_TAG             int32   `json:"layer2_id,omitempty"`
-	MTU                  int32   `json:"mtu,omitempty"`
-	Interface_Vnet       int32   `json:"interface_vnet,omitempty"`
-	IPaddress_Type       string  `json:"ipaddress_type,omitempty"`
-	Layer2_Type          string  `json:"layer2_type,omitempty"`
-	Enable_Bonding       bool    `json:"enable_bonding,omitempty"`
-	Bond_Interfaces_Args []int32 `json:"bond_interfaces_args,omitempty"`
+	Id              string `json:"id,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Enabled         bool   `json:"enabled,omitempty"`
+	Default_Gateway int32  `json:"vnet_default_gateway,omitempty"`
+	IPaddress       string `json:"ipaddress,omitempty"`
+	Network         string `json:"network,omitempty"`
+	DHCP            bool   `json:"dhcp_enabled,omitempty"`
+	Dynamic_DHCP    bool   `json:"dhcp_dynamic,omitempty"`
+	DHCP_Sequential bool   `json:"dhcp_sequential,omitempty"`
+	DynamicIP_Start string `json:"dhcp_start,omitempty"`
+	DynamicIP_Stop  string `json:"dhcp_stop,omitempty"`
+	On_Power_Loss   string `json:"on_power_loss,omitempty"`
+	PowerState      string `json:"powerstate,omitempty"`
+	Type            string `json:"type,omitempty"`
+	VLAN_TAG        int32  `json:"layer2_id,omitempty"`
+	MTU             int32  `json:"mtu,omitempty"`
+	Interface_Vnet  int32  `json:"interface_vnet,omitempty"`
+	IPaddress_Type  string `json:"ipaddress_type,omitempty"`
+	Layer2_Type     string `json:"layer2_type,omitempty"`
 }
 
 type NetworkAPIDataSourceModel struct {
@@ -103,14 +101,7 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		Interface_Vnet:  data.Interface_Vnet.ValueInt32(),
 		IPaddress_Type:  data.IPaddress_Type.ValueString(),
 		Layer2_Type:     data.Layer2_Type.ValueString(),
-		Enable_Bonding:  data.Enable_Bonding.ValueBool(),
 	}
-
-	// if data.Bond_Interfaces_Args != nil {
-	for _, arg := range data.Bond_Interfaces_Args.Elements() {
-		apiData.Bond_Interfaces_Args = append(apiData.Bond_Interfaces_Args, arg.(types.Int32).ValueInt32())
-	}
-	// }
 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
@@ -316,7 +307,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
 		NetworkEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "name,enabled,ipaddress,network,dhcp_enabled,dhcp_dynamic,dhcp_sequential,dhcp_start,dhcp_stop,on_power_loss,type,layer2_id,mtu,interface_vnet,ipaddress_type,layer2_type,enable_bonding,bond_interfaces_args"})
+	), &vergeio.Options{Fields: "name,enabled,ipaddress,network,dhcp_enabled,dhcp_dynamic,dhcp_sequential,dhcp_start,dhcp_stop,on_power_loss,type,layer2_id,mtu,interface_vnet,ipaddress_type,layer2_type"})
 
 	// error checking
 	if err != nil {
@@ -358,7 +349,6 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.Interface_Vnet = types.Int32Value(networkAPIResp.Interface_Vnet)
 	data.IPaddress_Type = types.StringValue(networkAPIResp.IPaddress_Type)
 	data.Layer2_Type = types.StringValue(networkAPIResp.Layer2_Type)
-	data.Enable_Bonding = types.BoolValue(networkAPIResp.Enable_Bonding)
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
@@ -373,18 +363,9 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 	// What fields do we want
 	opts := vergeio.Options{Fields: "description,name,$key"}
 
-	// Build name filter
+	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
-	}
-
-	// Build type filter
-	if ft := data.FilterType.ValueString(); ft != "" {
-		if opts.Filter != "" {
-			opts.Filter = fmt.Sprintf("%s and type eq '%s'", opts.Filter, ft)
-		} else {
-			opts.Filter = fmt.Sprintf("type eq '%s'", ft)
-		}
 	}
 
 	// Call the API

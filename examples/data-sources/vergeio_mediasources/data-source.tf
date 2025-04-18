@@ -1,6 +1,4 @@
 
-
-
 # Mediasources data source fetches the Media Source from the VergeIO. 
 
 data "vergeio_mediasources" "all" {

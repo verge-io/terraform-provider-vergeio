@@ -1,6 +1,4 @@
 
-
-
 # Create Network with all parameters
 
 resource "vergeio_network" "example" {

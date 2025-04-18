@@ -1,6 +1,4 @@
 
-
-
 # Clusters data source fetches the Clusters from the VergeIO. 
 
 data "vergeio_clusters" "all" {

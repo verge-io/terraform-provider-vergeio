@@ -13,9 +13,6 @@ VM resource in VergeIO
 ## Example Usage
 
 ```terraform
-
-
-
 # Create a VM with a drive and a nic
 resource "vergeio_vm" "web-server" {
   name                 = "my-web-server"
@@ -30,24 +27,76 @@ resource "vergeio_vm" "web-server" {
   cloudinit_datasource = "nocloud"
   ha_group             = "web"
 
-  # Drive
+  # Blank Drive
   vergeio_drive {
     name           = "Web Server OS Disk"
     description    = "Operating System Disk"
-    disksize       = 10
+    disksize       = 100
     interface      = "virtio-scsi"
     preferred_tier = 3
     orderid        = 0
   }
-
+  # CD-Rom Drive
+    vergeio_drive {
+    name           = "CD ROM"
+    description    = "CD ROM"
+    media          = "cdrom"
+    media_source   = 33
+    interface      = "sata"
+  }
+  # Cloned Drive
+    vergeio_drive {
+    name           = "Clone"
+    description    = "Clone"
+    media          = "clone"
+    media_source   = 39
+    preferred_tier = 3
+    interface      = "virtio-scsi"
+  }
+  # Imported Drive From Media Images
+    vergeio_drive {
+    name           = "Import"
+    description    = "Import"
+    media          = "import"
+    media_source   = 59
+    preferred_tier = 3
+    interface      = "virtio-scsi"
+  }
+  # EFI Disk
+    vergeio_drive {
+    name           = "EFI Disk"
+    description    = "EFI Disk"
+    media          = "efidisk"
+  }   
   # NIC
   vergeio_nic {
-    name             = "Web Server Network"
-    description      = "NIC for Web Server"
-    interface        = "virtio"
-    enabled          = true
-    assign_ipaddress = true
+    name        = "Web Server Network"
+    description = "NIC for Web Server"
+    interface   = "virtio"
+    enabled     = true
   }
+  cloudinit_files = [
+    {
+    name     = "user-data"
+    contents = <<-EOT
+    #cloud-config
+    users:
+        - name: ubuntu
+        groups: sudo
+        shell: /bin/bash
+        sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+        ssh_authorized_keys:
+            - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQD...
+    EOT
+    },
+    {
+    name     = "meta-data"
+    contents = <<-EOT
+    instance-id: iid-local01
+    local-hostname: myhost
+    EOT
+    }
+]
 }
 ```
 
@@ -61,88 +110,197 @@ resource "vergeio_vm" "web-server" {
 
 ### Optional
 
-- `advanced` (String) Propery and value separated by '
-  ', e.g. 'tag1=val1
-  tag2=val2'
-- `allow_hotplug` (Boolean) Allow hotplug
-- `bond_interfaces_args` (List of Number) Bond interfaces args
-- `boot_delay` (Number) Boot delay
-- `boot_order` (String) Boot order
-- `cloudinit_datasource` (String) Cloudinit datasource
-- `cloudinit_files` (Attributes List) (see [below for nested schema](#nestedatt--cloudinit_files))
-- `cluster` (String) Cluster
-- `console` (String) Console
-- `console_pass` (String) Console pass
-- `console_pass_enabled` (Boolean) Console pass enabled
-- `cpu_cores` (Number) CPU cores
-- `cpu_type` (String) CPU type
-- `description` (String) Description
-- `disable_hypervisor` (Boolean) Disable hypervisor
-- `disable_powercycle` (Boolean) Disable powercycle
-- `display` (String) Display
-- `enable_bonding` (Boolean) Enable bonding
-- `enabled` (Boolean) VM state
-- `guest_agent` (Boolean) Guest agent
-- `guest_agent_ips` (List of String) Guest agent Ips
-- `ha_group` (String) HA group
-- `machine_type` (String) Machine type
-- `nested_virtualization` (Boolean) Nested virtualization
-- `os_description` (String) OS description
-- `os_family` (String) USB
-- `powerstate` (String) Power state of the vm
-- `preferred_node` (String) Preferred node
-- `ram` (Number) RAM
-- `rtc_base` (String) RTC base
-- `secure_boot` (Boolean) Secure boot
-- `serial_port` (Boolean) Serial port
-- `snapshot_profile` (String) Snapshot profile
-- `sound` (String) Sound
-- `uefi` (Boolean) UEFI
-- `usb_tablet` (Boolean) USB tablet
+- `allow_hotplug` (Boolean) - Default = True
+- `boot_delay` (Number) - Default = 5 Seconds
+- `boot_order` (String)
+    - `cd`     Disk, CD-ROM (**Default**)
+    - `cdn`    Disk, CD-ROM, Network
+    - `dc`     CD-ROM, Disk
+    - `nc`     Network Disk
+    - `n`      Network
+    - `c`      Disk
+    - `d`      CD-ROM
+    - `strict` Disk Order ID
+- `cluster` (Number) - Key of the desired compute cluster. Defaults to the system setting if not specified.
+- `console` (String)
+    - `vnc`    VNC (**Default**)
+    - `spice`  Spice
+    - `serial` Serial Console
+    - `none`   None
+- `console_pass` (String) - Depends on `console_pass_enabled`
+- `console_pass_enabled` (Boolean) - Default = False
+- `cpu_cores` (Number) - Default = 1
+- `cpu_type` (String) -  Default = Cluster CPU type
+    - `Broadwell`          Intel Core Processor (Broadwell)
+    - `Cascadelake-Server` Intel Xeon Processor (Cascadelake)
+    - `Conroe`             Intel Celeron (Conroe\/Merom Class Core 2)
+    - `Cooperlake`         Intel Xeon Processor (Cooperlake)
+    - `core2duo`           Intel Core 2 Duo (T7700)
+    - `coreduo`            Intel Core Duo (T2600)
+    - `Denverton`          Intel Atom Processor (Denverton)
+    - `EPYC`               AMD EPYC Processor
+    - `EPYC-Genoa`         AMD EPYC-Genoa Processor
+    - `EPYC-Milan`         AMD EPYC-Milan Processor
+    - `EPYC-Rome`          AMD EPYC-Rome Processor
+    - `GraniteRapids`      Intel Xeon Processor (GraniteRapids)
+    - `Haswell`            Intel Core Processor (Haswell)
+    - `host`               Host Processor
+    - `Icelake-Server`     Intel Xeon Processor (Icelake)
+    - `IvyBridge`          Intel Xeon E3-12xx v2 (Ivy Bridge)
+    - `KnightsMill`        Intel Xeon Phi Processor (Knights Mill)
+    - `kvm64`              Common KVM processor
+    - `n270`               Intel Atom (N270)
+    - `Nehalem`            Intel Core i7 9xx (Nehalem Class Core i7)
+    - `Opteron_G1`         AMD 240 (Gen 1 Opteron)
+    - `Opteron_G2`         AMD 22xx (Gen 2 Opteron)
+    - `Opteron_G3`         AMD 23xx (Gen 3 Opteron)
+    - `Opteron_G4`         AMD 62xx (Gen 4 Opteron)
+    - `Opteron_G5`         AMD 63xx (Gen 5 Opteron)
+    - `Penryn`             Intel Core 2 Duo P9xxx (Penryn Class Core 2)
+    - `phenom`             AMD 9550 Processor (Phenom)
+    - `qemu64`             QEMU Virtual CPU 64bit
+    - `SandyBridge`        Intel Xeon E312xx (Sandy Bridge)
+    - `SapphireRapids`     Intel Xeon Processor (SapphireRapids)
+    - `Skylake-Client`     Intel Core Processor (Skylake)
+    - `Skylake-Server`     Intel Xeon Processor (Skylake)
+    - `Snowridge`          Intel Atom Processor (SnowRidge)
+    - `Westmere`           Intel Westmere E56xx\/L56xx\/X56xx (Nehalem-C)
+- `description` (String)
+- `disable_powercycle` (Boolean) - Default = False
+- `display` (String)
+- `enabled` (Boolean) - Default = True
+- `guest_agent` (Boolean) - Default = False
+- `ha_group` (String) - Default = None, Sets the HA Group for VM clustering 
+- `machine` (Number) - Machine Key (ID)
+- `machine_type` (String)
+    - `pc`            i440FX + PIIX, 1996, Latest
+    - `pc-i440fx-2.7` i440FX + PIIX, 1996, 2.7
+    - `pc-i440fx-2.8` i440FX + PIIX, 1996, 2.8
+    - `pc-i440fx-2.9` i440FX + PIIX, 1996, 2.9
+    - `pc-i440fx-2.10` i440FX + PIIX, 1996, 2.10
+    - `pc-i440fx-2.11` i440FX + PIIX, 1996, 2.11
+    - `pc-i440fx-2.12` i440FX + PIIX, 1996, 2.12
+    - `pc-i440fx-3.0` i440FX + PIIX, 1996, 3.0
+    - `pc-i440fx-3.1` i440FX + PIIX, 1996, 3.1
+    - `pc-i440fx-4.0` i440FX + PIIX, 1996, 4.0
+    - `pc-i440fx-4.1` i440FX + PIIX, 1996, 4.1
+    - `pc-i440fx-4.2` i440FX + PIIX, 1996, 4.2
+    - `pc-i440fx-5.0` i440FX + PIIX, 1996, 5.0
+    - `pc-i440fx-5.1` i440FX + PIIX, 1996, 5.1
+    - `pc-i440fx-5.2` i440FX + PIIX, 1996, 5.2
+    - `pc-i440fx-6.0` i440FX + PIIX, 1996, 6.0
+    - `pc-i440fx-6.1` i440FX + PIIX, 1996, 6.1
+    - `pc-i440fx-6.2` i440FX + PIIX, 1996, 6.2
+    - `pc-i440fx-7.0` i440FX + PIIX, 1996, 7.0
+    - `pc-i440fx-7.1` i440FX + PIIX, 1996, 7.1
+    - `pc-i440fx-7.2` i440FX + PIIX, 1996, 7.2
+    - `pc-i440fx-8.0` i440FX + PIIX, 1996, 8.0
+    - `pc-i440fx-8.1` i440FX + PIIX, 1996, 8.1
+    - `pc-i440fx-9.0` i440FX + PIIX, 1996, 9.0
+    - `q35`           Q35 + ICH9, 2009, Latest
+    - `pc-q35-2.7`    Q35 + ICH9, 2009, 2.7
+    - `pc-q35-2.8`    Q35 + ICH9, 2009, 2.8
+    - `pc-q35-2.9`    Q35 + ICH9, 2009, 2.9
+    - `pc-q35-2.10`   Q35 + ICH9, 2009, 2.10
+    - `pc-q35-2.11`   Q35 + ICH9, 2009, 2.11
+    - `pc-q35-2.12`   Q35 + ICH9, 2009, 2.12
+    - `pc-q35-3.0`    Q35 + ICH9, 2009, 3.0
+    - `pc-q35-3.1`    Q35 + ICH9, 2009, 3.1 - **VergeOS Version 4.11 and below Default**
+    - `pc-q35-4.0`    Q35 + ICH9, 2009, 4.0
+    - `pc-q35-4.1`    Q35 + ICH9, 2009, 4.1
+    - `pc-q35-4.2`    Q35 + ICH9, 2009, 4.2
+    - `pc-q35-5.0`    Q35 + ICH9, 2009, 5.0
+    - `pc-q35-5.1`    Q35 + ICH9, 2009, 5.1
+    - `pc-q35-5.2`    Q35 + ICH9, 2009, 5.2
+    - `pc-q35-6.0`    Q35 + ICH9, 2009, 6.0
+    - `pc-q35-6.1`    Q35 + ICH9, 2009, 6.1
+    - `pc-q35-6.2`    Q35 + ICH9, 2009, 6.2
+    - `pc-q35-7.0`    Q35 + ICH9, 2009, 7.0
+    - `pc-q35-7.1`    Q35 + ICH9, 2009, 7.1
+    - `pc-q35-7.2`    Q35 + ICH9, 2009, 7.2
+    - `pc-q35-8.0`    Q35 + ICH9, 2009, 8.0
+    - `pc-q35-8.1`    Q35 + ICH9, 2009, 8.1 - **VergeOS Version 4.12 Default**
+    - `pc-q35-9.0`    Q35 + ICH9, 2009, 9.0 - **VergeOS Version 4.13 Default**
+- `os_description` (String)
+- `os_family` (String)
+    - `linux`   (**Default**)
+    - `windows` (Windows)
+    - `freebsd` (FreeBSD)
+    - `other`   (Other)
+- `preferred_node` (Number) - Key (ID) of desired node. Default selects the least used node in the assigned cluster.
+- `ram` (Number) - Calculated in 1024 base MB. Default 1GB
+- `rtc_base` (String)
+    - `utc` UTC
+    - `localtime` Localtime (Recommended for Widows)
+- `secure_boot` (Boolean) - Depends on `uefi` Default = False
+- `serial_port` (Boolean) - Default = False
+- `snapshot_profile` (Number) - Key of snapshot profile. Default = None
+- `sound` (String)
+    - `none` None (**Default**)
+    - `sb16`    Creative Sound Blaster 16
+    - `es1370`  ENSONIQ AudioPCI ES1370
+    - `ac97`    Intel 82801AA AC97 Audio
+    - `adlib`   Yamaha YM3812 (OPL2)
+    - `gus`     Gravis Ultrasound GF1
+    - `cs4231a` Crystal Semiconductor CS4231A
+    - `hda`     Intel HD Audio
+    - `pcspk`   PC Speaker
+- `uefi` (Boolean) - Default = False
+- `usb_tablet` (Boolean) - Default = True
+- `video` (String)
+    - `std`    Standard VESA 2.0 (**Default**)
+    - `cirrus` Cirrus Logic GD5446
+    - `vmware` VMware SVGA-II compatible
+    - `qxl`    QXL paravirtualized graphics (recommended for spice)
+    - `virtio` Virtio
+    - `none`   None (headless)
+- `powerstate` = (Boolean) - Default = False, Sets if VM should be powered on after creation
+- `cloudinit_datasource` (String), Default = None  
+  Options:  
+    - `nocloud`  
+    - `config_drive_v2`
+- `cloudinit_files` (List) - A list of objects representing the cloud-init files, Depends on `cloudinit_datasource`
+   - **Required Options**
+     - `name` (String) - The name of the file (e.g. `"user-data"`, `"meta-data"`, `"vendor-data"`, `"network-data"`)
+     - `contents` (String) - The file content, typically YAML for user-data and JSON for meta-data with
 - `vergeio_drive` (Block List) (see [below for nested schema](#nestedblock--vergeio_drive))
 - `vergeio_nic` (Block List) (see [below for nested schema](#nestedblock--vergeio_nic))
-- `video` (String) Video
-- `wait_for_guest_agent_info` (Number) Wait time in seconds for guest agent to be ready
 
 ### Read-Only
 
 - `id` (String) VM id (returned as the key) in VergeIO
 - `machine` (Number) Machine
 
-<a id="nestedatt--cloudinit_files"></a>
-
-### Nested Schema for `cloudinit_files`
-
-Required:
-
-- `contents` (String)
-- `name` (String)
-
-<a id="nestedblock--vergeio_drive"></a>
-
 ### Nested Schema for `vergeio_drive`
-
-Required:
-
-- `name` (String)
 
 Optional:
 
 - `asset` (String)
 - `description` (String)
-- `disksize` (Number)
-- `enabled` (Boolean)
+- `disksize` (Number) - Formatted in 1024 based GB. Ex: 1024GB = 1TB
+- `enabled` (Boolean) - Default = True
 - `interface` (String)
-- `key` (String)
-- `machine` (Number)
-- `media` (String)
-- `media_source` (Number)
-- `orderid` (Number)
-- `preferred_tier` (String)
-- `preserve_drive_format` (Boolean)
-- `readonly` (Boolean)
+	- `virtio`                (Virtio Legacy)
+	- `ide`                   (IDE) Only available on the i440x machine type
+	- `ahci`                  (SATA) Only available on the Q35 machine type
+	- `lsi53c895a`            (LSI53C895A SCSI)
+	- `megasas`               (LSI MegaRAID SAS 1078)
+	- `megasas-gen2`          (LSI MegaRAID SAS 2108)
+	- `mptsas1068`            (LSI SAS 1608)
+	- `virtio-scsi`           (Virtio-SCSI, **Default**)
+	- `virtio-scsi-dedicated` (Virtio-SCSI Dedicated Controller)
+  - `media` (String) - Media type of the resource
+	- `cdrom`   (CD-Rom)
+	- `disk`    (New Disk, **Default**)
+	- `import`  (Import drive from media images)
+	- `clone`   (Clone an existing VM disk)
+	- `efidisk` (Create a new EFI Disk)
+- `media_source` (Number) - ID of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom.
+- `orderid` (Number) - Sets the ID for the disk order on the Virtual Machine
+- `preferred_tier` (String) - Tier to assign the resource to. If one is not specified the default tier in the system settings will be used.
+- `preserve_drive_format` (Boolean) - Default = False
+- `readonly` (Boolean) Default = False
 - `serial` (String)
-
 <a id="nestedblock--vergeio_nic"></a>
 
 ### Nested Schema for `vergeio_nic`
@@ -150,17 +308,16 @@ Optional:
 Optional:
 
 - `asset` (String)
-- `assign_ipaddress` (Boolean)
 - `description` (String)
-- `driver` (String)
-- `enabled` (Boolean)
-- `id` (String)
+- `enabled` (Boolean) - Default = True
 - `interface` (String)
-- `ipaddress` (String) IP address assigned to nic. For this attribute to be set, `assign_ip_address` must be set to `true` and vent id should be set to an Internal Vnet.
+  - `virtio`  (Virtio, **Default**)
+  - `e1000`   (Intel)
+  - `rtl8139` (Realtek 8139)
+  - `pcnet`   (AMD PCNET)
+  - `e1000e`  (Intel e1000e)
+  - `igb`     (Intel 82576)
+  - `vmxnet3` (VMware Paravirtualized Ethernet v3)
 - `macaddress` (String)
-- `machine` (Number)
-- `model` (String)
-- `name` (String)
-- `port` (Number)
-- `vendor` (String)
-- `vnet` (Number)
+- `vnet` (Number) - Key (ID) of the vNET the resource will attach to.
+- `assign_ipaddress` (Boolean) - To assign an IP address to a NIC, `assign_ipaddress` must be true and `vnet` must point to a vNET with DHCP enabled

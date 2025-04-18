@@ -1,6 +1,4 @@
 
-
-
 # Create a VM with a drive and a nic
 resource "vergeio_vm" "web-server" {
   name                 = "my-web-server"

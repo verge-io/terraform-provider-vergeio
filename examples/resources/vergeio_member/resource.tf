@@ -1,6 +1,4 @@
 
-
-
 # Get all groups
 data "vergeio_groups" "all" {
   filter_name = "Administrators (default)"

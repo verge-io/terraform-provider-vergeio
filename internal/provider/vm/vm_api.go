@@ -179,43 +179,41 @@ type VMAPIGuestAgentIPAddresses struct {
 
 // VMAPIResourceModel describes the data model received from the Verge API.
 type VMAPIResourceModel struct {
-	Id                   string             `json:"id,omitempty"`
-	Machine              int32              `json:"machine,omitempty"`
-	Name                 string             `json:"name,omitempty"`
-	Cluster              string             `json:"cluster,omitempty"`
-	Description          string             `json:"description,omitempty"`
-	Enabled              bool               `json:"enabled,omitempty"`
-	MachineType          string             `json:"machine_type,omitempty"`
-	AllowHotplug         bool               `json:"allow_hotplug,omitempty"`
-	DisablePowercycle    bool               `json:"disable_powercycle,omitempty"`
-	CPUCores             int32              `json:"cpu_cores,omitempty"`
-	CPUType              string             `json:"cpu_type,omitempty"`
-	RAM                  int32              `json:"ram,omitempty"`
-	Console              string             `json:"console,omitempty"`
-	Display              string             `json:"display,omitempty"`
-	Video                string             `json:"video,omitempty"`
-	Sound                string             `json:"sound,omitempty"`
-	OSFamily             string             `json:"os_family,omitempty"`
-	OSDescription        string             `json:"os_description,omitempty"`
-	RTCBase              string             `json:"rtc_base,omitempty"`
-	BootOrder            string             `json:"boot_order,omitempty"`
-	ConsolePassEnabled   bool               `json:"console_pass_enabled,omitempty"`
-	ConsolePass          string             `json:"console_pass,omitempty"`
-	USBTablet            bool               `json:"usb_tablet,omitempty"`
-	UEFI                 bool               `json:"uefi,omitempty"`
-	SecureBoot           bool               `json:"secure_boot,omitempty"`
-	SerialPort           bool               `json:"serial_port,omitempty"`
-	BootDelay            int32              `json:"boot_delay,omitempty"`
-	PreferredNode        string             `json:"preferred_node,omitempty"`
-	SnapshotProfile      string             `json:"snapshot_profile,omitempty"`
-	CloudInitDataSource  string             `json:"cloudinit_datasource,omitempty"`
-	CloudInitFiles       []CloudInitFileAPI `json:"cloudinit_files,omitempty"`
-	PowerState           string             `json:"powerstate,omitempty"`
-	GuestAgent           bool               `json:"guest_agent,omitempty"`
-	HAGroup              string             `json:"ha_group,omitempty"`
-	Advanced             string             `json:"advanced,omitempty"`
-	NestedVirtualization bool               `json:"nested_virtualization"`
-	DisableHypervisor    bool               `json:"disable_hypervisor"`
+	Id                  string             `json:"id,omitempty"`
+	Machine             int32              `json:"machine,omitempty"`
+	Name                string             `json:"name,omitempty"`
+	Cluster             string             `json:"cluster,omitempty"`
+	Description         string             `json:"description,omitempty"`
+	Enabled             bool               `json:"enabled,omitempty"`
+	MachineType         string             `json:"machine_type,omitempty"`
+	AllowHotplug        bool               `json:"allow_hotplug,omitempty"`
+	DisablePowercycle   bool               `json:"disable_powercycle,omitempty"`
+	CPUCores            int32              `json:"cpu_cores,omitempty"`
+	CPUType             string             `json:"cpu_type,omitempty"`
+	RAM                 int32              `json:"ram,omitempty"`
+	Console             string             `json:"console,omitempty"`
+	Display             string             `json:"display,omitempty"`
+	Video               string             `json:"video,omitempty"`
+	Sound               string             `json:"sound,omitempty"`
+	OSFamily            string             `json:"os_family,omitempty"`
+	OSDescription       string             `json:"os_description,omitempty"`
+	RTCBase             string             `json:"rtc_base,omitempty"`
+	BootOrder           string             `json:"boot_order,omitempty"`
+	ConsolePassEnabled  bool               `json:"console_pass_enabled,omitempty"`
+	ConsolePass         string             `json:"console_pass,omitempty"`
+	USBTablet           bool               `json:"usb_tablet,omitempty"`
+	UEFI                bool               `json:"uefi,omitempty"`
+	SecureBoot          bool               `json:"secure_boot,omitempty"`
+	SerialPort          bool               `json:"serial_port,omitempty"`
+	BootDelay           int32              `json:"boot_delay,omitempty"`
+	PreferredNode       string             `json:"preferred_node,omitempty"`
+	SnapshotProfile     string             `json:"snapshot_profile,omitempty"`
+	CloudInitDataSource string             `json:"cloudinit_datasource,omitempty"`
+	CloudInitFiles      []CloudInitFileAPI `json:"cloudinit_files,omitempty"`
+	PowerState          string             `json:"powerstate,omitempty"`
+	GuestAgent          bool               `json:"guest_agent,omitempty"`
+	HAGroup             string             `json:"ha_group,omitempty"`
+	Advanced            string             `json:"advanced,omitempty"`
 }
 
 // VNetAction represents the structure for virtual vm action requests.
@@ -244,41 +242,39 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 
 	// Prepare the API data packet from the plan
 	apiData := VMAPIResourceModel{
-		Machine:              data.Machine.ValueInt32(),
-		Name:                 data.Name.ValueString(),
-		Cluster:              data.Cluster.ValueString(),
-		Description:          data.Description.ValueString(),
-		Enabled:              data.Enabled.ValueBool(),
-		MachineType:          data.MachineType.ValueString(),
-		AllowHotplug:         data.AllowHotplug.ValueBool(),
-		DisablePowercycle:    data.DisablePowercycle.ValueBool(),
-		CPUCores:             data.CPUCores.ValueInt32(),
-		CPUType:              data.CPUType.ValueString(),
-		RAM:                  data.RAM.ValueInt32(),
-		Console:              data.Console.ValueString(),
-		Display:              data.Display.ValueString(),
-		Video:                data.Video.ValueString(),
-		Sound:                data.Sound.ValueString(),
-		OSFamily:             data.OSFamily.ValueString(),
-		OSDescription:        data.OSDescription.ValueString(),
-		RTCBase:              data.RTCBase.ValueString(),
-		BootOrder:            data.BootOrder.ValueString(),
-		ConsolePassEnabled:   data.ConsolePassEnabled.ValueBool(),
-		ConsolePass:          data.ConsolePass.ValueString(),
-		USBTablet:            data.USBTablet.ValueBool(),
-		UEFI:                 data.UEFI.ValueBool(),
-		SecureBoot:           data.SecureBoot.ValueBool(),
-		SerialPort:           data.SerialPort.ValueBool(),
-		BootDelay:            data.BootDelay.ValueInt32(),
-		PreferredNode:        data.PreferredNode.ValueString(),
-		SnapshotProfile:      data.SnapshotProfile.ValueString(),
-		CloudInitDataSource:  data.CloudInitDataSource.ValueString(),
-		PowerState:           data.PowerState.ValueString(),
-		GuestAgent:           data.GuestAgent.ValueBool(),
-		HAGroup:              data.HAGroup.ValueString(),
-		Advanced:             data.Advanced.ValueString(),
-		NestedVirtualization: data.NestedVirtualization.ValueBool(),
-		DisableHypervisor:    data.DisableHypervisor.ValueBool(),
+		Machine:             data.Machine.ValueInt32(),
+		Name:                data.Name.ValueString(),
+		Cluster:             data.Cluster.ValueString(),
+		Description:         data.Description.ValueString(),
+		Enabled:             data.Enabled.ValueBool(),
+		MachineType:         data.MachineType.ValueString(),
+		AllowHotplug:        data.AllowHotplug.ValueBool(),
+		DisablePowercycle:   data.DisablePowercycle.ValueBool(),
+		CPUCores:            data.CPUCores.ValueInt32(),
+		CPUType:             data.CPUType.ValueString(),
+		RAM:                 data.RAM.ValueInt32(),
+		Console:             data.Console.ValueString(),
+		Display:             data.Display.ValueString(),
+		Video:               data.Video.ValueString(),
+		Sound:               data.Sound.ValueString(),
+		OSFamily:            data.OSFamily.ValueString(),
+		OSDescription:       data.OSDescription.ValueString(),
+		RTCBase:             data.RTCBase.ValueString(),
+		BootOrder:           data.BootOrder.ValueString(),
+		ConsolePassEnabled:  data.ConsolePassEnabled.ValueBool(),
+		ConsolePass:         data.ConsolePass.ValueString(),
+		USBTablet:           data.USBTablet.ValueBool(),
+		UEFI:                data.UEFI.ValueBool(),
+		SecureBoot:          data.SecureBoot.ValueBool(),
+		SerialPort:          data.SerialPort.ValueBool(),
+		BootDelay:           data.BootDelay.ValueInt32(),
+		PreferredNode:       data.PreferredNode.ValueString(),
+		SnapshotProfile:     data.SnapshotProfile.ValueString(),
+		CloudInitDataSource: data.CloudInitDataSource.ValueString(),
+		PowerState:          data.PowerState.ValueString(),
+		GuestAgent:          data.GuestAgent.ValueBool(),
+		HAGroup:             data.HAGroup.ValueString(),
+		Advanced:            data.Advanced.ValueString(),
 	}
 
 	// Add the cloud init files
@@ -338,40 +334,38 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 	apiData := VMAPIResourceModel{
 		Id: vergeio.StringToNil(planData.Id, stateData.Id, ""),
 		// Machine is read only
-		Name:                 vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Cluster:              vergeio.StringToNil(planData.Cluster, stateData.Cluster, ""),
-		Description:          vergeio.StringToNil(planData.Description, stateData.Description, ""),
-		Enabled:              vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
-		MachineType:          vergeio.StringToNil(planData.MachineType, stateData.MachineType, ""),
-		AllowHotplug:         vergeio.BoolToNil(planData.AllowHotplug, stateData.AllowHotplug, false),
-		DisablePowercycle:    vergeio.BoolToNil(planData.DisablePowercycle, stateData.DisablePowercycle, false),
-		CPUCores:             vergeio.Int32ToNil(planData.CPUCores, stateData.CPUCores, 0),
-		CPUType:              vergeio.StringToNil(planData.CPUType, stateData.CPUType, ""),
-		RAM:                  vergeio.Int32ToNil(planData.RAM, stateData.RAM, 0),
-		Console:              vergeio.StringToNil(planData.Console, stateData.Console, ""),
-		Display:              vergeio.StringToNil(planData.Display, stateData.Display, ""),
-		Video:                vergeio.StringToNil(planData.Video, stateData.Video, ""),
-		Sound:                vergeio.StringToNil(planData.Sound, stateData.Sound, ""),
-		OSFamily:             vergeio.StringToNil(planData.OSFamily, stateData.OSFamily, ""),
-		OSDescription:        vergeio.StringToNil(planData.OSDescription, stateData.OSDescription, ""),
-		RTCBase:              vergeio.StringToNil(planData.RTCBase, stateData.RTCBase, ""),
-		BootOrder:            vergeio.StringToNil(planData.BootOrder, stateData.BootOrder, ""),
-		ConsolePassEnabled:   vergeio.BoolToNil(planData.ConsolePassEnabled, stateData.ConsolePassEnabled, false),
-		ConsolePass:          vergeio.StringToNil(planData.ConsolePass, stateData.ConsolePass, ""),
-		USBTablet:            vergeio.BoolToNil(planData.USBTablet, stateData.USBTablet, false),
-		UEFI:                 vergeio.BoolToNil(planData.UEFI, stateData.UEFI, false),
-		SecureBoot:           vergeio.BoolToNil(planData.SecureBoot, stateData.SecureBoot, false),
-		SerialPort:           vergeio.BoolToNil(planData.SerialPort, stateData.SerialPort, false),
-		BootDelay:            vergeio.Int32ToNil(planData.BootDelay, stateData.BootDelay, 0),
-		PreferredNode:        vergeio.StringToNil(planData.PreferredNode, stateData.PreferredNode, ""),
-		SnapshotProfile:      vergeio.StringToNil(planData.SnapshotProfile, stateData.SnapshotProfile, ""),
-		CloudInitDataSource:  vergeio.StringToNil(planData.CloudInitDataSource, stateData.CloudInitDataSource, ""),
-		PowerState:           vergeio.StringToNil(planData.PowerState, stateData.PowerState, ""),
-		GuestAgent:           vergeio.BoolToNil(planData.GuestAgent, stateData.GuestAgent, false),
-		HAGroup:              vergeio.StringToNil(planData.HAGroup, stateData.HAGroup, ""),
-		Advanced:             vergeio.StringToNil(planData.Advanced, stateData.Advanced, ""),
-		NestedVirtualization: vergeio.BoolToNil(planData.NestedVirtualization, stateData.NestedVirtualization, false),
-		DisableHypervisor:    vergeio.BoolToNil(planData.DisableHypervisor, stateData.DisableHypervisor, false),
+		Name:                vergeio.StringToNil(planData.Name, stateData.Name, ""),
+		Cluster:             vergeio.StringToNil(planData.Cluster, stateData.Cluster, ""),
+		Description:         vergeio.StringToNil(planData.Description, stateData.Description, ""),
+		Enabled:             vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
+		MachineType:         vergeio.StringToNil(planData.MachineType, stateData.MachineType, ""),
+		AllowHotplug:        vergeio.BoolToNil(planData.AllowHotplug, stateData.AllowHotplug, false),
+		DisablePowercycle:   vergeio.BoolToNil(planData.DisablePowercycle, stateData.DisablePowercycle, false),
+		CPUCores:            vergeio.Int32ToNil(planData.CPUCores, stateData.CPUCores, 0),
+		CPUType:             vergeio.StringToNil(planData.CPUType, stateData.CPUType, ""),
+		RAM:                 vergeio.Int32ToNil(planData.RAM, stateData.RAM, 0),
+		Console:             vergeio.StringToNil(planData.Console, stateData.Console, ""),
+		Display:             vergeio.StringToNil(planData.Display, stateData.Display, ""),
+		Video:               vergeio.StringToNil(planData.Video, stateData.Video, ""),
+		Sound:               vergeio.StringToNil(planData.Sound, stateData.Sound, ""),
+		OSFamily:            vergeio.StringToNil(planData.OSFamily, stateData.OSFamily, ""),
+		OSDescription:       vergeio.StringToNil(planData.OSDescription, stateData.OSDescription, ""),
+		RTCBase:             vergeio.StringToNil(planData.RTCBase, stateData.RTCBase, ""),
+		BootOrder:           vergeio.StringToNil(planData.BootOrder, stateData.BootOrder, ""),
+		ConsolePassEnabled:  vergeio.BoolToNil(planData.ConsolePassEnabled, stateData.ConsolePassEnabled, false),
+		ConsolePass:         vergeio.StringToNil(planData.ConsolePass, stateData.ConsolePass, ""),
+		USBTablet:           vergeio.BoolToNil(planData.USBTablet, stateData.USBTablet, false),
+		UEFI:                vergeio.BoolToNil(planData.UEFI, stateData.UEFI, false),
+		SecureBoot:          vergeio.BoolToNil(planData.SecureBoot, stateData.SecureBoot, false),
+		SerialPort:          vergeio.BoolToNil(planData.SerialPort, stateData.SerialPort, false),
+		BootDelay:           vergeio.Int32ToNil(planData.BootDelay, stateData.BootDelay, 0),
+		PreferredNode:       vergeio.StringToNil(planData.PreferredNode, stateData.PreferredNode, ""),
+		SnapshotProfile:     vergeio.StringToNil(planData.SnapshotProfile, stateData.SnapshotProfile, ""),
+		CloudInitDataSource: vergeio.StringToNil(planData.CloudInitDataSource, stateData.CloudInitDataSource, ""),
+		PowerState:          vergeio.StringToNil(planData.PowerState, stateData.PowerState, ""),
+		GuestAgent:          vergeio.BoolToNil(planData.GuestAgent, stateData.GuestAgent, false),
+		HAGroup:             vergeio.StringToNil(planData.HAGroup, stateData.HAGroup, ""),
+		Advanced:            vergeio.StringToNil(planData.Advanced, stateData.Advanced, ""),
 	}
 
 	// Encode the API data
@@ -498,7 +492,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,powerstate,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
+	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,powerstate,guest_agent,advanced"})
 
 	// error checking
 	if err != nil {
@@ -552,8 +546,6 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.GuestAgent = types.BoolValue(vmAPIResp.GuestAgent)
 	data.HAGroup = types.StringValue(vmAPIResp.HAGroup)
 	data.Advanced = types.StringValue(vmAPIResp.Advanced)
-	data.NestedVirtualization = types.BoolValue(vmAPIResp.NestedVirtualization)
-	data.DisableHypervisor = types.BoolValue(vmAPIResp.DisableHypervisor)
 
 	if vmAPIResp.CloudInitFiles != nil {
 		for _, cloudInitFileAPI := range vmAPIResp.CloudInitFiles {
