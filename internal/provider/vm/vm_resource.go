@@ -83,9 +83,11 @@ type VMResourceModel struct {
 	Advanced              types.String    `tfsdk:"advanced"`
 	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
 	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
-	Disks         []*diskResourceModel `tfsdk:"vergeio_drive"`
-	NICs          []*nicResourceModel  `tfsdk:"vergeio_nic"`
-	GuestAgentIPs types.List           `tfsdk:"guest_agent_ips"`
+	Disks                []*diskResourceModel `tfsdk:"vergeio_drive"`
+	NICs                 []*nicResourceModel  `tfsdk:"vergeio_nic"`
+	GuestAgentIPs        types.List           `tfsdk:"guest_agent_ips"`
+	NestedVirtualization types.Bool           `tfsdk:"nested_virtualization"`
+	DisableHypervisor    types.Bool           `tfsdk:"disable_hypervisor"`
 }
 
 // Metadata returns the resource type name.
@@ -302,6 +304,16 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"guest_agent_ips": schema.ListAttribute{
 				ElementType:         types.StringType,
 				MarkdownDescription: "Guest agent Ips",
+				Optional:            true,
+				Computed:            true,
+			},
+			"nested_virtualization": schema.BoolAttribute{
+				MarkdownDescription: "Nested virtualization",
+				Optional:            true,
+				Computed:            true,
+			},
+			"disable_hypervisor": schema.BoolAttribute{
+				MarkdownDescription: "Disable hypervisor",
 				Optional:            true,
 				Computed:            true,
 			},
