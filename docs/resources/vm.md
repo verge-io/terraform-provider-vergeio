@@ -166,6 +166,7 @@ resource "vergeio_vm" "web-server" {
     - `Snowridge`          Intel Atom Processor (SnowRidge)
     - `Westmere`           Intel Westmere E56xx\/L56xx\/X56xx (Nehalem-C)
 - `description` (String)
+- `disable_hypervisor` (Boolean) - Default = False
 - `disable_powercycle` (Boolean) - Default = False
 - `display` (String)
 - `enabled` (Boolean) - Default = True
@@ -221,6 +222,7 @@ resource "vergeio_vm" "web-server" {
     - `pc-q35-8.0`    Q35 + ICH9, 2009, 8.0
     - `pc-q35-8.1`    Q35 + ICH9, 2009, 8.1 - **VergeOS Version 4.12 Default**
     - `pc-q35-9.0`    Q35 + ICH9, 2009, 9.0 - **VergeOS Version 4.13 Default**
+- `nested_virtualization` (Boolean), Default = False
 - `os_description` (String)
 - `os_family` (String)
     - `linux`   (**Default**)
