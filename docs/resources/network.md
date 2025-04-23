@@ -38,8 +38,11 @@ resource "vergeio_network" "external_example" {
   type = "external"
   on_power_loss = "last_state"
   ipaddress_type = "none"
-  layer2_type = "vlan"
-  
+  layer2_type = "vlan" 
+
+# Add VLAN Bonding to the External vNET
+  enable_bonding = true
+  bond_interfaces_args = [4,5] 
 }
 ```
 
@@ -69,6 +72,8 @@ resource "vergeio_network" "external_example" {
 - `interface_vnet` (Number) - Physical vNET ID to attach an external vNET to, Depends on `type=external`
 - `layer2_id` (Number) - VLAN ID to assign an external vNET, Depends on `type=external`
 - `ipaddress_type` (String) - `none` is required for a Layer 2 vNET
+- `enable_bonding` (Boolean) - Enables VLAN bonding across physical interfaces, Default = False, Depends on `type=extneral`
+- `bond_interfaces_args` (Array) - Specifies the ID(s) of the physical interfaces to attach the bond to, Depends on `enable_bonding = true`
 
 ### Read-Only
 
