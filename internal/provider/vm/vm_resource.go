@@ -573,6 +573,7 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 
 	// Read Terraform prior state data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	tflog.Debug(ctx, fmt.Sprintf("auto read %v", ctx))
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -582,6 +583,14 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	readDataError := r.vmApi.readVM(ctx, &data)
 
 	if readDataError != nil {
+		// if the resource was not found, likely deleted outside of terraform
+		// remove the resource from the state
+		// and return
+		if strings.Contains(readDataError.Error(), "not found") {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+
 		resp.Diagnostics.AddError(
 			"Error Fetching Data",
 			readDataError.Error(),

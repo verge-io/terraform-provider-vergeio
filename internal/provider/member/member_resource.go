@@ -6,6 +6,7 @@ package member
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
@@ -129,6 +130,14 @@ func (r *MemberResource) Read(ctx context.Context, req resource.ReadRequest, res
 	readDataError := r.memberApi.readMember(ctx, &data)
 
 	if readDataError != nil {
+		// if the resource was not found, likely deleted outside of terraform
+		// remove the resource from the state
+		// and return
+		if strings.Contains(readDataError.Error(), "not found") {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+
 		resp.Diagnostics.AddError(
 			"Error Fetching Data",
 			readDataError.Error(),
