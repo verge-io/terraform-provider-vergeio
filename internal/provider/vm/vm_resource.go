@@ -83,11 +83,13 @@ type VMResourceModel struct {
 	Advanced              types.String    `tfsdk:"advanced"`
 	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
 	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
-	Disks                []*diskResourceModel `tfsdk:"vergeio_drive"`
-	NICs                 []*nicResourceModel  `tfsdk:"vergeio_nic"`
-	GuestAgentIPs        types.List           `tfsdk:"guest_agent_ips"`
-	NestedVirtualization types.Bool           `tfsdk:"nested_virtualization"`
-	DisableHypervisor    types.Bool           `tfsdk:"disable_hypervisor"`
+	Disks                 []*diskResourceModel `tfsdk:"vergeio_drive"`
+	NICs                  []*nicResourceModel  `tfsdk:"vergeio_nic"`
+	GuestAgentIPs         types.List           `tfsdk:"guest_agent_ips"`
+	NestedVirtualization  types.Bool           `tfsdk:"nested_virtualization"`
+	DisableHypervisor     types.Bool           `tfsdk:"disable_hypervisor"`
+	WaitForGuestIPTimeout types.Int32          `tfsdk:"wait_for_guest_ip_timeout"`
+	IgnoredGuestIPs       types.String         `tfsdk:"ignored_guest_ips"`
 }
 
 // Metadata returns the resource type name.
@@ -316,6 +318,14 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "Disable hypervisor",
 				Optional:            true,
 				Computed:            true,
+			},
+			"wait_for_guest_ip_timeout": schema.Int32Attribute{
+				MarkdownDescription: "Wait time in seconds for guest ip to be ready",
+				Optional:            true,
+			},
+			"ignored_guest_ips": schema.StringAttribute{
+				MarkdownDescription: "Ignored guest ips (CIDR)",
+				Optional:            true,
 			},
 		},
 		// Nested blocks for NICs
@@ -548,19 +558,53 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		}
 	}
 
-	// Wait for the guest agent to be ready
-	if data.WaitForGuestAgentInfo.ValueInt32() > 0 {
-		tflog.Debug(ctx, fmt.Sprintf("Waiting for %v seconds for guest agent to be ready", data.WaitForGuestAgentInfo.ValueInt32()))
-		time.Sleep(time.Duration(data.WaitForGuestAgentInfo.ValueInt32()) * time.Second)
-	}
+	// First get both guest agent info and timeout values
+	waitForGuestAgentInfo := data.WaitForGuestAgentInfo.ValueInt32()
+	waitForGuestIPTimeout := data.WaitForGuestIPTimeout.ValueInt32()
+	toIgnoreCidr := data.IgnoredGuestIPs.ValueString()
 
-	// Read the VM from the API to get all the data.
-	if readError := r.vmApi.readGuestAgentInfo(ctx, &data); readError != nil {
-		resp.Diagnostics.AddError(
-			"Error reading guest agent info",
-			readError.Error(),
-		)
-		return
+	ipFound := false                 // to break the loop when IP is found
+	var retryCheckInterval int32 = 5 // seconds
+	var i int32 = 0
+
+	// run a loop until the max of var1 and var2
+	for i = 0; i <= max(waitForGuestAgentInfo, waitForGuestIPTimeout); i++ {
+		time.Sleep(1 * time.Second)
+
+		// check if i is a multiple of retryCheckInterval and less than waitForGuestIPTimeout
+		if i%retryCheckInterval == 0 && i < waitForGuestIPTimeout && !ipFound {
+			fmt.Println("Checking the IP address after ", i, " seconds")
+
+			// Read the guest agent info.
+			if readError := r.vmApi.readGuestAgentInfo(ctx, &data, toIgnoreCidr); readError != nil {
+				resp.Diagnostics.AddError(
+					"Error reading guest agent info",
+					readError.Error(),
+				)
+				return
+			}
+
+			// Check if the IP address is found
+			if len(data.GuestAgentIPs.Elements()) > 0 {
+				ipFound = true
+				waitForGuestIPTimeout = 0
+			}
+		}
+
+		// call the waitForGuestAgentInfo function when i = waitForGuestAgentInfo
+		if i == waitForGuestAgentInfo {
+			fmt.Println("Checking the guest agent info after ", i, " seconds")
+			// Read the guest agent info.
+			if readError := r.vmApi.readGuestAgentInfo(ctx, &data, ""); readError != nil {
+				resp.Diagnostics.AddError(
+					"Error reading guest agent info",
+					readError.Error(),
+				)
+				return
+			}
+		}
+
+		fmt.Println(i)
 	}
 
 	// Save data into Terraform state

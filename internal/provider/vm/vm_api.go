@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 
@@ -570,7 +571,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 }
 
 // Read the guest agent info to get the ip addresses
-func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel) error {
+func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel, toIgnoreCider string) error {
 
 	tflog.Debug(ctx, "Reading the guest agent data")
 
@@ -618,7 +619,7 @@ func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel) 
 		for _, ip := range network.IPAddresses {
 			if ip.IPAddressType == "ipv4" {
 				var pointer = types.StringPointerValue(&ip.IPAddress)
-				if !pointer.IsNull() {
+				if !pointer.IsNull() && !isIPInCIDR(&ip.IPAddress, toIgnoreCider) {
 					Ips = append(Ips, &pointer)
 				}
 			}
@@ -746,4 +747,18 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
 	return nil
+}
+
+func isIPInCIDR(ipStr *string, cidrStr string) bool {
+	ip := net.ParseIP(*ipStr)
+	if ip == nil {
+		return false
+	}
+
+	_, cidrNet, err := net.ParseCIDR(cidrStr)
+	if err != nil {
+		return false
+	}
+
+	return cidrNet.Contains(ip)
 }
