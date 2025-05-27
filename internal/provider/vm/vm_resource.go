@@ -292,7 +292,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"powerstate": schema.StringAttribute{
 				MarkdownDescription: "Power state of the vm",
 				Optional:            true,
-				Computed:            true,
+				// Computed:            true,
 			},
 			"advanced": schema.StringAttribute{
 				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
@@ -748,7 +748,7 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		}
 
 		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 
 		// Call the API to check if the vm is in a power state that can be deleted
 		if err := r.vmApi.checkVMPowerState(ctx, &data); err != nil {

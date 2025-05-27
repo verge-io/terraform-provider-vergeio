@@ -12,6 +12,8 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
@@ -282,6 +284,11 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		DisableHypervisor:    data.DisableHypervisor.ValueBool(),
 	}
 
+	// Default power state to true if not defined
+	// if apiData.PowerState == "" {
+	// 	apiData.PowerState = "true"
+	// }
+
 	// Add the cloud init files
 	if data.CloudInitFiles != nil {
 		for _, cloudInitFile := range data.CloudInitFiles {
@@ -323,6 +330,48 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	data.Id = types.StringValue(vmAPIResp.Key)
 
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
+
+	// Check the power state of the VM
+	// if err := va.checkVMPowerState(ctx, data); err != nil {
+	// 	return fmt.Errorf("error checking the power state of the VM: %v", err)
+	// }
+	// tflog.Debug(ctx, fmt.Sprintf("VM power state after creation %v", data.PowerState.ValueString()))
+
+	// If the power state is set to true, we have to check the power state and wait for it to be running.
+	if data.PowerState.ValueString() == "true" { //} || data.PowerState.ValueString() == "" {
+		tflog.Debug(ctx, "Power state is set to true, checking the power state")
+
+		// Check the power state of the VM
+		if err := va.checkVMPowerStateBool(ctx, data); err != nil {
+			return fmt.Errorf("error checking the power state of the VM: %v", err)
+		}
+		tflog.Debug(ctx, fmt.Sprintf("VM power state after creation %v", data.PowerState.ValueString()))
+
+		Retries := 1
+
+		// If the power state is not running, we have to wait for it to be running.
+		for strings.ToLower(data.PowerState.ValueString()) != "true" {
+
+			// Wait for a short period to allow the kill operation to complete
+			time.Sleep(5 * time.Second)
+
+			// Check the power state of the VM
+			if err := va.checkVMPowerStateBool(ctx, data); err != nil {
+				return fmt.Errorf("error checking the power state of the VM: %v", err)
+			}
+			tflog.Debug(ctx, fmt.Sprintf("VM power state after creation %v", data.PowerState.ValueString()))
+
+			Retries += 1
+
+			// We are only going to retry 5 times before giving up
+			if Retries > 5 {
+				// TODO: add logic to rollback the VM creation if the power state is not running after 5 retries
+				// for now we will just return
+				break
+			}
+			continue
+		}
+	}
 
 	// Read the VM from the API to get all the data.
 	if readError := va.readVM(ctx, data); readError != nil {
@@ -399,6 +448,33 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 
 	defer apiResp.Body.Close()
 
+	// We now have to handle the desired power state.
+	if planData.PowerState.ValueString() == "true" {
+		tflog.Debug(ctx, "Power state is set to true, checking the power state")
+		if err := va.checkVMPowerStateBool(ctx, planData); err != nil {
+			return err
+		}
+		if planData.PowerState.ValueString() != "true" {
+			// It's not running, so we have to power it on.
+			if err := va.powerOnVM(ctx, planData); err != nil {
+				return err
+			}
+			stateData.PowerState = types.StringValue("true")
+		}
+	} else if planData.PowerState.ValueString() == "false" {
+		tflog.Debug(ctx, "Power state is set to false, checking the power state")
+		if err := va.checkVMPowerStateBool(ctx, planData); err != nil {
+			return err
+		}
+		if planData.PowerState.ValueString() != "false" {
+			// It's running, so we have to power it off.
+			if err := va.killVM(ctx, planData); err != nil {
+				return err
+			}
+			stateData.PowerState = types.StringValue("false")
+		}
+	}
+
 	return nil
 }
 
@@ -418,6 +494,47 @@ func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 	}
 
 	tflog.Debug(ctx, "VM was successfully deleted")
+
+	return nil
+}
+
+// This function checks the power state of the VM by calling the API and sets the string "true" or "false".
+func (va *VMApi) checkVMPowerStateBool(ctx context.Context, data *VMResourceModel) error {
+
+	// Send the kill action request to the vnet_actions endpoint
+	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
+		VMEndpoint,
+		url.PathEscape(data.Id.ValueString())),
+		&vergeio.Options{
+			Fields: "machine#status#display(status) as powerState"})
+
+	// error checking
+	if err != nil {
+		return err
+	}
+	if apiResp == nil {
+		return errors.New("missing response from the API")
+	}
+	if apiResp.StatusCode != 200 {
+		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+
+	// Decode the API response
+	var vmAPIResp VMAPIResourceModel
+	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
+		return fmt.Errorf("invalid format received for VM Item: %v", err)
+	}
+
+	// save into the resource model
+	if strings.ToLower(vmAPIResp.PowerState) == "running" {
+		data.PowerState = types.StringValue("true")
+	} else {
+		data.PowerState = types.StringValue("false")
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("VM status read from API: %v", data.PowerState.ValueString()))
 
 	return nil
 }
@@ -459,8 +576,18 @@ func (va *VMApi) checkVMPowerState(ctx context.Context, data *VMResourceModel) e
 }
 
 func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
-
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill VM API for VM %v", data.Id.ValueString()))
+	return va.changeVMPowerState(ctx, data, "kill")
+}
+
+func (va *VMApi) powerOnVM(ctx context.Context, data *VMResourceModel) error {
+	tflog.Debug(ctx, fmt.Sprintf("Calling the Power On VM API for VM %v", data.Id.ValueString()))
+	return va.changeVMPowerState(ctx, data, "poweron")
+}
+
+func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, desiredState string) error {
+
+	tflog.Debug(ctx, fmt.Sprintf("Change the power state for VM %v to %v", data.Id.ValueString(), desiredState))
 
 	// Convert vmID string to int
 	vmIDInt, err := strconv.Atoi(data.Id.ValueString())
@@ -471,7 +598,7 @@ func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 	// Create the action payload according to vnet_actions schema
 	actionPayload := VMAction{
 		VM:     int32(vmIDInt),
-		Action: "kill",
+		Action: desiredState,
 	}
 	bytedata, err := json.Marshal(actionPayload)
 	if err != nil {
@@ -483,7 +610,7 @@ func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 		return err
 	}
 	if req.StatusCode != 201 {
-		return fmt.Errorf("failed to kill VM: status code %v", req.StatusCode)
+		return fmt.Errorf("failed to change the VM power state: status code %v", req.StatusCode)
 	}
 
 	return nil
@@ -499,7 +626,8 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,powerstate,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
+	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
+	// ), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,machine#status#running as powerstate,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
 
 	// error checking
 	if err != nil {
