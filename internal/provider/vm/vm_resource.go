@@ -78,7 +78,7 @@ type VMResourceModel struct {
 	CloudInitDataSource   types.String    `tfsdk:"cloudinit_datasource"`
 	HAGroup               types.String    `tfsdk:"ha_group"`
 	CloudInitFiles        []CloudInitFile `tfsdk:"cloudinit_files"`
-	PowerState            types.String    `tfsdk:"powerstate"`
+	PowerState            types.Bool      `tfsdk:"powerstate"`
 	GuestAgent            types.Bool      `tfsdk:"guest_agent"`
 	Advanced              types.String    `tfsdk:"advanced"`
 	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
@@ -289,10 +289,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					},
 				},
 			},
-			"powerstate": schema.StringAttribute{
+			"powerstate": schema.BoolAttribute{
 				MarkdownDescription: "Power state of the vm",
 				Optional:            true,
-				// Computed:            true,
+				Computed:            true,
 			},
 			"advanced": schema.StringAttribute{
 				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
@@ -723,8 +723,11 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 
 	tflog.Debug(ctx, fmt.Sprintf("Deleting VM %v", data))
 
-	// Call the API to check the current power state
-	if err := r.vmApi.checkVMPowerState(ctx, &data); err != nil {
+	// make sure the VM is in a power state that can be deleted
+	var currentPowerState *bool
+	var err error
+
+	if currentPowerState, err = r.vmApi.isVMRunning(ctx, data.Id.ValueString()); err != nil {
 		resp.Diagnostics.AddError(
 			"Failed to check Power State before deletion:",
 			err.Error(),
@@ -732,11 +735,11 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		return
 	}
 
-	// Call the API to check if the vm is in a power state that can be deleted
-	for strings.ToLower(data.PowerState.ValueString()) != "stopped" {
-		Retries := 1
+	tflog.Debug(ctx, fmt.Sprintf("Current vm power state is %v", *currentPowerState))
 
-		tflog.Debug(ctx, fmt.Sprintf("Current vm power state is %v", data))
+	// If the VM is running, we need to power it off before deletion
+	for *currentPowerState {
+		Retries := 1
 
 		// Power the vm off
 		if err := r.vmApi.killVM(ctx, &data); err != nil {
@@ -748,10 +751,10 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		}
 
 		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(2 * time.Second)
+		time.Sleep(5 * time.Second)
 
 		// Call the API to check if the vm is in a power state that can be deleted
-		if err := r.vmApi.checkVMPowerState(ctx, &data); err != nil {
+		if currentPowerState, err = r.vmApi.isVMRunning(ctx, data.Id.ValueString()); err != nil {
 			resp.Diagnostics.AddError(
 				"Failed to check Power State before deletion:",
 				err.Error(),
@@ -772,7 +775,7 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		continue
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("VM state before deletion %v", data.PowerState.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("VM state before deletion %v", data.PowerState.ValueBool()))
 
 	// Proceed with vm deletion
 	// IMPORTANT: we don't need to explicitly delete the nics and the disks. They will be deleted when the VM is deleted.
