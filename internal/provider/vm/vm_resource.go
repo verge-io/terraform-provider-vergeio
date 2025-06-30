@@ -511,6 +511,13 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
+	// Let's presever the desired power state
+	// as it will be used later to power on the VM if needed.
+	desiredPowerState := false // Default to false
+	if !data.PowerState.IsNull() {
+		desiredPowerState = data.PowerState.ValueBool()
+	}
+
 	// Create a new VM
 	createError := r.vmApi.CreateVM(ctx, &data)
 	if createError != nil {
@@ -555,6 +562,18 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				)
 				return
 			}
+		}
+	}
+
+	// Now turn the power on if the power state is true
+	if desiredPowerState {
+		tflog.Debug(ctx, "Powering on the VM")
+		if powerOnError := r.vmApi.powerOnVM(ctx, &data); powerOnError != nil {
+			resp.Diagnostics.AddError(
+				"Error powering on VM",
+				powerOnError.Error(),
+			)
+			return
 		}
 	}
 
@@ -605,6 +624,15 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		}
 
 		fmt.Println(i)
+	}
+
+	// read the final state of the VM
+	if readError := r.vmApi.readVM(ctx, &data); readError != nil {
+		resp.Diagnostics.AddError(
+			"Error reading the VM",
+			readError.Error(),
+		)
+		return
 	}
 
 	// Save data into Terraform state
@@ -738,9 +766,8 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 	tflog.Debug(ctx, fmt.Sprintf("Current vm power state is %v", *currentPowerState))
 
 	// If the VM is running, we need to power it off before deletion
-	for *currentPowerState {
-		Retries := 1
-
+	if *currentPowerState {
+		tflog.Debug(ctx, "VM is running, powering it off before deletion")
 		// Power the vm off
 		if err := r.vmApi.killVM(ctx, &data); err != nil {
 			resp.Diagnostics.AddError(
@@ -749,33 +776,7 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 			)
 			return
 		}
-
-		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(5 * time.Second)
-
-		// Call the API to check if the vm is in a power state that can be deleted
-		if currentPowerState, err = r.vmApi.isVMRunning(ctx, data.Id.ValueString()); err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to check Power State before deletion:",
-				err.Error(),
-			)
-			return
-		}
-
-		Retries += 1
-
-		// We are only going to retry 5 times before giving up
-		if Retries > 5 {
-			resp.Diagnostics.AddError(
-				"Failed to kill VM before deletion:",
-				fmt.Sprintf("Failed to kill VM before deletion after %d retries", Retries),
-			)
-			return
-		}
-		continue
 	}
-
-	tflog.Debug(ctx, fmt.Sprintf("VM state before deletion %v", data.PowerState.ValueBool()))
 
 	// Proceed with vm deletion
 	// IMPORTANT: we don't need to explicitly delete the nics and the disks. They will be deleted when the VM is deleted.

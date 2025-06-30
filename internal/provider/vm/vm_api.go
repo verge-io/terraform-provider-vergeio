@@ -251,36 +251,38 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 
 	// Prepare the API data packet from the plan
 	apiData := VMAPIResourceModel{
-		Machine:              data.Machine.ValueInt32(),
-		Name:                 data.Name.ValueString(),
-		Cluster:              data.Cluster.ValueString(),
-		Description:          data.Description.ValueString(),
-		Enabled:              data.Enabled.ValueBool(),
-		MachineType:          data.MachineType.ValueString(),
-		AllowHotplug:         data.AllowHotplug.ValueBool(),
-		DisablePowercycle:    data.DisablePowercycle.ValueBool(),
-		CPUCores:             data.CPUCores.ValueInt32(),
-		CPUType:              data.CPUType.ValueString(),
-		RAM:                  data.RAM.ValueInt32(),
-		Console:              data.Console.ValueString(),
-		Display:              data.Display.ValueString(),
-		Video:                data.Video.ValueString(),
-		Sound:                data.Sound.ValueString(),
-		OSFamily:             data.OSFamily.ValueString(),
-		OSDescription:        data.OSDescription.ValueString(),
-		RTCBase:              data.RTCBase.ValueString(),
-		BootOrder:            data.BootOrder.ValueString(),
-		ConsolePassEnabled:   data.ConsolePassEnabled.ValueBool(),
-		ConsolePass:          data.ConsolePass.ValueString(),
-		USBTablet:            data.USBTablet.ValueBool(),
-		UEFI:                 data.UEFI.ValueBool(),
-		SecureBoot:           data.SecureBoot.ValueBool(),
-		SerialPort:           data.SerialPort.ValueBool(),
-		BootDelay:            data.BootDelay.ValueInt32(),
-		PreferredNode:        data.PreferredNode.ValueString(),
-		SnapshotProfile:      data.SnapshotProfile.ValueString(),
-		CloudInitDataSource:  data.CloudInitDataSource.ValueString(),
-		PowerState:           data.PowerState.ValueBool(),
+		Machine:             data.Machine.ValueInt32(),
+		Name:                data.Name.ValueString(),
+		Cluster:             data.Cluster.ValueString(),
+		Description:         data.Description.ValueString(),
+		Enabled:             data.Enabled.ValueBool(),
+		MachineType:         data.MachineType.ValueString(),
+		AllowHotplug:        data.AllowHotplug.ValueBool(),
+		DisablePowercycle:   data.DisablePowercycle.ValueBool(),
+		CPUCores:            data.CPUCores.ValueInt32(),
+		CPUType:             data.CPUType.ValueString(),
+		RAM:                 data.RAM.ValueInt32(),
+		Console:             data.Console.ValueString(),
+		Display:             data.Display.ValueString(),
+		Video:               data.Video.ValueString(),
+		Sound:               data.Sound.ValueString(),
+		OSFamily:            data.OSFamily.ValueString(),
+		OSDescription:       data.OSDescription.ValueString(),
+		RTCBase:             data.RTCBase.ValueString(),
+		BootOrder:           data.BootOrder.ValueString(),
+		ConsolePassEnabled:  data.ConsolePassEnabled.ValueBool(),
+		ConsolePass:         data.ConsolePass.ValueString(),
+		USBTablet:           data.USBTablet.ValueBool(),
+		UEFI:                data.UEFI.ValueBool(),
+		SecureBoot:          data.SecureBoot.ValueBool(),
+		SerialPort:          data.SerialPort.ValueBool(),
+		BootDelay:           data.BootDelay.ValueInt32(),
+		PreferredNode:       data.PreferredNode.ValueString(),
+		SnapshotProfile:     data.SnapshotProfile.ValueString(),
+		CloudInitDataSource: data.CloudInitDataSource.ValueString(),
+		// We are not sending the power state here, as it will be handled separately.
+		// When send the power state via the create API, it doesn't start the devices like drives and nics.
+		// PowerState:           false,
 		GuestAgent:           data.GuestAgent.ValueBool(),
 		HAGroup:              data.HAGroup.ValueString(),
 		Advanced:             data.Advanced.ValueString(),
@@ -329,45 +331,6 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	data.Id = types.StringValue(vmAPIResp.Key)
 
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
-
-	// If the power state is set to true, we have to check the power state and wait for it to be running.
-	if data.PowerState.ValueBool() { //} || data.PowerState.ValueString() == "" {
-		tflog.Debug(ctx, "Power state is set to true. Now check the VM currentpower state")
-
-		var currentPowerState *bool
-		var err error
-
-		// Check the power state of the VM
-		if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
-			return fmt.Errorf("error checking the power state of the VM: %v", err)
-		}
-		tflog.Debug(ctx, fmt.Sprintf("VM power state after creation %v", data.PowerState.ValueBool()))
-
-		Retries := 1
-
-		// If the power state is not running, we have to wait for it to be running.
-		for !*currentPowerState {
-
-			// Wait for a short period to allow the kill operation to complete
-			time.Sleep(5 * time.Second)
-
-			// Check the power state of the VM
-			if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
-				return fmt.Errorf("error checking the power state of the VM: %v", err)
-			}
-			tflog.Debug(ctx, fmt.Sprintf("VM power state after the wait %v", data.PowerState.ValueBool()))
-
-			Retries += 1
-
-			// We are only going to retry 5 times before giving up
-			if Retries > 5 {
-				// TODO: add logic to rollback the VM creation if the power state is not running after 5 retries
-				// for now we will just return
-				break
-			}
-			continue
-		}
-	}
 
 	// Read the VM from the API to get all the data.
 	if readError := va.readVM(ctx, data); readError != nil {
@@ -543,52 +506,29 @@ func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
 	return vmAPIResp.PowerState, nil
 }
 
-// func (va *VMApi) checkVMPowerState(ctx context.Context, data *VMResourceModel) error {
-
-// 	// Send the kill action request to the vnet_actions endpoint
-// 	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
-// 		VMEndpoint,
-// 		url.PathEscape(data.Id.ValueString())),
-// 		&vergeio.Options{
-// 			Fields: "machine#status#display(status) as powerState"})
-
-// 	// error checking
-// 	if err != nil {
-// 		return err
-// 	}
-// 	if apiResp == nil {
-// 		return errors.New("missing response from the API")
-// 	}
-// 	if apiResp.StatusCode != 200 {
-// 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-// 	}
-
-// 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
-
-// 	// Decode the API response
-// 	var vmAPIResp VMAPIResourceModel
-// 	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-// 		return fmt.Errorf("invalid format received for VM Item: %v", err)
-// 	}
-
-// 	// save into the resource model
-// 	data.PowerState = types.StringValue(vmAPIResp.PowerState)
-
-// 	tflog.Debug(ctx, fmt.Sprintf("VM status read from API: %v", data.PowerState.ValueString()))
-
-// 	return nil
-// }
-
+// This function kills the VM
 func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill VM API for VM %v", data.Id.ValueString()))
 	return va.changeVMPowerState(ctx, data, "kill")
 }
 
+// This function powers on the VM
 func (va *VMApi) powerOnVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Power On VM API for VM %v", data.Id.ValueString()))
-	return va.changeVMPowerState(ctx, data, "poweron")
+	err := va.changeVMPowerState(ctx, data, "poweron")
+	if err != nil {
+		return err
+	}
+
+	// wait for the vm to come up
+	time.Sleep(10 * time.Second)
+
+	return nil
 }
 
+// This function changes the power state of the VM
+// It "kill" or "poweron" the VM based on the desired state
+// It also waits for the VM to be in the desired state
 func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, desiredState string) error {
 
 	tflog.Debug(ctx, fmt.Sprintf("Change the power state for VM %v to %v", data.Id.ValueString(), desiredState))
@@ -608,13 +548,57 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 	if err != nil {
 		return err
 	}
-	// Send the kill action request to the vnet_actions endpoint
+	// Send the action request to the vnet_actions endpoint
 	req, err := va.client.Post(VMActionEndpoint, bytes.NewBuffer(bytedata))
 	if err != nil {
 		return err
 	}
 	if req.StatusCode != 201 {
 		return fmt.Errorf("failed to change the VM power state: status code %v", req.StatusCode)
+	}
+
+	// Now wait for the VM to be in the desired state
+	tflog.Debug(ctx, fmt.Sprintf("Waiting for the VM %v to be in the desired state %v", data.Id.ValueString(), desiredState))
+
+	var currentPowerState *bool = nil
+	var desiredBoolState bool
+	switch desiredState {
+	case "poweron":
+		desiredBoolState = true
+	case "kill":
+		desiredBoolState = false
+	default:
+		return fmt.Errorf("invalid desired state: %s", desiredState)
+	}
+	boolDesriredState := &desiredBoolState
+
+	// Check the power state of the VM
+	if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
+		return fmt.Errorf("error checking the power state of the VM: %v", err)
+	}
+	Retries := 1
+
+	// If the power state is not running, we have to wait for it to be running.
+	for *currentPowerState != *boolDesriredState {
+
+		// Wait for a short period to allow the kill operation to complete
+		time.Sleep(5 * time.Second)
+
+		// Check the power state of the VM
+		if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
+			return fmt.Errorf("error checking the power state of the VM: %v", err)
+		}
+		tflog.Debug(ctx, fmt.Sprintf("VM power state after the wait %v", data.PowerState.ValueBool()))
+
+		Retries += 1
+
+		// We are only going to retry 5 times before giving up
+		if Retries > 5 {
+			// TODO: add logic to rollback the VM creation if the power state is not running after 5 retries
+			// for now we will just return
+			break
+		}
+		continue
 	}
 
 	return nil
