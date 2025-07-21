@@ -13,6 +13,7 @@ import (
 	"terraform-provider-vergeio/internal/provider/member"
 	"terraform-provider-vergeio/internal/provider/network"
 	"terraform-provider-vergeio/internal/provider/node"
+	resourseGroups "terraform-provider-vergeio/internal/provider/resource_groups"
 	"terraform-provider-vergeio/internal/provider/user"
 	"terraform-provider-vergeio/internal/provider/vergeio"
 	"terraform-provider-vergeio/internal/provider/version"
@@ -117,6 +118,7 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		mediasource.NewMediasourceDataSource,
 		node.NewNodeDataSource,
 		cloudinitFile.NewCloudinitFileDataSource,
+		resourseGroups.NewResourceGroupsDataSource,
 	}
 }
 

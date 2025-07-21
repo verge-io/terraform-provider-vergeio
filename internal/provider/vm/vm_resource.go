@@ -33,9 +33,10 @@ func NewVMResource() resource.Resource {
 
 // VMResource defines the resource implementation.
 type VMResource struct {
-	vmApi   *VMApi
-	diskApi *DiskApi
-	nicApi  *NICApi
+	vmApi     *VMApi
+	diskApi   *DiskApi
+	nicApi    *NICApi
+	deviceApi *DeviceApi
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
@@ -83,13 +84,14 @@ type VMResourceModel struct {
 	Advanced              types.String    `tfsdk:"advanced"`
 	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
 	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
-	Disks                 []*diskResourceModel `tfsdk:"vergeio_drive"`
-	NICs                  []*nicResourceModel  `tfsdk:"vergeio_nic"`
-	GuestAgentIPs         types.List           `tfsdk:"guest_agent_ips"`
-	NestedVirtualization  types.Bool           `tfsdk:"nested_virtualization"`
-	DisableHypervisor     types.Bool           `tfsdk:"disable_hypervisor"`
-	WaitForGuestIPTimeout types.Int32          `tfsdk:"wait_for_guest_ip_timeout"`
-	IgnoredGuestIPs       types.String         `tfsdk:"ignored_guest_ips"`
+	Disks                 []*diskResourceModel   `tfsdk:"vergeio_drive"`
+	NICs                  []*nicResourceModel    `tfsdk:"vergeio_nic"`
+	Devices               []*deviceResourceModel `tfsdk:"vergeio_device"`
+	GuestAgentIPs         types.List             `tfsdk:"guest_agent_ips"`
+	NestedVirtualization  types.Bool             `tfsdk:"nested_virtualization"`
+	DisableHypervisor     types.Bool             `tfsdk:"disable_hypervisor"`
+	WaitForGuestIPTimeout types.Int32            `tfsdk:"wait_for_guest_ip_timeout"`
+	IgnoredGuestIPs       types.String           `tfsdk:"ignored_guest_ips"`
 }
 
 // Metadata returns the resource type name.
@@ -474,6 +476,51 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					},
 				},
 			},
+			// Nested blocks for devices
+			"vergeio_device": schema.ListNestedBlock{
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"key": schema.StringAttribute{
+							Optional: true,
+							Computed: true,
+						},
+						"machine": schema.Int32Attribute{
+							Computed: true,
+							Optional: true,
+						},
+						"machine_type": schema.StringAttribute{
+							Optional: true,
+							Computed: true,
+						},
+						"type": schema.StringAttribute{
+							MarkdownDescription: "Type of the device",
+							Optional:            true,
+							Computed:            true,
+						},
+						"name": schema.StringAttribute{
+							Required: true,
+						},
+						"description": schema.StringAttribute{
+							Optional: true,
+							Computed: true,
+						},
+						"resource_group": schema.StringAttribute{
+							MarkdownDescription: "Resource group of the device",
+							Optional:            true,
+							Computed:            true,
+						},
+						"enabled": schema.BoolAttribute{
+							Optional: true,
+							Computed: true,
+						},
+						"status": schema.Int32Attribute{
+							MarkdownDescription: "Status of the device",
+							Optional:            true,
+							Computed:            true,
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -498,6 +545,7 @@ func (r *VMResource) Configure(ctx context.Context, req resource.ConfigureReques
 	r.vmApi = NewVMApi(client)
 	r.diskApi = NewDiskApi(client)
 	r.nicApi = NewNICApi(client)
+	r.deviceApi = NewDeviceApi(client)
 }
 
 // Create a new VM.
@@ -558,6 +606,23 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				tflog.Debug(ctx, fmt.Sprintf("Error creating nic %v", createError))
 				resp.Diagnostics.AddError(
 					"Error creating nic",
+					createError.Error(),
+				)
+				return
+			}
+		}
+	}
+
+	// Create devices
+	if data.Devices != nil {
+		for _, device := range data.Devices {
+			device.Machine = data.Machine
+
+			createError := r.deviceApi.createDevice(ctx, device)
+			if createError != nil {
+				tflog.Debug(ctx, fmt.Sprintf("Error creating device %v", createError))
+				resp.Diagnostics.AddError(
+					"Error creating device",
 					createError.Error(),
 				)
 				return
@@ -722,6 +787,18 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		if err := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id); err != nil {
 			resp.Diagnostics.AddError(
 				"Error syncing NICs",
+				err.Error(),
+			)
+		}
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Updating the devices with the plan data %v", planData.Devices))
+	// update devices
+	if planData.Devices != nil && stateData.Devices != nil {
+		tflog.Debug(ctx, "Syncing devices ran")
+		if err := r.deviceApi.syncDevices(ctx, &planData.Devices, &stateData.Devices, stateData.Machine); err != nil {
+			resp.Diagnostics.AddError(
+				"Error syncing devices",
 				err.Error(),
 			)
 		}
