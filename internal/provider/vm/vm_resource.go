@@ -488,14 +488,18 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Computed: true,
 							Optional: true,
 						},
-						"machine_type": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
+						// "machine_type": schema.StringAttribute{
+						// 	Optional: true,
+						// 	Computed: true,
+						// },
 						"type": schema.StringAttribute{
 							MarkdownDescription: "Type of the device",
 							Optional:            true,
 							Computed:            true,
+							Validators: []validator.String{
+								// Validate string value must be one of the allowed values
+								stringvalidator.OneOf(getValidDeviceTypes()...),
+							},
 						},
 						"name": schema.StringAttribute{
 							Required: true,
@@ -517,6 +521,92 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							MarkdownDescription: "Status of the device",
 							Optional:            true,
 							Computed:            true,
+						},
+						"usb_settings": schema.SingleNestedAttribute{
+							Optional: true,
+							// PlanModifiers: []planmodifier.List{
+							// 	listplanmodifier.UseStateForUnknown(),
+							// },
+							Attributes: map[string]schema.Attribute{
+								"key": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"machine_device": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"guest_reset": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"guest_resets_all": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+							},
+						},
+						"tpm_settings": schema.SingleNestedAttribute{
+							Optional: true,
+							Attributes: map[string]schema.Attribute{
+								"key": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"machine_device": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"model": schema.StringAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"version": schema.StringAttribute{
+									Optional: true,
+									Computed: true,
+								},
+							},
+						},
+						"vgpu_settings": schema.SingleNestedAttribute{
+							Optional: true,
+							Attributes: map[string]schema.Attribute{
+								"key": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"machine_device": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"profile_type": schema.StringAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"attach_drivers": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"frame_rate_limiter": schema.Int32Attribute{
+									Optional: true,
+									Computed: true,
+								},
+								"disable_vnc": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"enable_uvm": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"enable_debugging": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+								"enable_profiling": schema.BoolAttribute{
+									Optional: true,
+									Computed: true,
+								},
+							},
 						},
 					},
 				},
