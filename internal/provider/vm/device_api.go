@@ -104,7 +104,7 @@ func getValidDeviceTypes() []string {
 		"tpm",
 		"node_usb_devices",
 		"node_pci_devices",
-		"node_vgpu_devices",
+		"node_nvidia_vgpu_devices",
 	}
 }
 
