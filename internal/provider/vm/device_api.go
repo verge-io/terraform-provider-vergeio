@@ -22,15 +22,15 @@ type deviceResourceModel struct {
 	Key     types.String `tfsdk:"key"`
 	Machine types.Int32  `tfsdk:"machine"`
 	// MachineType            types.String                  `tfsdk:"machine_type"`
-	Type                    types.String             `tfsdk:"type"`
-	Name                    types.String             `tfsdk:"name"`
-	Description             types.String             `tfsdk:"description"`
-	ResourceGroup           types.String             `tfsdk:"resource_group"`
-	Enabled                 types.Bool               `tfsdk:"enabled"`
-	Status                  types.Int32              `tfsdk:"status"`
-	DeviceUSBSettingsModel  *DeviceUSBSettingsModel  `tfsdk:"usb_settings"`
-	DeviceTPMSettingsModel  *DeviceTPMSettingsModel  `tfsdk:"tpm_settings"`
-	DeviceVGPUSettingsModel *DeviceVGPUSettingsModel `tfsdk:"vgpu_settings"`
+	Type                          types.String                   `tfsdk:"type"`
+	Name                          types.String                   `tfsdk:"name"`
+	Description                   types.String                   `tfsdk:"description"`
+	ResourceGroup                 types.String                   `tfsdk:"resource_group"`
+	Enabled                       types.Bool                     `tfsdk:"enabled"`
+	Status                        types.Int32                    `tfsdk:"status"`
+	DeviceUSBSettingsModel        *DeviceUSBSettingsModel        `tfsdk:"usb_settings"`
+	DeviceTPMSettingsModel        *DeviceTPMSettingsModel        `tfsdk:"tpm_settings"`
+	DeviceNvidiaVGPUSettingsModel *DeviceNvidiaVGPUSettingsModel `tfsdk:"nvidia_vgpu_settings"`
 }
 
 type DeviceUSBSettingsModel struct {
@@ -61,7 +61,7 @@ type DeviceTPMSettingsAPIModel struct {
 	Version       string `json:"version,omitempty"`
 }
 
-type DeviceVGPUSettingsModel struct {
+type DeviceNvidiaVGPUSettingsModel struct {
 	Key              types.Int32  `tfsdk:"key"`
 	MachineDevice    types.Int32  `tfsdk:"machine_device"`
 	ProfileType      types.String `tfsdk:"profile_type"`
@@ -73,7 +73,7 @@ type DeviceVGPUSettingsModel struct {
 	EnableProfiling  types.Bool   `tfsdk:"enable_profiling"`
 }
 
-type DeviceVGPUSettingsAPIModel struct {
+type DeviceNvidiaVGPUSettingsAPIModel struct {
 	Key              int32  `json:"$key,omitempty"`
 	MachineDevice    int32  `json:"machine_device,omitempty"`
 	ProfileType      string `json:"profile_type,omitempty"`
@@ -122,10 +122,10 @@ type DeviceUUIDResponse struct {
 
 // API endpoint for devices.
 const (
-	DeviceEndpoint             = vergeio.APIEndpoint + "/machine_devices"
-	DeviceUSBSettingsEndpoint  = vergeio.APIEndpoint + "/machine_device_settings_usb"
-	DeviceTPMSettingsEndpoint  = vergeio.APIEndpoint + "/machine_device_settings_tpm"
-	DeviceVGPUSettingsEndpoint = vergeio.APIEndpoint + "/machine_device_settings_nvidia_vgpu"
+	DeviceEndpoint                   = vergeio.APIEndpoint + "/machine_devices"
+	DeviceUSBSettingsEndpoint        = vergeio.APIEndpoint + "/machine_device_settings_usb"
+	DeviceTPMSettingsEndpoint        = vergeio.APIEndpoint + "/machine_device_settings_tpm"
+	DeviceNvidiaVGPUSettingsEndpoint = vergeio.APIEndpoint + "/machine_device_settings_nvidia_vgpu"
 )
 
 var _ vergeio.IClient = &DeviceApi{}
@@ -215,13 +215,13 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 			return fmt.Errorf("failed to update TPM settings: %v", err)
 		}
 	case "node_nvidia_vgpu_devices":
-		// first read the VGPU settings to get the key
-		if err := da.readVGPUSettings(ctx, data); err != nil {
-			return fmt.Errorf("failed to read VGPU settings: %v", err)
+		// first read the Nvidia VGPU settings to get the key
+		if err := da.readNvidiaVGPUSettings(ctx, data); err != nil {
+			return fmt.Errorf("failed to read Nvidia VGPU settings: %v", err)
 		}
-		// Now update the VGPU settings
-		if err := da.updateVGPUSettings(ctx, data, data.DeviceVGPUSettingsModel.Key); err != nil {
-			return fmt.Errorf("failed to update VGPU settings: %v", err)
+		// Now update the Nvidia VGPU settings
+		if err := da.updateNvidiaVGPUSettings(ctx, data, data.DeviceNvidiaVGPUSettingsModel.Key); err != nil {
+			return fmt.Errorf("failed to update Nvidia VGPU settings: %v", err)
 		}
 	}
 
@@ -295,13 +295,13 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 			return fmt.Errorf("failed to read TPM settings: %v", err)
 		}
 	case "node_nvidia_vgpu_devices":
-		// Now update the VGPU settings
-		if err := da.updateVGPUSettings(ctx, planData, stateData.DeviceVGPUSettingsModel.Key); err != nil {
-			return fmt.Errorf("failed to update VGPU settings: %v", err)
+		// Now update the Nvidia VGPU settings
+		if err := da.updateNvidiaVGPUSettings(ctx, planData, stateData.DeviceNvidiaVGPUSettingsModel.Key); err != nil {
+			return fmt.Errorf("failed to update Nvidia VGPU settings: %v", err)
 		}
-		//  read the VGPU settings to get updated data
-		if err := da.readVGPUSettings(ctx, stateData); err != nil {
-			return fmt.Errorf("failed to read VGPU settings: %v", err)
+		//  read the Nvidia VGPU settings to get updated data
+		if err := da.readNvidiaVGPUSettings(ctx, stateData); err != nil {
+			return fmt.Errorf("failed to read Nvidia VGPU settings: %v", err)
 		}
 	}
 
@@ -423,13 +423,13 @@ func (da *DeviceApi) syncDevices(ctx context.Context, planData *[]*deviceResourc
 					(plan.Type.ValueString() == "tpm" &&
 						(plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model)) ||
 					(plan.Type.ValueString() == "node_nvidia_vgpu_devices" &&
-						(plan.DeviceVGPUSettingsModel.ProfileType != state.DeviceVGPUSettingsModel.ProfileType ||
-							plan.DeviceVGPUSettingsModel.AttachDrivers != state.DeviceVGPUSettingsModel.AttachDrivers ||
-							plan.DeviceVGPUSettingsModel.FrameRateLimiter != state.DeviceVGPUSettingsModel.FrameRateLimiter ||
-							plan.DeviceVGPUSettingsModel.DisableVNC != state.DeviceVGPUSettingsModel.DisableVNC ||
-							plan.DeviceVGPUSettingsModel.EnableUVM != state.DeviceVGPUSettingsModel.EnableUVM ||
-							plan.DeviceVGPUSettingsModel.EnableDebugging != state.DeviceVGPUSettingsModel.EnableDebugging ||
-							plan.DeviceVGPUSettingsModel.EnableProfiling != state.DeviceVGPUSettingsModel.EnableProfiling)) {
+						(plan.DeviceNvidiaVGPUSettingsModel.ProfileType != state.DeviceNvidiaVGPUSettingsModel.ProfileType ||
+							plan.DeviceNvidiaVGPUSettingsModel.AttachDrivers != state.DeviceNvidiaVGPUSettingsModel.AttachDrivers ||
+							plan.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter != state.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter ||
+							plan.DeviceNvidiaVGPUSettingsModel.DisableVNC != state.DeviceNvidiaVGPUSettingsModel.DisableVNC ||
+							plan.DeviceNvidiaVGPUSettingsModel.EnableUVM != state.DeviceNvidiaVGPUSettingsModel.EnableUVM ||
+							plan.DeviceNvidiaVGPUSettingsModel.EnableDebugging != state.DeviceNvidiaVGPUSettingsModel.EnableDebugging ||
+							plan.DeviceNvidiaVGPUSettingsModel.EnableProfiling != state.DeviceNvidiaVGPUSettingsModel.EnableProfiling)) {
 					if err := da.updateDevice(ctx, plan, state); err != nil {
 						return fmt.Errorf("failed to update device: %v", err)
 					}
@@ -482,40 +482,6 @@ func (da *DeviceApi) insertDeviceInState(insertAt int, planData *deviceResourceM
 }
 
 // USB Settings API
-// CreateUSBSettings creates USB settings for the device.
-func (da *DeviceApi) createUSBSettings(ctx context.Context, data *deviceResourceModel) error {
-	tflog.Debug(ctx, "Creating USB settings")
-
-	// Prepare the API data packet
-	apiData := map[string]interface{}{
-		"machine_device": data.Key.ValueString(),
-		// "optional":        data.Optional.ValueBool(),
-		"guest_reset":      data.DeviceUSBSettingsModel.GuestReset.ValueBool(),
-		"guest_resets_all": data.DeviceUSBSettingsModel.GuestResetsAll.ValueBool(),
-	}
-
-	// Encode the API data
-	encodedBuffer := new(bytes.Buffer)
-	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for USB settings")
-	}
-
-	// Call the API and check the response
-	apiResp, err := da.client.Post(DeviceUSBSettingsEndpoint, encodedBuffer)
-	if err != nil {
-		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from the API %d", apiResp.StatusCode)
-	}
-
-	tflog.Debug(ctx, "USB settings created successfully for device: "+data.Name.ValueString())
-	return nil
-}
-
 // UpdateUSBSettings updates USB settings for the device.
 func (da *DeviceApi) updateUSBSettings(ctx context.Context, data *deviceResourceModel, key types.Int32) error {
 	tflog.Debug(ctx, "Updating USB settings for device: "+data.Name.ValueString())
@@ -654,30 +620,30 @@ func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceMo
 	return nil
 }
 
-// UpdateVGPUSettings updates VGPU settings for the device.
-func (da *DeviceApi) updateVGPUSettings(ctx context.Context, data *deviceResourceModel, key types.Int32) error {
-	tflog.Debug(ctx, "Updating VGPU settings for device: "+data.Name.ValueString())
+// UpdateNvidiaVGPUSettings updates Nvidia VGPU settings for the device.
+func (da *DeviceApi) updateNvidiaVGPUSettings(ctx context.Context, data *deviceResourceModel, key types.Int32) error {
+	tflog.Debug(ctx, "Updating Nvidia VGPU settings for device: "+data.Name.ValueString())
 
 	// Prepare the API data packet
 	apiData := map[string]interface{}{
-		"profile_type":       data.DeviceVGPUSettingsModel.ProfileType.ValueString(),
-		"attach_drivers":     data.DeviceVGPUSettingsModel.AttachDrivers.ValueBool(),
-		"frame_rate_limiter": data.DeviceVGPUSettingsModel.FrameRateLimiter.ValueInt32(),
-		"disable_vnc":        data.DeviceVGPUSettingsModel.DisableVNC.ValueBool(),
-		"enable_uvm":         data.DeviceVGPUSettingsModel.EnableUVM.ValueBool(),
-		"enable_debugging":   data.DeviceVGPUSettingsModel.EnableDebugging.ValueBool(),
-		"enable_profiling":   data.DeviceVGPUSettingsModel.EnableProfiling.ValueBool(),
+		"profile_type":       data.DeviceNvidiaVGPUSettingsModel.ProfileType.ValueString(),
+		"attach_drivers":     data.DeviceNvidiaVGPUSettingsModel.AttachDrivers.ValueBool(),
+		"frame_rate_limiter": data.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter.ValueInt32(),
+		"disable_vnc":        data.DeviceNvidiaVGPUSettingsModel.DisableVNC.ValueBool(),
+		"enable_uvm":         data.DeviceNvidiaVGPUSettingsModel.EnableUVM.ValueBool(),
+		"enable_debugging":   data.DeviceNvidiaVGPUSettingsModel.EnableDebugging.ValueBool(),
+		"enable_profiling":   data.DeviceNvidiaVGPUSettingsModel.EnableProfiling.ValueBool(),
 	}
 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for VGPU settings")
+		return errors.New("invalid format received for Nvidia VGPU settings")
 	}
 
 	// Call the API and check the response
 	apiResp, err := da.client.Put(fmt.Sprintf("%s/%s",
-		DeviceVGPUSettingsEndpoint,
+		DeviceNvidiaVGPUSettingsEndpoint,
 		url.PathEscape(fmt.Sprintf("%d", key.ValueInt32())),
 	), encodedBuffer)
 	if err != nil {
@@ -690,16 +656,16 @@ func (da *DeviceApi) updateVGPUSettings(ctx context.Context, data *deviceResourc
 		return fmt.Errorf("missing response from the API %d", apiResp.StatusCode)
 	}
 
-	tflog.Debug(ctx, "VGPU settings updated successfully for device: "+data.Name.ValueString())
+	tflog.Debug(ctx, " Nvidia VGPU settings updated successfully for device: "+data.Name.ValueString())
 	return nil
 }
 
-// readVGPUSettings reads VGPU settings for the device.
-func (da *DeviceApi) readVGPUSettings(ctx context.Context, data *deviceResourceModel) error {
-	tflog.Debug(ctx, "Reading VGPU settings for device: "+data.Name.ValueString())
+// readNvidiaVGPUSettings reads Nvidia VGPU settings for the device.
+func (da *DeviceApi) readNvidiaVGPUSettings(ctx context.Context, data *deviceResourceModel) error {
+	tflog.Debug(ctx, "Reading Nvidia VGPU settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
-	apiResp, err := da.client.Get(DeviceVGPUSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
+	apiResp, err := da.client.Get(DeviceNvidiaVGPUSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
 	if err != nil {
 		return err
 	}
@@ -711,24 +677,24 @@ func (da *DeviceApi) readVGPUSettings(ctx context.Context, data *deviceResourceM
 	}
 
 	// Decode the API response
-	var vgpuSettingsAPIResp []DeviceVGPUSettingsAPIModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&vgpuSettingsAPIResp); err != nil {
-		return errors.New("invalid format received for VGPU : " + err.Error())
+	var nvidiaVGPUSettingsAPIResp []DeviceNvidiaVGPUSettingsAPIModel
+	if err := json.NewDecoder(apiResp.Body).Decode(&nvidiaVGPUSettingsAPIResp); err != nil {
+		return errors.New("invalid format received for Nvidia VGPU : " + err.Error())
 	}
 
-	if len(vgpuSettingsAPIResp) > 0 {
+	if len(nvidiaVGPUSettingsAPIResp) > 0 {
 		// read the key based on the machine device
-		data.DeviceVGPUSettingsModel.Key = types.Int32Value(vgpuSettingsAPIResp[0].Key)
-		data.DeviceVGPUSettingsModel.MachineDevice = types.Int32Value(vgpuSettingsAPIResp[0].MachineDevice)
-		data.DeviceVGPUSettingsModel.ProfileType = types.StringValue(vgpuSettingsAPIResp[0].ProfileType)
-		data.DeviceVGPUSettingsModel.AttachDrivers = types.BoolValue(vgpuSettingsAPIResp[0].AttachDrivers)
-		data.DeviceVGPUSettingsModel.FrameRateLimiter = types.Int32Value(vgpuSettingsAPIResp[0].FrameRateLimiter)
-		data.DeviceVGPUSettingsModel.DisableVNC = types.BoolValue(vgpuSettingsAPIResp[0].DisableVNC)
-		data.DeviceVGPUSettingsModel.EnableUVM = types.BoolValue(vgpuSettingsAPIResp[0].EnableUVM)
-		data.DeviceVGPUSettingsModel.EnableDebugging = types.BoolValue(vgpuSettingsAPIResp[0].EnableDebugging)
-		data.DeviceVGPUSettingsModel.EnableProfiling = types.BoolValue(vgpuSettingsAPIResp[0].EnableProfiling)
+		data.DeviceNvidiaVGPUSettingsModel.Key = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].Key)
+		data.DeviceNvidiaVGPUSettingsModel.MachineDevice = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].MachineDevice)
+		data.DeviceNvidiaVGPUSettingsModel.ProfileType = types.StringValue(nvidiaVGPUSettingsAPIResp[0].ProfileType)
+		data.DeviceNvidiaVGPUSettingsModel.AttachDrivers = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].AttachDrivers)
+		data.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].FrameRateLimiter)
+		data.DeviceNvidiaVGPUSettingsModel.DisableVNC = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].DisableVNC)
+		data.DeviceNvidiaVGPUSettingsModel.EnableUVM = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableUVM)
+		data.DeviceNvidiaVGPUSettingsModel.EnableDebugging = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableDebugging)
+		data.DeviceNvidiaVGPUSettingsModel.EnableProfiling = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableProfiling)
 	}
 
-	tflog.Debug(ctx, "VGPU settings read successfully for device: "+data.Name.ValueString())
+	tflog.Debug(ctx, "Nvidia VGPU settings read successfully for device: "+data.Name.ValueString())
 	return nil
 }
