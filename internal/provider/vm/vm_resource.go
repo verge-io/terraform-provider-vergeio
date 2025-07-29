@@ -567,7 +567,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 								},
 							},
 						},
-						"vgpu_settings": schema.SingleNestedAttribute{
+						"nvidia_vgpu_settings": schema.SingleNestedAttribute{
 							Optional: true,
 							Attributes: map[string]schema.Attribute{
 								"key": schema.Int32Attribute{

@@ -214,7 +214,7 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 		if err := da.updateTPMSettings(ctx, data, data.DeviceTPMSettingsModel.Key); err != nil {
 			return fmt.Errorf("failed to update TPM settings: %v", err)
 		}
-	case "node_vgpu_devices":
+	case "node_nvidia_vgpu_devices":
 		// first read the VGPU settings to get the key
 		if err := da.readVGPUSettings(ctx, data); err != nil {
 			return fmt.Errorf("failed to read VGPU settings: %v", err)
@@ -294,7 +294,7 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 		if err := da.readTPMSettings(ctx, stateData); err != nil {
 			return fmt.Errorf("failed to read TPM settings: %v", err)
 		}
-	case "node_vgpu_devices":
+	case "node_nvidia_vgpu_devices":
 		// Now update the VGPU settings
 		if err := da.updateVGPUSettings(ctx, planData, stateData.DeviceVGPUSettingsModel.Key); err != nil {
 			return fmt.Errorf("failed to update VGPU settings: %v", err)
@@ -422,7 +422,7 @@ func (da *DeviceApi) syncDevices(ctx context.Context, planData *[]*deviceResourc
 							plan.DeviceUSBSettingsModel.GuestResetsAll != state.DeviceUSBSettingsModel.GuestResetsAll)) ||
 					(plan.Type.ValueString() == "tpm" &&
 						(plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model)) ||
-					(plan.Type.ValueString() == "node_vgpu_devices" &&
+					(plan.Type.ValueString() == "node_nvidia_vgpu_devices" &&
 						(plan.DeviceVGPUSettingsModel.ProfileType != state.DeviceVGPUSettingsModel.ProfileType ||
 							plan.DeviceVGPUSettingsModel.AttachDrivers != state.DeviceVGPUSettingsModel.AttachDrivers ||
 							plan.DeviceVGPUSettingsModel.FrameRateLimiter != state.DeviceVGPUSettingsModel.FrameRateLimiter ||
