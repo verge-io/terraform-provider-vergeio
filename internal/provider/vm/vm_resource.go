@@ -582,10 +582,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 									Optional: true,
 									Computed: true,
 								},
-								"attach_drivers": schema.BoolAttribute{
-									Optional: true,
-									Computed: true,
-								},
+								// "attach_drivers": schema.BoolAttribute{
+								// 	Optional: true,
+								// 	Computed: true,
+								// },
 								"frame_rate_limiter": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,

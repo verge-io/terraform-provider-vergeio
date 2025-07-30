@@ -62,27 +62,27 @@ type DeviceTPMSettingsAPIModel struct {
 }
 
 type DeviceNvidiaVGPUSettingsModel struct {
-	Key              types.Int32  `tfsdk:"key"`
-	MachineDevice    types.Int32  `tfsdk:"machine_device"`
-	ProfileType      types.String `tfsdk:"profile_type"`
-	AttachDrivers    types.Bool   `tfsdk:"attach_drivers"`
-	FrameRateLimiter types.Int32  `tfsdk:"frame_rate_limiter"`
-	DisableVNC       types.Bool   `tfsdk:"disable_vnc"`
-	EnableUVM        types.Bool   `tfsdk:"enable_uvm"`
-	EnableDebugging  types.Bool   `tfsdk:"enable_debugging"`
-	EnableProfiling  types.Bool   `tfsdk:"enable_profiling"`
+	Key           types.Int32  `tfsdk:"key"`
+	MachineDevice types.Int32  `tfsdk:"machine_device"`
+	ProfileType   types.String `tfsdk:"profile_type"`
+	// AttachDrivers    types.Bool   `tfsdk:"attach_drivers"`
+	FrameRateLimiter types.Int32 `tfsdk:"frame_rate_limiter"`
+	DisableVNC       types.Bool  `tfsdk:"disable_vnc"`
+	EnableUVM        types.Bool  `tfsdk:"enable_uvm"`
+	EnableDebugging  types.Bool  `tfsdk:"enable_debugging"`
+	EnableProfiling  types.Bool  `tfsdk:"enable_profiling"`
 }
 
 type DeviceNvidiaVGPUSettingsAPIModel struct {
-	Key              int32  `json:"$key,omitempty"`
-	MachineDevice    int32  `json:"machine_device,omitempty"`
-	ProfileType      string `json:"profile_type,omitempty"`
-	AttachDrivers    bool   `json:"attach_drivers,omitempty"`
-	FrameRateLimiter int32  `json:"frame_rate_limiter,omitempty"`
-	DisableVNC       bool   `json:"disable_vnc,omitempty"`
-	EnableUVM        bool   `json:"enable_uvm,omitempty"`
-	EnableDebugging  bool   `json:"enable_debugging,omitempty"`
-	EnableProfiling  bool   `json:"enable_profiling,omitempty"`
+	Key           int32  `json:"$key,omitempty"`
+	MachineDevice int32  `json:"machine_device,omitempty"`
+	ProfileType   string `json:"profile_type,omitempty"`
+	// AttachDrivers    bool   `json:"attach_drivers,omitempty"`
+	FrameRateLimiter int32 `json:"frame_rate_limiter,omitempty"`
+	DisableVNC       bool  `json:"disable_vnc,omitempty"`
+	EnableUVM        bool  `json:"enable_uvm,omitempty"`
+	EnableDebugging  bool  `json:"enable_debugging,omitempty"`
+	EnableProfiling  bool  `json:"enable_profiling,omitempty"`
 }
 
 // API resource model.
@@ -197,31 +197,58 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 	// If the device is a USB device then we need to create or update the USB
 	switch data.Type.ValueString() {
 	case "node_usb_devices":
+		// If the USB settings are not set then skip updating USB settings
+		if data.DeviceUSBSettingsModel == nil {
+			tflog.Debug(ctx, "No USB settings found for device: "+data.Name.ValueString())
+			break
+		}
 		// first read the USB settings to get the key
-		if err := da.readUSBSettings(ctx, data); err != nil {
+		if err := da.readUSBSettings(ctx, data, true /* read key only */); err != nil {
 			return fmt.Errorf("failed to read USB settings: %v", err)
 		}
 		// Now update the USB settings
 		if err := da.updateUSBSettings(ctx, data, data.DeviceUSBSettingsModel.Key); err != nil {
 			return fmt.Errorf("failed to update USB settings: %v", err)
 		}
+		// read it again to get the rest of the fields
+		if err := da.readUSBSettings(ctx, data, false /* read everything */); err != nil {
+			return fmt.Errorf("failed to read USB settings: %v", err)
+		}
 	case "tpm":
+		// If the USB settings are not set then skip updating USB settings
+		if data.DeviceTPMSettingsModel == nil {
+			tflog.Debug(ctx, "No TPM settings found for device: "+data.Name.ValueString())
+			break
+		}
 		// first read the TPM settings to get the key
-		if err := da.readTPMSettings(ctx, data); err != nil {
+		if err := da.readTPMSettings(ctx, data, true /* read key only */); err != nil {
 			return fmt.Errorf("failed to read TPM settings: %v", err)
 		}
 		// Now update the TPM settings
 		if err := da.updateTPMSettings(ctx, data, data.DeviceTPMSettingsModel.Key); err != nil {
 			return fmt.Errorf("failed to update TPM settings: %v", err)
 		}
+		// read it again to get the rest of the fields
+		if err := da.readTPMSettings(ctx, data, false /* read everything */); err != nil {
+			return fmt.Errorf("failed to read TPM settings: %v", err)
+		}
 	case "node_nvidia_vgpu_devices":
+		// If the Nvidia VGPU settings are not set then skip updating Nvidia VGPU settings
+		if data.DeviceNvidiaVGPUSettingsModel == nil {
+			tflog.Debug(ctx, "No Nvidia VGPU settings found for device: "+data.Name.ValueString())
+			break
+		}
 		// first read the Nvidia VGPU settings to get the key
-		if err := da.readNvidiaVGPUSettings(ctx, data); err != nil {
+		if err := da.readNvidiaVGPUSettings(ctx, data, true /* read key only */); err != nil {
 			return fmt.Errorf("failed to read Nvidia VGPU settings: %v", err)
 		}
 		// Now update the Nvidia VGPU settings
 		if err := da.updateNvidiaVGPUSettings(ctx, data, data.DeviceNvidiaVGPUSettingsModel.Key); err != nil {
 			return fmt.Errorf("failed to update Nvidia VGPU settings: %v", err)
+		}
+		// read it again to get the rest of the fields
+		if err := da.readNvidiaVGPUSettings(ctx, data, false /* read everything */); err != nil {
+			return fmt.Errorf("failed to read Nvidia VGPU settings: %v", err)
 		}
 	}
 
@@ -277,12 +304,17 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 
 	switch stateData.Type.ValueString() {
 	case "node_usb_devices":
+		// If the USB settings are not set then skip updating USB settings
+		if stateData.DeviceUSBSettingsModel == nil {
+			tflog.Debug(ctx, "No USB settings found for device: "+stateData.Name.ValueString())
+			break
+		}
 		// Now update the USB settings
 		if err := da.updateUSBSettings(ctx, planData, stateData.DeviceUSBSettingsModel.Key); err != nil {
 			return fmt.Errorf("failed to update USB settings: %v", err)
 		}
 		//  read the USB settings to get updated data
-		if err := da.readUSBSettings(ctx, stateData); err != nil {
+		if err := da.readUSBSettings(ctx, stateData, false /* read all data */); err != nil {
 			return fmt.Errorf("failed to read USB settings: %v", err)
 		}
 	case "tpm":
@@ -291,7 +323,7 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 			return fmt.Errorf("failed to update TPM settings: %v", err)
 		}
 		//  read the TPM settings to get updated data
-		if err := da.readTPMSettings(ctx, stateData); err != nil {
+		if err := da.readTPMSettings(ctx, stateData, false /* read all data */); err != nil {
 			return fmt.Errorf("failed to read TPM settings: %v", err)
 		}
 	case "node_nvidia_vgpu_devices":
@@ -300,7 +332,7 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 			return fmt.Errorf("failed to update Nvidia VGPU settings: %v", err)
 		}
 		//  read the Nvidia VGPU settings to get updated data
-		if err := da.readNvidiaVGPUSettings(ctx, stateData); err != nil {
+		if err := da.readNvidiaVGPUSettings(ctx, stateData, false /* read all data */); err != nil {
 			return fmt.Errorf("failed to read Nvidia VGPU settings: %v", err)
 		}
 	}
@@ -424,7 +456,7 @@ func (da *DeviceApi) syncDevices(ctx context.Context, planData *[]*deviceResourc
 						(plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model)) ||
 					(plan.Type.ValueString() == "node_nvidia_vgpu_devices" &&
 						(plan.DeviceNvidiaVGPUSettingsModel.ProfileType != state.DeviceNvidiaVGPUSettingsModel.ProfileType ||
-							plan.DeviceNvidiaVGPUSettingsModel.AttachDrivers != state.DeviceNvidiaVGPUSettingsModel.AttachDrivers ||
+							// plan.DeviceNvidiaVGPUSettingsModel.AttachDrivers != state.DeviceNvidiaVGPUSettingsModel.AttachDrivers ||
 							plan.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter != state.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter ||
 							plan.DeviceNvidiaVGPUSettingsModel.DisableVNC != state.DeviceNvidiaVGPUSettingsModel.DisableVNC ||
 							plan.DeviceNvidiaVGPUSettingsModel.EnableUVM != state.DeviceNvidiaVGPUSettingsModel.EnableUVM ||
@@ -486,6 +518,11 @@ func (da *DeviceApi) insertDeviceInState(insertAt int, planData *deviceResourceM
 func (da *DeviceApi) updateUSBSettings(ctx context.Context, data *deviceResourceModel, key types.Int32) error {
 	tflog.Debug(ctx, "Updating USB settings for device: "+data.Name.ValueString())
 
+	if data.DeviceUSBSettingsModel == nil {
+		tflog.Debug(ctx, "No USB settings found for device: "+data.Name.ValueString())
+		return nil
+	}
+
 	// Prepare the API data packet
 	apiData := map[string]interface{}{
 		"guest_reset":      data.DeviceUSBSettingsModel.GuestReset.ValueBool(),
@@ -518,7 +555,7 @@ func (da *DeviceApi) updateUSBSettings(ctx context.Context, data *deviceResource
 }
 
 // readUSBSettings reads USB settings for the device.
-func (da *DeviceApi) readUSBSettings(ctx context.Context, data *deviceResourceModel) error {
+func (da *DeviceApi) readUSBSettings(ctx context.Context, data *deviceResourceModel, readKeyOnly bool) error {
 	tflog.Debug(ctx, "Reading USB settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
@@ -543,8 +580,10 @@ func (da *DeviceApi) readUSBSettings(ctx context.Context, data *deviceResourceMo
 		// read the key based on the machine device
 		data.DeviceUSBSettingsModel.Key = types.Int32Value(usbSettingsAPIResp[0].Key)
 		data.DeviceUSBSettingsModel.MachineDevice = types.Int32Value(usbSettingsAPIResp[0].MachineDevice)
-		data.DeviceUSBSettingsModel.GuestReset = types.BoolValue(usbSettingsAPIResp[0].GuestReset)
-		data.DeviceUSBSettingsModel.GuestResetsAll = types.BoolValue(usbSettingsAPIResp[0].GuestResetsAll)
+		if !readKeyOnly {
+			data.DeviceUSBSettingsModel.GuestReset = types.BoolValue(usbSettingsAPIResp[0].GuestReset)
+			data.DeviceUSBSettingsModel.GuestResetsAll = types.BoolValue(usbSettingsAPIResp[0].GuestResetsAll)
+		}
 	}
 
 	tflog.Debug(ctx, "USB settings read successfully for device: "+data.Name.ValueString())
@@ -587,7 +626,7 @@ func (da *DeviceApi) updateTPMSettings(ctx context.Context, data *deviceResource
 }
 
 // readTPMSettings reads TPM settings for the device.
-func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceModel) error {
+func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceModel, readKeyOnly bool) error {
 	tflog.Debug(ctx, "Reading TPM settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
@@ -612,8 +651,10 @@ func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceMo
 		// read the key based on the machine device
 		data.DeviceTPMSettingsModel.Key = types.Int32Value(tpmSettingsAPIResp[0].Key)
 		data.DeviceTPMSettingsModel.MachineDevice = types.Int32Value(tpmSettingsAPIResp[0].MachineDevice)
-		data.DeviceTPMSettingsModel.Model = types.StringValue(tpmSettingsAPIResp[0].Model)
-		data.DeviceTPMSettingsModel.Version = types.StringValue(tpmSettingsAPIResp[0].Version)
+		if !readKeyOnly {
+			data.DeviceTPMSettingsModel.Model = types.StringValue(tpmSettingsAPIResp[0].Model)
+			data.DeviceTPMSettingsModel.Version = types.StringValue(tpmSettingsAPIResp[0].Version)
+		}
 	}
 
 	tflog.Debug(ctx, "TPM settings read successfully for device: "+data.Name.ValueString())
@@ -626,8 +667,8 @@ func (da *DeviceApi) updateNvidiaVGPUSettings(ctx context.Context, data *deviceR
 
 	// Prepare the API data packet
 	apiData := map[string]interface{}{
-		"profile_type":       data.DeviceNvidiaVGPUSettingsModel.ProfileType.ValueString(),
-		"attach_drivers":     data.DeviceNvidiaVGPUSettingsModel.AttachDrivers.ValueBool(),
+		"profile_type": data.DeviceNvidiaVGPUSettingsModel.ProfileType.ValueString(),
+		// "attach_drivers":     data.DeviceNvidiaVGPUSettingsModel.AttachDrivers.ValueBool(),
 		"frame_rate_limiter": data.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter.ValueInt32(),
 		"disable_vnc":        data.DeviceNvidiaVGPUSettingsModel.DisableVNC.ValueBool(),
 		"enable_uvm":         data.DeviceNvidiaVGPUSettingsModel.EnableUVM.ValueBool(),
@@ -661,7 +702,7 @@ func (da *DeviceApi) updateNvidiaVGPUSettings(ctx context.Context, data *deviceR
 }
 
 // readNvidiaVGPUSettings reads Nvidia VGPU settings for the device.
-func (da *DeviceApi) readNvidiaVGPUSettings(ctx context.Context, data *deviceResourceModel) error {
+func (da *DeviceApi) readNvidiaVGPUSettings(ctx context.Context, data *deviceResourceModel, readKeyOnly bool) error {
 	tflog.Debug(ctx, "Reading Nvidia VGPU settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
@@ -686,13 +727,15 @@ func (da *DeviceApi) readNvidiaVGPUSettings(ctx context.Context, data *deviceRes
 		// read the key based on the machine device
 		data.DeviceNvidiaVGPUSettingsModel.Key = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].Key)
 		data.DeviceNvidiaVGPUSettingsModel.MachineDevice = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].MachineDevice)
-		data.DeviceNvidiaVGPUSettingsModel.ProfileType = types.StringValue(nvidiaVGPUSettingsAPIResp[0].ProfileType)
-		data.DeviceNvidiaVGPUSettingsModel.AttachDrivers = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].AttachDrivers)
-		data.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].FrameRateLimiter)
-		data.DeviceNvidiaVGPUSettingsModel.DisableVNC = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].DisableVNC)
-		data.DeviceNvidiaVGPUSettingsModel.EnableUVM = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableUVM)
-		data.DeviceNvidiaVGPUSettingsModel.EnableDebugging = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableDebugging)
-		data.DeviceNvidiaVGPUSettingsModel.EnableProfiling = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableProfiling)
+		if !readKeyOnly {
+			data.DeviceNvidiaVGPUSettingsModel.ProfileType = types.StringValue(nvidiaVGPUSettingsAPIResp[0].ProfileType)
+			// data.DeviceNvidiaVGPUSettingsModel.AttachDrivers = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].AttachDrivers)
+			data.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter = types.Int32Value(nvidiaVGPUSettingsAPIResp[0].FrameRateLimiter)
+			data.DeviceNvidiaVGPUSettingsModel.DisableVNC = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].DisableVNC)
+			data.DeviceNvidiaVGPUSettingsModel.EnableUVM = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableUVM)
+			data.DeviceNvidiaVGPUSettingsModel.EnableDebugging = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableDebugging)
+			data.DeviceNvidiaVGPUSettingsModel.EnableProfiling = types.BoolValue(nvidiaVGPUSettingsAPIResp[0].EnableProfiling)
+		}
 	}
 
 	tflog.Debug(ctx, "Nvidia VGPU settings read successfully for device: "+data.Name.ValueString())
