@@ -13,7 +13,7 @@ VM resource in VergeIO
 ## Example Usage
 
 ```terraform
-# Create a VM with a drive and a nic
+# Create a VM
 resource "vergeio_vm" "web-server" {
   name                 = "my-web-server"
   description          = "Web Server"
@@ -70,11 +70,55 @@ resource "vergeio_vm" "web-server" {
   }   
   # NIC
   vergeio_nic {
-    name        = "Web Server Network"
-    description = "NIC for Web Server"
-    interface   = "virtio"
-    enabled     = true
+    name             = "Web Server Network"
+    description      = "NIC for Web Server"
+    interface        = "virtio"
+    enabled          = true
+    vnet             = 6
+    assign_ipaddress = true
   }
+  # Nvidia vGPU Device
+  vergeio_device {
+    name                = "my-vgpu"
+    description         = "my-vgpu"
+    type                = "node_nvidia_vgpu_devices"
+    resource_group      = "1aeba871-c293-d325-cc15-188183d13cc3"
+    nvidia_vgpu_settings = {
+      profile_type       = "profile identifier"
+      frame_rate_limiter = 60
+      disable_vnc        = true
+      enable_debugging   = true
+      enable_uvm         = true
+      enable_profiling   = true
+    }
+  }
+  # PCI Device
+  vergeio_device {
+    name           = "my-PCI-device"
+    description    = "my-PCI-device"
+    type           = "node_pci_devices"
+    resource_group = "22c12938-05f0-310f-f00e-df6f109e7364"
+  }
+  # TPM Device
+  vergeio_device {
+    name         = "my-TPM-device"
+    description  = "my-TPM-device"
+    type         = "tpm"
+    tpm_settings = {
+      model   = "crb"
+      version = "2.0"
+    }
+  }
+  # USB Device
+  vergeio_device {
+    name           = "my-USB-device"
+    description    = "my-USB-device"
+    type           = "node_usb_devices"
+    usb_settings   = {
+      guest_reset      = false
+      guest_resets_all = false
+    }
+  } 
   cloudinit_files = [
     {
     name     = "user-data"
