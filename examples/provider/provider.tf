@@ -3,8 +3,7 @@
 terraform {
   required_providers {
     vergeio = {
-      source = "borderssolutions/vergeio" #"vergeio" #"vergeio/cloud/vergeio"
-      #source = "verge-io/vergeio"
+      source = "vergeio/cloud/vergeio"
       #version = "1.5.3"
     }
   }

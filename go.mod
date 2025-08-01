@@ -1,7 +1,5 @@
 module terraform-provider-vergeio
 
-// module github.com/borderssolutions/terraform-provider-vergeio
-
 go 1.23.4
 
 require (
