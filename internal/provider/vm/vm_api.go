@@ -53,7 +53,8 @@ func getValidOSFamilies() []string {
 	}
 }
 
-// Valid machine types.
+// Valid machine types - DEPRECATED: Use GetMachineTypesFromAPI instead
+// This function is kept for backwards compatibility but should not be used for validation
 func getValidMachineTypes() []string {
 	return []string{"pc",
 		"pc-i440fx-2.7",
@@ -107,6 +108,57 @@ func getValidMachineTypes() []string {
 		"pc-q35-9.0",
 		"yottabyte",
 	}
+}
+
+// TableSchemaField represents a field in the table schema
+type TableSchemaField struct {
+	Type string            `json:"type"`
+	List map[string]string `json:"list,omitempty"` // Map of value -> description
+}
+
+// TableSchemaResponse represents the response from the $table endpoint
+type TableSchemaResponse struct {
+	Fields map[string]TableSchemaField `json:"fields"` // Map of field name -> field info
+}
+
+// GetMachineTypesFromAPI fetches the list of valid machine types from the VergeOS API
+func (va *VMApi) GetMachineTypesFromAPI(ctx context.Context) ([]string, error) {
+	tflog.Debug(ctx, "Fetching machine types from API")
+
+	// Call the vms/$table endpoint
+	apiResp, err := va.client.Get(VMEndpoint+"/$table", nil)
+	if err != nil {
+		tflog.Error(ctx, fmt.Sprintf("Failed to fetch machine types from API: %v", err))
+		return nil, err
+	}
+	defer apiResp.Body.Close()
+
+	// Parse the response
+	var schema TableSchemaResponse
+	decoder := json.NewDecoder(apiResp.Body)
+	if err := decoder.Decode(&schema); err != nil {
+		tflog.Error(ctx, fmt.Sprintf("Failed to decode table schema: %v", err))
+		return nil, err
+	}
+
+	// Find the machine_type field and extract its list
+	machineTypeField, exists := schema.Fields["machine_type"]
+	if !exists {
+		return nil, fmt.Errorf("machine_type field not found in table schema")
+	}
+
+	if machineTypeField.List == nil || len(machineTypeField.List) == 0 {
+		return nil, fmt.Errorf("machine_type field has no list of valid values")
+	}
+
+	// Extract the keys (machine type values) from the map
+	machineTypes := make([]string, 0, len(machineTypeField.List))
+	for machineType := range machineTypeField.List {
+		machineTypes = append(machineTypes, machineType)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Found %d machine types from API", len(machineTypes)))
+	return machineTypes, nil
 }
 
 type VMAPIDataSourceModel struct {
