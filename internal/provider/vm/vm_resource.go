@@ -133,13 +133,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"machine_type": schema.StringAttribute{
-				MarkdownDescription: "Machine type",
+				MarkdownDescription: "Machine type (validated dynamically against VergeOS API)",
 				Optional:            true,
 				Computed:            true,
-				Validators: []validator.String{
-					// Validate string value must be one of the allowed values
-					stringvalidator.OneOf(getValidMachineTypes()...),
-				},
 			},
 			"allow_hotplug": schema.BoolAttribute{
 				MarkdownDescription: "Allow hotplug",
@@ -615,6 +611,34 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 	}
 }
 
+// validateMachineType validates that the machine_type value is supported by the VergeOS API
+func (r *VMResource) validateMachineType(ctx context.Context, machineType types.String) error {
+	// If machine_type is null or unknown, skip validation
+	if machineType.IsNull() || machineType.IsUnknown() {
+		return nil
+	}
+
+	value := machineType.ValueString()
+	if value == "" {
+		return nil
+	}
+
+	// Fetch valid machine types from API
+	machineTypes, err := r.vmApi.GetMachineTypesFromAPI(ctx)
+	if err != nil {
+		return fmt.Errorf("unable to fetch valid machine types from VergeOS API: %w", err)
+	}
+
+	// Check if the value is valid
+	for _, mt := range machineTypes {
+		if value == mt {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("machine type '%s' is not supported by this VergeOS system", value)
+}
+
 // Configure the resource.
 func (r *VMResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	// Prevent panic if the provider has not been configured.
@@ -646,6 +670,16 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Validate machine type against VergeOS API
+	if err := r.validateMachineType(ctx, data.MachineType); err != nil {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("machine_type"),
+			"Invalid Machine Type",
+			err.Error(),
+		)
 		return
 	}
 
@@ -837,6 +871,16 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Validate machine type against VergeOS API
+	if err := r.validateMachineType(ctx, planData.MachineType); err != nil {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("machine_type"),
+			"Invalid Machine Type",
+			err.Error(),
+		)
 		return
 	}
 

@@ -217,55 +217,14 @@ resource "vergeio_vm" "web-server" {
 - `guest_agent` (Boolean) - Default = False
 - `ha_group` (String) - Default = None, Sets the HA Group for VM clustering 
 - `machine` (Number) - Machine Key (ID)
-- `machine_type` (String)
-    - `pc`            i440FX + PIIX, 1996, Latest
-    - `pc-i440fx-2.7` i440FX + PIIX, 1996, 2.7
-    - `pc-i440fx-2.8` i440FX + PIIX, 1996, 2.8
-    - `pc-i440fx-2.9` i440FX + PIIX, 1996, 2.9
-    - `pc-i440fx-2.10` i440FX + PIIX, 1996, 2.10
-    - `pc-i440fx-2.11` i440FX + PIIX, 1996, 2.11
-    - `pc-i440fx-2.12` i440FX + PIIX, 1996, 2.12
-    - `pc-i440fx-3.0` i440FX + PIIX, 1996, 3.0
-    - `pc-i440fx-3.1` i440FX + PIIX, 1996, 3.1
-    - `pc-i440fx-4.0` i440FX + PIIX, 1996, 4.0
-    - `pc-i440fx-4.1` i440FX + PIIX, 1996, 4.1
-    - `pc-i440fx-4.2` i440FX + PIIX, 1996, 4.2
-    - `pc-i440fx-5.0` i440FX + PIIX, 1996, 5.0
-    - `pc-i440fx-5.1` i440FX + PIIX, 1996, 5.1
-    - `pc-i440fx-5.2` i440FX + PIIX, 1996, 5.2
-    - `pc-i440fx-6.0` i440FX + PIIX, 1996, 6.0
-    - `pc-i440fx-6.1` i440FX + PIIX, 1996, 6.1
-    - `pc-i440fx-6.2` i440FX + PIIX, 1996, 6.2
-    - `pc-i440fx-7.0` i440FX + PIIX, 1996, 7.0
-    - `pc-i440fx-7.1` i440FX + PIIX, 1996, 7.1
-    - `pc-i440fx-7.2` i440FX + PIIX, 1996, 7.2
-    - `pc-i440fx-8.0` i440FX + PIIX, 1996, 8.0
-    - `pc-i440fx-8.1` i440FX + PIIX, 1996, 8.1
-    - `pc-i440fx-9.0` i440FX + PIIX, 1996, 9.0
-    - `q35`           Q35 + ICH9, 2009, Latest
-    - `pc-q35-2.7`    Q35 + ICH9, 2009, 2.7
-    - `pc-q35-2.8`    Q35 + ICH9, 2009, 2.8
-    - `pc-q35-2.9`    Q35 + ICH9, 2009, 2.9
-    - `pc-q35-2.10`   Q35 + ICH9, 2009, 2.10
-    - `pc-q35-2.11`   Q35 + ICH9, 2009, 2.11
-    - `pc-q35-2.12`   Q35 + ICH9, 2009, 2.12
-    - `pc-q35-3.0`    Q35 + ICH9, 2009, 3.0
-    - `pc-q35-3.1`    Q35 + ICH9, 2009, 3.1 - **VergeOS Version 4.11 and below Default**
-    - `pc-q35-4.0`    Q35 + ICH9, 2009, 4.0
-    - `pc-q35-4.1`    Q35 + ICH9, 2009, 4.1
-    - `pc-q35-4.2`    Q35 + ICH9, 2009, 4.2
-    - `pc-q35-5.0`    Q35 + ICH9, 2009, 5.0
-    - `pc-q35-5.1`    Q35 + ICH9, 2009, 5.1
-    - `pc-q35-5.2`    Q35 + ICH9, 2009, 5.2
-    - `pc-q35-6.0`    Q35 + ICH9, 2009, 6.0
-    - `pc-q35-6.1`    Q35 + ICH9, 2009, 6.1
-    - `pc-q35-6.2`    Q35 + ICH9, 2009, 6.2
-    - `pc-q35-7.0`    Q35 + ICH9, 2009, 7.0
-    - `pc-q35-7.1`    Q35 + ICH9, 2009, 7.1
-    - `pc-q35-7.2`    Q35 + ICH9, 2009, 7.2
-    - `pc-q35-8.0`    Q35 + ICH9, 2009, 8.0
-    - `pc-q35-8.1`    Q35 + ICH9, 2009, 8.1 - **VergeOS Version 4.12 Default**
-    - `pc-q35-9.0`    Q35 + ICH9, 2009, 9.0 - **VergeOS Version 4.13 Default**
+- `machine_type` (String) - The machine type is dynamically validated against your VergeOS system. Available machine types depend on your VergeOS version and are automatically retrieved from the API. Common machine types include:
+    - `pc` - i440FX + PIIX, 1996 chipset (alias for latest version)
+    - `pc-i440fx-X.X` - Specific versions of i440FX chipset (e.g., `pc-i440fx-9.0`)
+    - `q35` - Q35 + ICH9, 2009 chipset (alias for latest version, recommended)
+    - `pc-q35-X.X` - Specific versions of Q35 chipset (e.g., `pc-q35-9.0`)
+    - `yottabyte` - Custom service machine type
+
+    **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider
 - `nested_virtualization` (Boolean), Default = False
 - `os_description` (String)
 - `os_family` (String)
