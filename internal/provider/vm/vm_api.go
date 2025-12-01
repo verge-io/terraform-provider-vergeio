@@ -694,7 +694,11 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.Cluster = types.StringValue(vmAPIResp.Cluster)
 	data.Description = types.StringValue(vmAPIResp.Description)
 	data.Enabled = types.BoolValue(vmAPIResp.Enabled)
-	data.MachineType = types.StringValue(vmAPIResp.MachineType)
+	// Preserve the configured machine_type if semantically equivalent to API response.
+	// This handles API v26 expanding "q35" to "pc-q35-10.0" and "pc" to "pc-i440fx-10.0".
+	if !machineTypesAreEquivalent(data.MachineType.ValueString(), vmAPIResp.MachineType) {
+		data.MachineType = types.StringValue(vmAPIResp.MachineType)
+	}
 	data.AllowHotplug = types.BoolValue(vmAPIResp.AllowHotplug)
 	data.DisablePowercycle = types.BoolValue(vmAPIResp.DisablePowercycle)
 	data.CPUCores = types.Int32Value(vmAPIResp.CPUCores)

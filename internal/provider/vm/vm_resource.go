@@ -136,6 +136,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "Machine type (validated dynamically against VergeOS API)",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					MachineTypeSemanticEquality(),
+				},
 			},
 			"allow_hotplug": schema.BoolAttribute{
 				MarkdownDescription: "Allow hotplug",
