@@ -220,9 +220,8 @@ resource "vergeio_vm" "web-server" {
 - `machine_type` (String) - The machine type is dynamically validated against your VergeOS system. Available machine types depend on your VergeOS version and are automatically retrieved from the API. Common machine types include:
     - `pc` - i440FX + PIIX, 1996 chipset (alias for latest version)
     - `pc-i440fx-X.X` - Specific versions of i440FX chipset (e.g., `pc-i440fx-9.0`)
-    - `q35` - Q35 + ICH9, 2009 chipset (alias for latest version, recommended)
+    - `q35` - Q35 + ICH9, 2009 chipset (alias for latest version)
     - `pc-q35-X.X` - Specific versions of Q35 chipset (e.g., `pc-q35-9.0`)
-    - `yottabyte` - Custom service machine type
 
     **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider
 - `nested_virtualization` (Boolean), Default = False
