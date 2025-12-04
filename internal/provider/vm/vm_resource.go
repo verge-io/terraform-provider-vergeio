@@ -136,6 +136,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "Machine type (validated dynamically against VergeOS API)",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					MachineTypeSemanticEquality(),
+				},
 			},
 			"allow_hotplug": schema.BoolAttribute{
 				MarkdownDescription: "Allow hotplug",
@@ -945,6 +948,18 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			readError.Error(),
 		)
 		return
+	}
+
+	// Reconcile machine_type: if the plan value is semantically equivalent to what
+	// readVM set, use the plan value. This handles the case where a user explicitly
+	// changes from a short form (q35) to an expanded form (pc-q35-10.0).
+	if !planData.MachineType.IsNull() && !planData.MachineType.IsUnknown() {
+		planVal := planData.MachineType.ValueString()
+		stateVal := stateData.MachineType.ValueString()
+		if planVal != stateVal &&
+			(machineTypesAreEquivalent(planVal, stateVal) || machineTypesAreEquivalent(stateVal, planVal)) {
+			stateData.MachineType = planData.MachineType
+		}
 	}
 
 	// Save updated data into Terraform state
