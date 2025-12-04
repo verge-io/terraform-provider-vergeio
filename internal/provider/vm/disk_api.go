@@ -134,6 +134,9 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 		PreserveDriveFormat: data.PreserveDriveFormat.ValueBool(),
 	}
 
+	// Make a copy of the original data
+	origData := *data
+
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
@@ -165,6 +168,46 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 	// Read it back from the API to get all the fields
 	if readError := da.readDisk(ctx, data); readError != nil {
 		return errors.New("Error reading the disk: " + readError.Error())
+	}
+
+	if data.Media.ValueString() == "import" {
+		// Adding delay to allow the API to process the import prcess
+		time.Sleep(5 * time.Second)
+
+		importStatus := ""
+		Retries := 1
+
+		// and also check the status of the import
+		da.checkDiskPowerState(ctx, data.Key.ValueString(), &importStatus)
+		tflog.Debug(ctx, fmt.Sprintf("Current import status is %v", importStatus))
+
+		for strings.ToLower(importStatus) == "importing" {
+
+			// Wait for a short period before checking the status again
+			time.Sleep(5 * time.Second)
+			Retries += 1
+
+			// We are only going to retry 10 times before giving up
+			if Retries > 10 {
+				return fmt.Errorf("failed to import disk after %d retries", Retries)
+			}
+
+			// Check the status again
+			da.checkDiskPowerState(ctx, data.Key.ValueString(), &importStatus)
+			tflog.Debug(ctx, fmt.Sprintf("Current import status is %v", importStatus))
+
+			continue
+		}
+
+		// Import has been finished, now resize the disk if needed
+		tflog.Debug(ctx, fmt.Sprintf("Resizing the imported disk from %v to %v", origData.DiskSize.ValueInt64(), data.DiskSize.ValueInt64()))
+		if data.DiskSize != origData.DiskSize {
+
+			// Call the update API to resize the disk
+			if err := da.updateDisk(ctx, &origData, data); err != nil {
+				return fmt.Errorf("failed to resize disk after import: %v", err)
+			}
+		}
 	}
 
 	return nil
