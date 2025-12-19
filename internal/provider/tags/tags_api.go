@@ -128,9 +128,48 @@ func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) erro
 	return nil
 }
 
+// checkEndpointAvailability tests if an endpoint is available (for version compatibility)
+func (ta *TagsApi) checkEndpointAvailability(ctx context.Context, endpoint string) error {
+	tflog.Debug(ctx, fmt.Sprintf("Checking availability of endpoint: %s", endpoint))
+
+	// Make a simple GET request to check if endpoint exists
+	// We expect either 200 (success) or 40x (endpoint exists but other error)
+	// We only care about catching endpoint not found (version issue)
+	options := &vergeio.Options{
+		Limit: "1", // Minimal response
+	}
+
+	apiResp, err := ta.client.Get(endpoint, options)
+
+	// If we get an error from the client, check if it's endpoint-related
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			// Check if the error message indicates endpoint doesn't exist
+			if strings.Contains(apiError.VergeError, "not found") && strings.Contains(apiError.Endpoint, endpoint) {
+				return fmt.Errorf(vergeio.ErrEndpointV26, strings.TrimPrefix(endpoint, "api/v4/"))
+			}
+		}
+		// Other errors are not version-related, endpoint might still exist
+		return nil
+	}
+
+	// If we got a response (even non-200), the endpoint exists
+	if apiResp != nil {
+		apiResp.Body.Close()
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Endpoint %s is available", endpoint))
+	return nil
+}
+
 // Create a tag member assignment.
 func (ta *TagsApi) createTagMember(ctx context.Context, data *TagMemberResourceModel) error {
 	tflog.Debug(ctx, "Creating tag member")
+
+	// First check if the tag_members endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagMembersEndpoint); err != nil {
+		return err
+	}
 
 	// Prepare payload
 	payload := TagMemberAPIModel{
@@ -145,12 +184,8 @@ func (ta *TagsApi) createTagMember(ctx context.Context, data *TagMemberResourceM
 
 	apiResp, err := ta.client.Post(TagMembersEndpoint, bytes.NewBuffer(payloadBytes))
 
-	// Error checking with version-aware handling
+	// Error checking - endpoint is available, so 404s are resource-specific
 	if err != nil {
-		// Check if this is a 404 error from the client
-		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
-			return fmt.Errorf(vergeio.ErrEndpointV26, "tag_members")
-		}
 		return err
 	}
 	if apiResp == nil {
@@ -158,12 +193,7 @@ func (ta *TagsApi) createTagMember(ctx context.Context, data *TagMemberResourceM
 	}
 	defer apiResp.Body.Close()
 
-	// First check for 404 - version compatibility issue
-	if apiResp.StatusCode == 404 {
-		return fmt.Errorf(vergeio.ErrEndpointV26, "tag_members")
-	}
-
-	// Check for any other non-200 status code
+	// Check for non-success status codes
 	if apiResp.StatusCode != 200 && apiResp.StatusCode != 201 {
 		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
 	}
@@ -205,18 +235,18 @@ func (ta *TagsApi) createTagMember(ctx context.Context, data *TagMemberResourceM
 func (ta *TagsApi) readTagMember(ctx context.Context, data *TagMemberResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Reading tag member with ID %s", data.Id.ValueString()))
 
+	// First check if the tag_members endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagMembersEndpoint); err != nil {
+		return err
+	}
+
 	endpoint := fmt.Sprintf("%s/%s", TagMembersEndpoint, data.Id.ValueString())
 	apiResp, err := ta.client.Get(endpoint, nil)
 
-	// Error checking with version-aware handling
+	// Error checking - endpoint is available, so 404s are resource-specific
 	if err != nil {
-		// Check if this is a 404 error from the client
 		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
-			// Could be endpoint not available or resource not found
-			if strings.Contains(apiError.VergeError, "not found") && strings.Contains(apiError.Endpoint, "tag_members") {
-				return fmt.Errorf(vergeio.ErrEndpointV26, "tag_members")
-			}
-			// Resource not found - return specific error for state management
+			// Resource-specific not found
 			return fmt.Errorf("tag member not found")
 		}
 		return err
@@ -226,7 +256,7 @@ func (ta *TagsApi) readTagMember(ctx context.Context, data *TagMemberResourceMod
 	}
 	defer apiResp.Body.Close()
 
-	// First check for 404 - version compatibility or resource not found
+	// Handle 404 from response (resource not found, endpoint exists)
 	if apiResp.StatusCode == 404 {
 		return fmt.Errorf("tag member not found")
 	}
@@ -275,6 +305,11 @@ func (ta *TagsApi) readTagMember(ctx context.Context, data *TagMemberResourceMod
 func (ta *TagsApi) updateTagMember(ctx context.Context, data *TagMemberResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Updating tag member with ID %s", data.Id.ValueString()))
 
+	// First check if the tag_members endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagMembersEndpoint); err != nil {
+		return err
+	}
+
 	// Prepare payload
 	payload := TagMemberAPIModel{
 		Tag:    int(data.TagId.ValueInt32()),
@@ -289,11 +324,10 @@ func (ta *TagsApi) updateTagMember(ctx context.Context, data *TagMemberResourceM
 	endpoint := fmt.Sprintf("%s/%s", TagMembersEndpoint, data.Id.ValueString())
 	apiResp, err := ta.client.Put(endpoint, bytes.NewBuffer(payloadBytes))
 
-	// Error checking with version-aware handling
+	// Error checking - endpoint is available, so 404s are resource-specific
 	if err != nil {
-		// Check if this is a 404 error from the client
 		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
-			return fmt.Errorf(vergeio.ErrEndpointV26, "tag_members")
+			return fmt.Errorf("tag member not found")
 		}
 		return err
 	}
@@ -302,7 +336,7 @@ func (ta *TagsApi) updateTagMember(ctx context.Context, data *TagMemberResourceM
 	}
 	defer apiResp.Body.Close()
 
-	// First check for 404 - version compatibility issue
+	// Handle 404 from response (resource not found, endpoint exists)
 	if apiResp.StatusCode == 404 {
 		return fmt.Errorf("tag member not found")
 	}
@@ -321,16 +355,20 @@ func (ta *TagsApi) updateTagMember(ctx context.Context, data *TagMemberResourceM
 func (ta *TagsApi) deleteTagMember(ctx context.Context, data *TagMemberResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Deleting tag member with ID %s", data.Id.ValueString()))
 
+	// First check if the tag_members endpoint is available (version check)
+	if err := ta.checkEndpointAvailability(ctx, TagMembersEndpoint); err != nil {
+		return err
+	}
+
 	endpoint := fmt.Sprintf("%s/%s", TagMembersEndpoint, data.Id.ValueString())
 	apiResp, err := ta.client.Delete(endpoint)
 
-	// Error checking with version-aware handling
+	// Error checking - endpoint is available, so 404s are resource-specific
 	if err != nil {
-		// Check if this is a 404 error from the client
 		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
-			// Could be endpoint not available or resource already deleted
+			// Resource not found during deletion - treat as success since it's gone
 			tflog.Debug(ctx, "Tag member not found during deletion (may already be deleted)")
-			return nil // Treat as success since resource is gone
+			return nil
 		}
 		return err
 	}
@@ -339,13 +377,13 @@ func (ta *TagsApi) deleteTagMember(ctx context.Context, data *TagMemberResourceM
 	}
 	defer apiResp.Body.Close()
 
-	// First check for 404 - resource already deleted
+	// Handle 404 from response (resource already deleted, endpoint exists)
 	if apiResp.StatusCode == 404 {
 		tflog.Debug(ctx, "Tag member not found during deletion (may already be deleted)")
 		return nil // Treat as success since resource is gone
 	}
 
-	// Check for any other non-200 status code
+	// Check for any other non-success status code
 	if apiResp.StatusCode != 200 && apiResp.StatusCode != 204 {
 		return fmt.Errorf("API returned status code %d", apiResp.StatusCode)
 	}
