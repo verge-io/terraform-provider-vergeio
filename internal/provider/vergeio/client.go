@@ -32,6 +32,7 @@ type Client struct {
 	Host       string
 	Insecure   bool
 	httpClient *http.Client
+	FieldCache *FieldCache
 }
 
 // Name returns the name of the client.
