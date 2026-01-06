@@ -96,6 +96,9 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 		Insecure: data.Insecure.ValueBool(),
 	}
 
+	// Initialize field cache for session-based caching
+	client.FieldCache = vergeio.NewFieldCache(client)
+
 	resp.DataSourceData = client
 	resp.ResourceData = client
 }

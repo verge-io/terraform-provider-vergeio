@@ -64,6 +64,8 @@ type diskAPIPowerStatus struct {
 }
 
 // List of valid disk interfaces.
+// getValidDiskInterfaces returns hardcoded list - DEPRECATED
+// Use GetDiskInterfacesFromAPI for dynamic API-based validation
 func getValidDiskInterfaces() []string {
 	return []string{
 		"virtio",
@@ -76,6 +78,12 @@ func getValidDiskInterfaces() []string {
 		"virtio-scsi",
 		"virtio-scsi-dedicated",
 	}
+}
+
+// GetDiskInterfacesFromAPI fetches the list of valid disk interfaces from the VergeOS API with caching
+func (da *DiskApi) GetDiskInterfacesFromAPI(ctx context.Context) ([]string, error) {
+	// Use field cache for session-based lazy loading
+	return da.client.FieldCache.GetDiskInterfaces(ctx)
 }
 
 // List of valid disk media.

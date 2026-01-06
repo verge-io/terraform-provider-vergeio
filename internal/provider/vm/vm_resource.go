@@ -419,10 +419,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"interface": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
-							Validators: []validator.String{
-								// Validate string value must be one of the allowed values
-								stringvalidator.OneOf(getValidDiskInterfaces()...),
-							},
+							// Note: Dynamic validation performed in Create/Update methods
 						},
 						"media": schema.StringAttribute{
 							Optional: true,
@@ -639,7 +636,45 @@ func (r *VMResource) validateMachineType(ctx context.Context, machineType types.
 		}
 	}
 
-	return fmt.Errorf("machine type '%s' is not supported by this VergeOS system", value)
+	return fmt.Errorf("machine type '%s' is not supported by this VergeOS version", value)
+}
+
+// validateDiskInterface validates that the disk interface value is supported by the VergeOS API
+func (r *VMResource) validateDiskInterface(ctx context.Context, diskInterface types.String) error {
+	// If interface is null or unknown, skip validation
+	if diskInterface.IsNull() || diskInterface.IsUnknown() {
+		return nil
+	}
+
+	value := diskInterface.ValueString()
+	if value == "" {
+		return nil
+	}
+
+	// Fetch valid disk interfaces from API
+	diskInterfaces, err := r.diskApi.GetDiskInterfacesFromAPI(ctx)
+	if err != nil {
+		return fmt.Errorf("unable to fetch valid disk interfaces from VergeOS API: %w", err)
+	}
+
+	// Check if the value is valid
+	for _, di := range diskInterfaces {
+		if value == di {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("disk interface '%s' is not supported by this VergeOS version", value)
+}
+
+// validateDrives validates all drives and their interfaces
+func (r *VMResource) validateDrives(ctx context.Context, drives []*diskResourceModel) error {
+	for i, drive := range drives {
+		if err := r.validateDiskInterface(ctx, drive.Interface); err != nil {
+			return fmt.Errorf("drive %d: %w", i, err)
+		}
+	}
+	return nil
 }
 
 // Configure the resource.
@@ -681,6 +716,16 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		resp.Diagnostics.AddAttributeError(
 			path.Root("machine_type"),
 			"Invalid Machine Type",
+			err.Error(),
+		)
+		return
+	}
+
+	// Validate drives and their interfaces against VergeOS API
+	if err := r.validateDrives(ctx, data.Disks); err != nil {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("vergeio_drive"),
+			"Invalid Drive Interface",
 			err.Error(),
 		)
 		return
@@ -882,6 +927,16 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		resp.Diagnostics.AddAttributeError(
 			path.Root("machine_type"),
 			"Invalid Machine Type",
+			err.Error(),
+		)
+		return
+	}
+
+	// Validate drives and their interfaces against VergeOS API
+	if err := r.validateDrives(ctx, planData.Disks); err != nil {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("vergeio_drive"),
+			"Invalid Drive Interface",
 			err.Error(),
 		)
 		return
