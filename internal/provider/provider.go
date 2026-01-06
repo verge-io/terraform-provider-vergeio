@@ -14,6 +14,7 @@ import (
 	"terraform-provider-vergeio/internal/provider/network"
 	"terraform-provider-vergeio/internal/provider/node"
 	resourseGroups "terraform-provider-vergeio/internal/provider/resource_groups"
+	"terraform-provider-vergeio/internal/provider/tags"
 	"terraform-provider-vergeio/internal/provider/user"
 	"terraform-provider-vergeio/internal/provider/vergeio"
 	"terraform-provider-vergeio/internal/provider/version"
@@ -105,6 +106,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		vm.NewVMResource,
 		user.NewUserResource,
 		member.NewMemberResource,
+		tags.NewTagMemberResource,
 	}
 }
 
@@ -119,6 +121,7 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		node.NewNodeDataSource,
 		cloudinitFile.NewCloudinitFileDataSource,
 		resourseGroups.NewResourceGroupsDataSource,
+		tags.NewTagsDataSource,
 	}
 }
 

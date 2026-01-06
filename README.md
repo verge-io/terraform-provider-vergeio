@@ -34,6 +34,7 @@ provider "vergeio" {
 - vergeio_nic
 - vergeio_user
 - vergeio_vm
+- vergeio_tag_members
 
 ## Data Sources
 
@@ -44,6 +45,7 @@ provider "vergeio" {
 - vergeio_nodes
 - vergeio_version
 - vergeio_vms
+- vergeio_tags
 
 # Building Provider From Source
 
