@@ -711,6 +711,12 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
+	// Check for cancellation early
+	if ctx.Err() != nil {
+		resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled by user")
+		return
+	}
+
 	// Validate machine type against VergeOS API
 	if err := r.validateMachineType(ctx, data.MachineType); err != nil {
 		resp.Diagnostics.AddAttributeError(
@@ -738,6 +744,29 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		desiredPowerState = data.PowerState.ValueBool()
 	}
 
+	// Track VM creation for cleanup on cancellation
+	var vmCreated bool
+
+	// Cleanup function for cancelled operations
+	defer func() {
+		if ctx.Err() != nil && vmCreated {
+			tflog.Warn(ctx, fmt.Sprintf("Operation cancelled, cleaning up VM: %s", data.Id.ValueString()))
+			cleanupCtx := context.Background() // Use new context for cleanup
+
+			if err := r.vmApi.deleteVM(cleanupCtx, &data); err != nil {
+				tflog.Error(cleanupCtx, fmt.Sprintf("Failed to cleanup VM %s: %v", data.Id.ValueString(), err))
+			} else {
+				tflog.Info(cleanupCtx, fmt.Sprintf("Successfully cleaned up VM %s after cancellation", data.Id.ValueString()))
+			}
+		}
+	}()
+
+	// Check for cancellation before VM creation
+	if ctx.Err() != nil {
+		resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled before VM creation started")
+		return
+	}
+
 	// Create a new VM
 	createError := r.vmApi.CreateVM(ctx, &data)
 	if createError != nil {
@@ -747,15 +776,30 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		)
 		return
 	}
+	vmCreated = true
+	tflog.Debug(ctx, fmt.Sprintf("VM created successfully: %s", data.Id.ValueString()))
+
+	// Check for cancellation after VM creation
+	if ctx.Err() != nil {
+		resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled")
+		return
+	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
 
 	// Create disks
 	if data.Disks != nil {
-		for _, disk := range data.Disks {
-			disk.Machine = data.Machine
+		tflog.Debug(ctx, fmt.Sprintf("Creating %d disks", len(data.Disks)))
+		for i, disk := range data.Disks {
+			// Check for cancellation before each disk
+			if ctx.Err() != nil {
+				tflog.Warn(ctx, fmt.Sprintf("Context cancelled while creating disk %d", i))
+				resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled while creating disks")
+				return
+			}
 
+			disk.Machine = data.Machine
 			createError := r.diskApi.createDisk(ctx, disk)
 			if createError != nil {
 				tflog.Debug(ctx, fmt.Sprintf("Error creating disk %v", createError))
@@ -765,14 +809,23 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				)
 				return
 			}
+			tflog.Debug(ctx, fmt.Sprintf("Created disk %d successfully", i))
 		}
 	}
 
 	// Create NICs
 	if data.NICs != nil {
-		for _, nic := range data.NICs {
-			nic.Machine = data.Machine
+		tflog.Debug(ctx, fmt.Sprintf("Creating %d NICs", len(data.NICs)))
 
+		for i, nic := range data.NICs {
+			// Check for cancellation before each NIC
+			if ctx.Err() != nil {
+				tflog.Warn(ctx, fmt.Sprintf("Context cancelled while creating NIC %d", i))
+				resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled while creating NICs")
+				return
+			}
+
+			nic.Machine = data.Machine
 			createError := r.nicApi.createNIC(ctx, nic)
 			if createError != nil {
 				tflog.Debug(ctx, fmt.Sprintf("Error creating nic %v", createError))
@@ -782,14 +835,22 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				)
 				return
 			}
+			tflog.Debug(ctx, fmt.Sprintf("Created NIC %d successfully", i))
 		}
 	}
 
 	// Create devices
 	if data.Devices != nil {
-		for _, device := range data.Devices {
-			device.Machine = data.Machine
+		tflog.Debug(ctx, fmt.Sprintf("Creating %d devices", len(data.Devices)))
+		for i, device := range data.Devices {
+			// Check for cancellation before each device
+			if ctx.Err() != nil {
+				tflog.Warn(ctx, fmt.Sprintf("Context cancelled while creating device %d", i))
+				resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled while creating devices")
+				return
+			}
 
+			device.Machine = data.Machine
 			createError := r.deviceApi.createDevice(ctx, device)
 			if createError != nil {
 				tflog.Debug(ctx, fmt.Sprintf("Error creating device %v", createError))
@@ -799,11 +860,19 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				)
 				return
 			}
+			tflog.Debug(ctx, fmt.Sprintf("Created device %d successfully", i))
 		}
 	}
 
 	// Now turn the power on if the power state is true
 	if desiredPowerState {
+		// Check for cancellation before power on
+		if ctx.Err() != nil {
+			tflog.Warn(ctx, "Context cancelled before powering on VM")
+			resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled before powering on")
+			return
+		}
+
 		tflog.Debug(ctx, "Powering on the VM")
 		if powerOnError := r.vmApi.powerOnVM(ctx, &data); powerOnError != nil {
 			resp.Diagnostics.AddError(
@@ -812,6 +881,15 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 			)
 			return
 		}
+
+		// Check for cancellation after power on operation
+		if ctx.Err() != nil {
+			tflog.Warn(ctx, "Context cancelled after powering on VM")
+			resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled after powering on")
+			return
+		}
+
+		tflog.Debug(ctx, "VM powered on successfully")
 	}
 
 	// First get both guest agent info and timeout values
@@ -819,12 +897,31 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	waitForGuestIPTimeout := data.WaitForGuestIPTimeout.ValueInt32()
 	toIgnoreCidr := data.IgnoredGuestIPs.ValueString()
 
+	// Check for cancellation before starting guest agent wait
+	if ctx.Err() != nil {
+		tflog.Warn(ctx, "Context cancelled before starting guest agent wait")
+		resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled before guest agent wait")
+		return
+	}
+
+	maxWaitTime := max(waitForGuestAgentInfo, waitForGuestIPTimeout)
+	if maxWaitTime > 0 {
+		tflog.Debug(ctx, fmt.Sprintf("Starting guest agent wait (max %d seconds)", maxWaitTime))
+	}
+
 	ipFound := false                 // to break the loop when IP is found
 	var retryCheckInterval int32 = 5 // seconds
 	var i int32 = 0
 
 	// run a loop until the max of var1 and var2
 	for i = 0; i <= max(waitForGuestAgentInfo, waitForGuestIPTimeout); i++ {
+		// Check for cancellation inside the loop (most important!)
+		if ctx.Err() != nil {
+			tflog.Warn(ctx, fmt.Sprintf("Context cancelled during guest agent wait at %d seconds", i))
+			resp.Diagnostics.AddError("Operation Cancelled", "VM creation was cancelled during guest agent wait")
+			return
+		}
+
 		time.Sleep(1 * time.Second)
 
 		// check if i is a multiple of retryCheckInterval and less than waitForGuestIPTimeout
@@ -1032,34 +1129,7 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 
 	tflog.Debug(ctx, fmt.Sprintf("Deleting VM %v", data))
 
-	// make sure the VM is in a power state that can be deleted
-	var currentPowerState *bool
-	var err error
-
-	if currentPowerState, err = r.vmApi.isVMRunning(ctx, data.Id.ValueString()); err != nil {
-		resp.Diagnostics.AddError(
-			"Failed to check Power State before deletion:",
-			err.Error(),
-		)
-		return
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("Current vm power state is %v", *currentPowerState))
-
-	// If the VM is running, we need to power it off before deletion
-	if *currentPowerState {
-		tflog.Debug(ctx, "VM is running, powering it off before deletion")
-		// Power the vm off
-		if err := r.vmApi.killVM(ctx, &data); err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to kill VM before deletion:",
-				err.Error(),
-			)
-			return
-		}
-	}
-
-	// Proceed with vm deletion
+	// Delete the VM (API will handle power state checks and shutdown if needed)
 	// IMPORTANT: we don't need to explicitly delete the nics and the disks. They will be deleted when the VM is deleted.
 	if err := r.vmApi.deleteVM(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(

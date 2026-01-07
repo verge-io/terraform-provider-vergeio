@@ -475,8 +475,28 @@ func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 
 	tflog.Debug(ctx, "Deleting the vm")
 
-	// Call the Get API with the VM id and Proceed with user deletion
-	_, err := va.client.Delete(fmt.Sprintf("%s/%s",
+	// Check if VM is running and power it off if needed before deletion
+	currentPowerState, err := va.isVMRunning(ctx, data.Id.ValueString())
+	if err != nil {
+		tflog.Warn(ctx, fmt.Sprintf("Failed to check VM power state before deletion: %v", err))
+		// Continue with deletion attempt even if power state check fails
+	} else {
+		tflog.Debug(ctx, fmt.Sprintf("Current VM power state is %v", *currentPowerState))
+
+		// If the VM is running, power it off before deletion
+		if *currentPowerState {
+			tflog.Debug(ctx, "VM is running, powering it off before deletion")
+			if err := va.killVM(ctx, data); err != nil {
+				tflog.Warn(ctx, fmt.Sprintf("Failed to kill VM before deletion: %v", err))
+				// Continue with deletion attempt even if kill fails
+			} else {
+				tflog.Debug(ctx, "VM powered off successfully before deletion")
+			}
+		}
+	}
+
+	// Call the Delete API with the VM id
+	_, err = va.client.Delete(fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString())))
 
