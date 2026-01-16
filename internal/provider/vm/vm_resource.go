@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -78,9 +79,13 @@ type VMResourceModel struct {
 	SnapshotProfile       types.String    `tfsdk:"snapshot_profile"`
 	CloudInitDataSource   types.String    `tfsdk:"cloudinit_datasource"`
 	HAGroup               types.String    `tfsdk:"ha_group"`
-	CloudInitFiles        []CloudInitFile `tfsdk:"cloudinit_files"`
+	CloudInitFiles        types.List      `tfsdk:"cloudinit_files"`
 	PowerState            types.Bool      `tfsdk:"powerstate"`
 	GuestAgent            types.Bool      `tfsdk:"guest_agent"`
+	Username              types.String    `tfsdk:"username"`
+	Password              types.String    `tfsdk:"password"`
+	SSHKey                types.String    `tfsdk:"ssh_key"`
+	Hostname              types.String    `tfsdk:"hostname"`
 	Advanced              types.String    `tfsdk:"advanced"`
 	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
 	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
@@ -276,6 +281,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			},
 			"cloudinit_files": schema.ListNestedAttribute{
 				Optional: true,
+				Computed: true,
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
 				},
@@ -294,6 +300,23 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "Power state of the vm",
 				Optional:            true,
 				Computed:            true,
+			},
+			"username": schema.StringAttribute{
+				MarkdownDescription: "Username for Cloud-Init (automatically generates user-data)",
+				Optional:            true,
+			},
+			"password": schema.StringAttribute{
+				MarkdownDescription: "Password for Cloud-Init (automatically generates user-data)",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"ssh_key": schema.StringAttribute{
+				MarkdownDescription: "SSH Public Key for Cloud-Init (automatically generates user-data)",
+				Optional:            true,
+			},
+			"hostname": schema.StringAttribute{
+				MarkdownDescription: "Hostname for Cloud-Init (automatically generates meta-data)",
+				Optional:            true,
 			},
 			"advanced": schema.StringAttribute{
 				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
@@ -729,6 +752,52 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 			err.Error(),
 		)
 		return
+	}
+
+	// Automatically generate Cloud-Init files if username is provided
+	if !data.Username.IsNull() && !data.Username.IsUnknown() && data.Username.ValueString() != "" {
+		username := data.Username.ValueString()
+		hostname := data.Name.ValueString()
+		if !data.Hostname.IsNull() && !data.Hostname.IsUnknown() && data.Hostname.ValueString() != "" {
+			hostname = data.Hostname.ValueString()
+		}
+
+		userData := fmt.Sprintf("#cloud-config\nusers:\n  - name: %s\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    shell: /bin/bash\n", username)
+		if !data.SSHKey.IsNull() && !data.SSHKey.IsUnknown() && data.SSHKey.ValueString() != "" {
+			userData += fmt.Sprintf("    ssh_authorized_keys:\n      - %s\n", data.SSHKey.ValueString())
+		}
+		if !data.Password.IsNull() && !data.Password.IsUnknown() && data.Password.ValueString() != "" {
+			userData += fmt.Sprintf("    plain_text_passwd: %s\n    lock_passwd: false\n", data.Password.ValueString())
+			userData += "ssh_pwauth: true\n"
+		} else {
+			userData += "ssh_pwauth: false\n"
+		}
+
+		metaData := fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", hostname, hostname)
+
+		// Create files if not already present
+		var files []CloudInitFile
+		if !data.CloudInitFiles.IsNull() && !data.CloudInitFiles.IsUnknown() {
+			resp.Diagnostics.Append(data.CloudInitFiles.ElementsAs(ctx, &files, false)...)
+		}
+
+		files = append(files, CloudInitFile{
+			Name:     types.StringValue("/user-data"),
+			Contents: types.StringValue(userData),
+		})
+		files = append(files, CloudInitFile{
+			Name:     types.StringValue("/meta-data"),
+			Contents: types.StringValue(metaData),
+		})
+
+		var diag diag.Diagnostics
+		data.CloudInitFiles, diag = types.ListValueFrom(ctx, data.CloudInitFiles.ElementType(ctx), files)
+		resp.Diagnostics.Append(diag...)
+
+		// Ensure datasource is set if not already set
+		if data.CloudInitDataSource.IsNull() || data.CloudInitDataSource.IsUnknown() || data.CloudInitDataSource.ValueString() == "" {
+			data.CloudInitDataSource = types.StringValue("nocloud")
+		}
 	}
 
 	// Let's presever the desired power state

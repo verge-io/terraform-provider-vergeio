@@ -96,6 +96,12 @@ func (nc *NICApi) Name() string {
 // Create the NIC in the API.
 func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 
+	// Default enabled to true if not explicitly set
+	enabled := true
+	if !data.Enabled.IsNull() && !data.Enabled.IsUnknown() {
+		enabled = data.Enabled.ValueBool()
+	}
+
 	apiData := nicAPIResourceModel{
 		Machine:     data.Machine.ValueInt32(),
 		Name:        data.Name.ValueString(),
@@ -105,7 +111,7 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 		Model:       data.Model.ValueString(),
 		Vendor:      data.Vendor.ValueString(),
 		Port:        data.Port.ValueInt32(),
-		Enabled:     data.Enabled.ValueBool(),
+		Enabled:     enabled,
 		VNET:        data.VNET.ValueInt32(),
 		MAC:         data.MAC.ValueString(),
 		Asset:       data.Asset.ValueString(),

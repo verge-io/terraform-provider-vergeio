@@ -13,6 +13,7 @@ import (
 	"terraform-provider-vergeio/internal/provider/member"
 	"terraform-provider-vergeio/internal/provider/network"
 	"terraform-provider-vergeio/internal/provider/node"
+	"terraform-provider-vergeio/internal/provider/recipe"
 	resourseGroups "terraform-provider-vergeio/internal/provider/resource_groups"
 	"terraform-provider-vergeio/internal/provider/tags"
 	"terraform-provider-vergeio/internal/provider/user"
@@ -110,6 +111,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		user.NewUserResource,
 		member.NewMemberResource,
 		tags.NewTagMemberResource,
+		recipe.NewRecipeResource,
 	}
 }
 

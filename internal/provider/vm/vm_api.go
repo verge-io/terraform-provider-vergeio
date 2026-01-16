@@ -309,8 +309,11 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	}
 
 	// Add the cloud init files
-	if data.CloudInitFiles != nil {
-		for _, cloudInitFile := range data.CloudInitFiles {
+	if !data.CloudInitFiles.IsNull() && !data.CloudInitFiles.IsUnknown() {
+		var cloudInitFiles []CloudInitFile
+		// Note: We are in package vm, so we can access CloudInitFile
+		data.CloudInitFiles.ElementsAs(ctx, &cloudInitFiles, false)
+		for _, cloudInitFile := range cloudInitFiles {
 			apiData.CloudInitFiles = append(apiData.CloudInitFiles, CloudInitFileAPI{
 				Name:     cloudInitFile.Name.ValueString(),
 				Contents: cloudInitFile.Contents.ValueString(),
@@ -632,7 +635,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,guest_agent,advanced,nested_virtualization,disable_hypervisor,machine#status#running as powerstate"})
+	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,cloudinit_files,ha_group,guest_agent,advanced,nested_virtualization,disable_hypervisor,machine#status#running as powerstate"})
 	// ), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,machine#status#running as powerstate,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
 
 	// error checking
@@ -696,12 +699,37 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.PowerState = types.BoolValue(vmAPIResp.PowerState)
 
 	if vmAPIResp.CloudInitFiles != nil {
+		// Build a map of existing file contents from state (API doesn't return contents)
+		existingContents := make(map[string]string)
+		if !data.CloudInitFiles.IsNull() && !data.CloudInitFiles.IsUnknown() {
+			var existingFiles []CloudInitFile
+			data.CloudInitFiles.ElementsAs(ctx, &existingFiles, false)
+			for _, f := range existingFiles {
+				if !f.Contents.IsNull() && !f.Contents.IsUnknown() {
+					existingContents[f.Name.ValueString()] = f.Contents.ValueString()
+				}
+			}
+		}
+
+		var files []CloudInitFile
 		for _, cloudInitFileAPI := range vmAPIResp.CloudInitFiles {
-			data.CloudInitFiles = append(data.CloudInitFiles, CloudInitFile{
-				Name:     types.StringValue(cloudInitFileAPI.Name),
-				Contents: types.StringValue(cloudInitFileAPI.Contents),
+			fileName := cloudInitFileAPI.Name
+			// Use API contents if available, otherwise preserve from state
+			contents := cloudInitFileAPI.Contents
+			if contents == "" {
+				if existing, ok := existingContents[fileName]; ok {
+					contents = existing
+				}
+			}
+			files = append(files, CloudInitFile{
+				Name:     types.StringValue(fileName),
+				Contents: types.StringValue(contents),
 			})
 		}
+		// Use the list type from the schema if possible, or just build one
+		data.CloudInitFiles, _ = types.ListValueFrom(ctx, data.CloudInitFiles.ElementType(ctx), files)
+	} else {
+		data.CloudInitFiles = types.ListNull(data.CloudInitFiles.ElementType(ctx))
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
