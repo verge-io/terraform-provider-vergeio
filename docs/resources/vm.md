@@ -267,13 +267,19 @@ resource "vergeio_vm" "web-server" {
    - **Required Options**
      - `name` (String) - The name of the file (e.g. `"user-data"`, `"meta-data"`, `"vendor-data"`, `"network-data"`)
      - `contents` (String) - The file content, typically YAML for user-data and JSON for meta-data with
+- `advanced` (String) - Property and value pairs separated by newlines, e.g. `"tag1=val1\ntag2=val2"`
+- `wait_for_guest_agent_info` (Number) - Wait time in seconds for guest agent to be ready before completing resource creation
+- `wait_for_guest_ip_timeout` (Number) - Wait time in seconds for guest IP address to be available
+- `ignored_guest_ips` (String) - CIDR notation for IP addresses to ignore when waiting for guest IP (e.g., `"169.254.0.0/16"`)
 - `vergeio_drive` (Block List) (see [below for nested schema](#nestedblock--vergeio_drive))
 - `vergeio_nic` (Block List) (see [below for nested schema](#nestedblock--vergeio_nic))
+- `vergeio_device` (Block List) (see [below for nested schema](#nestedblock--vergeio_device))
 
 ### Read-Only
 
 - `id` (String) VM id (returned as the key) in VergeIO
 - `machine` (Number) Machine
+- `guest_agent_ips` (List of String) - IP addresses reported by the guest agent
 
 ### Nested Schema for `vergeio_drive`
 
@@ -325,3 +331,41 @@ Optional:
 - `macaddress` (String)
 - `vnet` (Number) - Key (ID) of the vNET the resource will attach to.
 - `assign_ipaddress` (Boolean) - To assign an IP address to a NIC, `assign_ipaddress` must be true and `vnet` must point to a vNET with DHCP enabled
+
+<a id="nestedblock--vergeio_device"></a>
+
+### Nested Schema for `vergeio_device`
+
+Required:
+
+- `name` (String) - Device name
+
+Optional:
+
+- `description` (String)
+- `type` (String) - Type of device:
+  - `node_nvidia_vgpu_devices` - Nvidia vGPU device
+  - `node_pci_devices` - PCI passthrough device
+  - `node_usb_devices` - USB passthrough device
+  - `tpm` - TPM (Trusted Platform Module) device
+- `resource_group` (String) - Resource group UUID (required for PCI, USB, and vGPU devices)
+- `enabled` (Boolean) - Default = True
+- `nvidia_vgpu_settings` (Object) - Settings for Nvidia vGPU devices:
+  - `profile_type` (String) - vGPU profile identifier
+  - `frame_rate_limiter` (Number) - Frame rate limit
+  - `disable_vnc` (Boolean) - Disable VNC for vGPU
+  - `enable_uvm` (Boolean) - Enable Unified Virtual Memory
+  - `enable_debugging` (Boolean) - Enable debugging
+  - `enable_profiling` (Boolean) - Enable profiling
+- `tpm_settings` (Object) - Settings for TPM devices:
+  - `model` (String) - TPM model (e.g., `"crb"`)
+  - `version` (String) - TPM version (e.g., `"2.0"`)
+- `usb_settings` (Object) - Settings for USB devices:
+  - `guest_reset` (Boolean) - Allow guest to reset device
+  - `guest_resets_all` (Boolean) - Guest reset affects all USB devices
+
+Read-Only:
+
+- `key` (String) - Device key/ID
+- `machine` (Number) - Machine ID
+- `status` (Number) - Device status

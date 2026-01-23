@@ -26,6 +26,15 @@ output "networks" {
 	value = data.vergeio_networks.all.networks
 }
 ```
+Filter by network type (internal or external)
+```
+data "vergeio_networks" "internal_only" {
+    filter_type = "internal"
+}
+output "internal_networks" {
+	value = data.vergeio_networks.internal_only.networks
+}
+```
 # Example Output
 ```
 {
@@ -43,6 +52,7 @@ output "networks" {
 ### Optional
 
 - `filter_name` (String) If specified, results will be filtered to name
+- `filter_type` (String) If specified, results will be filtered by network type (`internal` or `external`)
 
 ### Read-Only
 
