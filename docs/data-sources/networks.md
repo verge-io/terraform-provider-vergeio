@@ -10,15 +10,18 @@ description: |-
 Retrieves information about networks on the system
 
 # Example Usage
-```
+
+```terraform
 data "vergeio_networks" "all" {
 }
 output "networks" {
 	value = data.vergeio_networks.all.networks
 }
 ```
-Add a filter to see information on a specific network
-```
+
+Add a filter to see information on a specific network:
+
+```terraform
 data "vergeio_networks" "all" {
     filter_name="External"
 }
@@ -26,8 +29,10 @@ output "networks" {
 	value = data.vergeio_networks.all.networks
 }
 ```
-Filter by network type (internal or external)
-```
+
+Filter by network type (internal or external):
+
+```terraform
 data "vergeio_networks" "internal_only" {
     filter_type = "internal"
 }
@@ -35,8 +40,10 @@ output "internal_networks" {
 	value = data.vergeio_networks.internal_only.networks
 }
 ```
+
 # Example Output
-```
+
+```hcl
 {
  description = "External network vnet"
  id          = 3
