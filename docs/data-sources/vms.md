@@ -85,7 +85,49 @@ output "VM_Drives" {
 
 Read-Only:
 
-- `id` (Number)
-- `is_snapshot` (Boolean)
-- `key` (Number) 
-- `name` (String)
+- `id` (Number) - VM ID
+- `key` (Number) - VM key in the database
+- `name` (String) - VM name
+- `is_snapshot` (Boolean) - Whether this is a VM snapshot
+- `cpu_type` (String) - CPU type configured for the VM
+- `machine_type` (String) - Machine type (e.g., `q35`, `pc`)
+- `os_family` (String) - Operating system family (`linux`, `windows`, `freebsd`, `other`)
+- `uefi` (Boolean) - Whether UEFI is enabled
+- `drives` (List of Object) - List of drives attached to the VM (see [below for nested schema](#nestedatt--vms--drives))
+- `nics` (List of Object) - List of NICs attached to the VM (see [below for nested schema](#nestedatt--vms--nics))
+
+<a id="nestedatt--vms--drives"></a>
+### Nested Schema for `vms.drives`
+
+Read-Only:
+
+- `key` (Number) - Drive key/ID
+- `name` (String) - Drive name
+- `interface` (String) - Drive interface type (e.g., `virtio-scsi`, `sata`)
+- `media` (String) - Media type (`disk`, `cdrom`, `efidisk`)
+- `description` (String) - Drive description
+- `preferred_tier` (String) - Storage tier (1-5)
+- `media_source` (Object) - Media source information (see [below for nested schema](#nestedatt--vms--drives--media_source))
+
+<a id="nestedatt--vms--drives--media_source"></a>
+### Nested Schema for `vms.drives.media_source`
+
+Read-Only:
+
+- `key` (Number) - Media source key/ID
+- `used_bytes` (Number) - Bytes used by the drive
+- `allocated_bytes` (Number) - Bytes allocated for the drive
+- `filesize` (Number) - File size in bytes
+
+<a id="nestedatt--vms--nics"></a>
+### Nested Schema for `vms.nics`
+
+Read-Only:
+
+- `key` (Number) - NIC key/ID
+- `name` (String) - NIC name
+- `interface` (String) - NIC interface type (e.g., `virtio`, `e1000`)
+- `vnet` (String) - vNET the NIC is attached to
+- `status` (String) - NIC status
+- `ipaddress` (String) - IP address assigned to the NIC
+- `macaddress` (String) - MAC address of the NIC
