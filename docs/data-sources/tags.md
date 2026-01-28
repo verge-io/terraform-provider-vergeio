@@ -10,10 +10,12 @@ description: |-
 
 Retrieves information about tags configured in VergeOS. Tags can be used to organize and categorize resources.
 
+Supports filtering by name and/or category to handle duplicate tag names across categories.
+
 ## Example Usage
 
+### Get all tags
 ```terraform
-# Get all tags
 data "vergeio_tags" "all" {
 }
 
@@ -22,7 +24,7 @@ output "tags" {
 }
 ```
 
-Filter tags by name:
+### Filter tags by name
 ```terraform
 data "vergeio_tags" "production" {
   filter = "production"
@@ -33,15 +35,65 @@ output "production_tags" {
 }
 ```
 
-Use with tag_member resource:
+### Filter by category ID (for duplicate tag names)
+
+When you have the same tag name in multiple categories (e.g., "true" in both "powerup" and "backup" categories), use `category_filter` to specify which category:
+
 ```terraform
-data "vergeio_tags" "environment" {
-  filter = "production"
+# Get the "true" tag from the "powerup" category (ID: 5)
+data "vergeio_tags" "powerup_true" {
+  filter          = "true"
+  category_filter = 5
 }
 
-resource "vergeio_tag_member" "vm_environment" {
-  tag_id = data.vergeio_tags.environment.tags[0].key
-  member = "vms/123"
+# Get the "true" tag from the "backup" category (ID: 8)
+data "vergeio_tags" "backup_true" {
+  filter          = "true"
+  category_filter = 8
+}
+```
+
+### Filter by category name (more readable)
+
+If you know the category name but not the ID, use `category_name`:
+
+```terraform
+# Get the "true" tag from the "powerup" category
+data "vergeio_tags" "powerup_true" {
+  filter        = "true"
+  category_name = "powerup"
+}
+
+# Get all tags in the "backup" category
+data "vergeio_tags" "all_backup_tags" {
+  category_name = "backup"
+}
+```
+
+### Use with tag_member resource
+```terraform
+data "vergeio_tags" "powerup_enabled" {
+  filter        = "true"
+  category_name = "powerup"
+}
+
+resource "vergeio_tag_member" "vm_powerup" {
+  tag_id = data.vergeio_tags.powerup_enabled.tags[0].key
+  member = "vms/${vergeio_vm.example.id}"
+}
+```
+
+### Access category information in results
+```terraform
+data "vergeio_tags" "all" {}
+
+output "tags_with_categories" {
+  value = [for tag in data.vergeio_tags.all.tags : {
+    id            = tag.key
+    name          = tag.name
+    category_id   = tag.category
+    category_name = tag.category_name
+  }]
 }
 ```
 
@@ -50,12 +102,22 @@ resource "vergeio_tag_member" "vm_environment" {
 ```
 tags = [
   {
-    key  = 1
-    name = "production"
+    key           = 1
+    name          = "true"
+    category      = 5
+    category_name = "powerup"
   },
   {
-    key  = 2
-    name = "development"
+    key           = 2
+    name          = "false"
+    category      = 5
+    category_name = "powerup"
+  },
+  {
+    key           = 3
+    name          = "true"
+    category      = 8
+    category_name = "backup"
   }
 ]
 ```
@@ -66,6 +128,8 @@ tags = [
 ### Optional
 
 - `filter` (String) - Filter tags by name. If provided, only tags with matching names will be returned.
+- `category_filter` (Number) - Filter tags by category ID. Use with `filter` to uniquely identify tags with duplicate names across categories.
+- `category_name` (String) - Filter tags by category name. Alternative to `category_filter` when you know the category name but not the ID. Cannot be used together with `category_filter`.
 
 ### Read-Only
 
@@ -78,3 +142,5 @@ Read-Only:
 
 - `key` (Number) - Tag key/ID
 - `name` (String) - Tag name
+- `category` (Number) - Tag category ID
+- `category_name` (String) - Tag category name
