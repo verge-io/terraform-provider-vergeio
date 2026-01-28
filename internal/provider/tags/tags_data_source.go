@@ -29,14 +29,18 @@ type TagsDataSource struct {
 
 // TagModel describes individual tag data model.
 type TagModel struct {
-	Key  types.Int32  `tfsdk:"key"`
-	Name types.String `tfsdk:"name"`
+	Key          types.Int32  `tfsdk:"key"`
+	Name         types.String `tfsdk:"name"`
+	Category     types.Int32  `tfsdk:"category"`
+	CategoryName types.String `tfsdk:"category_name"`
 }
 
 // TagsDataSourceModel describes the data source data model.
 type TagsDataSourceModel struct {
-	Filter types.String `tfsdk:"filter"`
-	Tags   []TagModel   `tfsdk:"tags"`
+	Filter         types.String `tfsdk:"filter"`
+	CategoryFilter types.Int32  `tfsdk:"category_filter"`
+	CategoryName   types.String `tfsdk:"category_name"`
+	Tags           []TagModel   `tfsdk:"tags"`
 }
 
 func (d *TagsDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
@@ -46,11 +50,19 @@ func (d *TagsDataSource) Metadata(ctx context.Context, req datasource.MetadataRe
 func (d *TagsDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
-		MarkdownDescription: "Tags data source to retrieve tag information from VergeOS",
+		MarkdownDescription: "Tags data source to retrieve tag information from VergeOS. Supports filtering by name and/or category to handle duplicate tag names across categories.",
 
 		Attributes: map[string]schema.Attribute{
 			"filter": schema.StringAttribute{
 				MarkdownDescription: "Filter tags by name (optional). If provided, only tags with matching names will be returned.",
+				Optional:            true,
+			},
+			"category_filter": schema.Int32Attribute{
+				MarkdownDescription: "Filter tags by category ID (optional). Use with `filter` to uniquely identify tags with duplicate names across categories.",
+				Optional:            true,
+			},
+			"category_name": schema.StringAttribute{
+				MarkdownDescription: "Filter tags by category name (optional). Alternative to `category_filter` when you know the category name but not the ID. Cannot be used together with `category_filter`.",
 				Optional:            true,
 			},
 			"tags": schema.ListNestedAttribute{
@@ -64,6 +76,14 @@ func (d *TagsDataSource) Schema(ctx context.Context, req datasource.SchemaReques
 						},
 						"name": schema.StringAttribute{
 							MarkdownDescription: "Tag name",
+							Computed:            true,
+						},
+						"category": schema.Int32Attribute{
+							MarkdownDescription: "Tag category ID",
+							Computed:            true,
+						},
+						"category_name": schema.StringAttribute{
+							MarkdownDescription: "Tag category name",
 							Computed:            true,
 						},
 					},

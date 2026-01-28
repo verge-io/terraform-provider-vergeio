@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	TagsEndpoint       = "api/v4/tags"
-	TagMembersEndpoint = "api/v4/tag_members"
+	TagsEndpoint          = "api/v4/tags"
+	TagMembersEndpoint    = "api/v4/tag_members"
+	TagCategoriesEndpoint = "api/v4/tag_categories"
 )
 
 var _ vergeio.IClient = &TagsApi{}
@@ -42,8 +43,10 @@ func (ta *TagsApi) Name() string {
 }
 
 type TagAPIModel struct {
-	Key  int    `json:"$key"`
-	Name string `json:"name"`
+	Key             int    `json:"$key"`
+	Name            string `json:"name"`
+	Category        int    `json:"category"`
+	CategoryDisplay string `json:"category_display"`
 }
 
 type TagMemberAPIModel struct {
@@ -56,18 +59,47 @@ type TagMemberAPIModel struct {
 func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) error {
 	tflog.Debug(ctx, "Reading tags data")
 
-	// Prepare options for API call
+	// Prepare options for API call - request category fields
 	options := &vergeio.Options{
-		Fields: "most",
+		Fields: "$key,name,category,category#$display as category_display",
 	}
+
+	// Build filter conditions
+	var filterParts []string
 
 	// Add name filter if specified
 	if !data.Filter.IsNull() && !data.Filter.IsUnknown() {
 		filterName := data.Filter.ValueString()
 		if filterName != "" {
-			options.Filter = fmt.Sprintf("name eq '%s'", filterName)
+			filterParts = append(filterParts, fmt.Sprintf("name eq '%s'", filterName))
 		}
 	}
+
+	// Add category filter by ID if specified
+	if !data.CategoryFilter.IsNull() && !data.CategoryFilter.IsUnknown() {
+		categoryID := data.CategoryFilter.ValueInt32()
+		filterParts = append(filterParts, fmt.Sprintf("category eq %d", categoryID))
+	}
+
+	// Handle category_name filter (requires lookup) - only if category_filter not set
+	if data.CategoryFilter.IsNull() && !data.CategoryName.IsNull() && !data.CategoryName.IsUnknown() {
+		categoryName := data.CategoryName.ValueString()
+		if categoryName != "" {
+			// Look up category ID by name
+			categoryID, err := ta.getCategoryIDByName(ctx, categoryName)
+			if err != nil {
+				return fmt.Errorf("failed to look up category '%s': %w", categoryName, err)
+			}
+			filterParts = append(filterParts, fmt.Sprintf("category eq %d", categoryID))
+		}
+	}
+
+	// Combine filter parts with AND
+	if len(filterParts) > 0 {
+		options.Filter = strings.Join(filterParts, " and ")
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Tags API filter: %s", options.Filter))
 
 	apiResp, err := ta.client.Get(TagsEndpoint, options)
 
@@ -114,8 +146,10 @@ func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) erro
 	var tagsList []TagModel
 	for _, tag := range tagsAPIResp {
 		tagModel := TagModel{
-			Key:  types.Int32Value(int32(tag.Key)),
-			Name: types.StringValue(tag.Name),
+			Key:          types.Int32Value(int32(tag.Key)),
+			Name:         types.StringValue(tag.Name),
+			Category:     types.Int32Value(int32(tag.Category)),
+			CategoryName: types.StringValue(tag.CategoryDisplay),
 		}
 		tagsList = append(tagsList, tagModel)
 	}
@@ -126,6 +160,55 @@ func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) erro
 	tflog.Debug(ctx, fmt.Sprintf("Successfully converted %d tags to resource", len(tagsList)))
 
 	return nil
+}
+
+// getCategoryIDByName looks up a category ID by its name.
+func (ta *TagsApi) getCategoryIDByName(ctx context.Context, name string) (int32, error) {
+	tflog.Debug(ctx, fmt.Sprintf("Looking up category ID for name: %s", name))
+
+	options := &vergeio.Options{
+		Fields: "$key,name",
+		Filter: fmt.Sprintf("name eq '%s'", name),
+	}
+
+	apiResp, err := ta.client.Get(TagCategoriesEndpoint, options)
+	if err != nil {
+		if apiError, ok := err.(vergeio.Error); ok && apiError.StatusCode == 404 {
+			return 0, fmt.Errorf(vergeio.ErrEndpointV26, "tag_categories")
+		}
+		return 0, err
+	}
+	if apiResp == nil {
+		return 0, errors.New("missing response from the API")
+	}
+	defer apiResp.Body.Close()
+
+	if apiResp.StatusCode == 404 {
+		return 0, fmt.Errorf(vergeio.ErrEndpointV26, "tag_categories")
+	}
+
+	if apiResp.StatusCode != 200 {
+		return 0, fmt.Errorf("API returned status code %d", apiResp.StatusCode)
+	}
+
+	body, err := io.ReadAll(apiResp.Body)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var categories []struct {
+		Key int `json:"$key"`
+	}
+	if err := json.Unmarshal(body, &categories); err != nil {
+		return 0, fmt.Errorf("invalid format received for tag categories: %w", err)
+	}
+
+	if len(categories) == 0 {
+		return 0, fmt.Errorf("category '%s' not found", name)
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Found category '%s' with ID %d", name, categories[0].Key))
+	return int32(categories[0].Key), nil
 }
 
 // checkEndpointAvailability tests if an endpoint is available (for version compatibility)
