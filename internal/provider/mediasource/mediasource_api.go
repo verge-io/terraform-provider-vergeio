@@ -5,34 +5,37 @@ package mediasource
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
 // Mediasource API Endpoint.
-const (
-	MediasourceEndpoint = vergeio.APIEndpoint + "/files"
-)
 
 // IClient interface.
 var _ vergeio.IClient = &MediasourceApi{}
 
 func NewMediasourceApi(c *vergeio.Client) *MediasourceApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &MediasourceApi{
 		name:   "Mediasource Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type MediasourceApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *MediasourceApi) Name() string {
@@ -59,26 +62,28 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
 
-	apiResp, err := va.client.Get(MediasourceEndpoint,
-		&opts)
+	// Call the SDK API
+	var listOpts []vergeos.ListOption
+	if opts.Filter != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(opts.Filter))
+	}
 
-	// error checking
+	files, err := va.sdk.Files.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", files))
 
-	// Decode the API response
+	// Convert SDK files to API model for existing field mapping logic
 	var mediasourceAPIResp []MediasourceAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&mediasourceAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	for _, file := range files {
+		mediasourceAPIResp = append(mediasourceAPIResp, MediasourceAPIDataSourceModel{
+			Id:          int32(file.ID.Int()),
+			Name:        file.Name,
+			Description: file.Description,
+			Filesize:    file.Filesize,
+		})
 	}
 
 	// save into the resource model

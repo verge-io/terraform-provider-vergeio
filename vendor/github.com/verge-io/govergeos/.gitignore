@@ -1,0 +1,51 @@
+# Claude Code
+.claude/
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build output
+/bin/
+/dist/
+
+# Vendor directory (if not committing dependencies)
+# vendor/
+
+# Debug files
+debug
+*.log
+# Claude Code local files
+.claude/settings.local.json
+.claude/CLAUDE.local.md
+.claude/logs/*.log
+.mcp.json
+promptscratch.md

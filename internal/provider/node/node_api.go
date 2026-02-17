@@ -5,32 +5,35 @@ package node
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
-const (
-	NodeEndpoint = vergeio.APIEndpoint + "/nodes"
-)
 
 var _ vergeio.IClient = &NodeApi{}
 
 func NewNodeApi(c *vergeio.Client) *NodeApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &NodeApi{
 		name:   "Node Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type NodeApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *NodeApi) Name() string {
@@ -55,26 +58,27 @@ func (va *NodeApi) readNodes(ctx context.Context, data *NodeDataSourceModel) err
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
 
-	apiResp, err := va.client.Get(NodeEndpoint,
-		&opts)
+	// Call the SDK API
+	var listOpts []vergeos.ListOption
+	if opts.Filter != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(opts.Filter))
+	}
 
-	// error checking
+	nodes, err := va.sdk.Nodes.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", nodes))
 
-	// Decode the API response
+	// Convert SDK nodes to API model for existing field mapping logic
 	var nodeAPIResp []NodeAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&nodeAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	for _, node := range nodes {
+		nodeAPIResp = append(nodeAPIResp, NodeAPIDataSourceModel{
+			Id:          int32(node.ID),
+			Name:        node.Name,
+			Description: node.Description,
+		})
 	}
 
 	for _, nwAPIResp := range nodeAPIResp {
