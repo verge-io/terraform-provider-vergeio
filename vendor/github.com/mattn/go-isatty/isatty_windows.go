@@ -1,6 +1,3 @@
-// Copyright (c) HashiCorp, Inc.
-// SPDX-License-Identifier: MIT
-
 //go:build windows && !appengine
 // +build windows,!appengine
 

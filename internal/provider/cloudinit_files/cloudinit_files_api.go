@@ -9,32 +9,36 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"strconv"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
-// CloudinitFile endpoints.
-const (
-	CloudinitFileEndpoint = vergeio.APIEndpoint + "/cloudinit_files"
-)
 
 // IClient interface.
 var _ vergeio.IClient = &CloudinitFileApi{}
 
 func NewCloudinitFileApi(c *vergeio.Client) *CloudinitFileApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &CloudinitFileApi{
 		name:   "CloudinitFile Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type CloudinitFileApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *CloudinitFileApi) Name() string {
@@ -66,27 +70,20 @@ func (nc *CloudinitFileApi) createCloudinitFile(ctx context.Context, data *Cloud
 		return errors.New("invalid format received for cloudinitFile Item")
 	}
 
-	// Time to call the API
-	apiResp, err := nc.client.Post(CloudinitFileEndpoint, encodedBuffer)
-	// error checking
+	// Convert to SDK request format
+	var req vergeos.CloudInitFileCreateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Call the SDK API
+	cloudinitFile, err := nc.sdk.CloudInitFiles.Create(ctx, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
-
-	// Decode the API response
-	var cloudinitFileAPIResp vergeio.VergeResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&cloudinitFileAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
-	}
 
 	// save into the Terraform state.
-	data.Id = types.StringValue(cloudinitFileAPIResp.Key)
+	data.Id = types.StringValue(fmt.Sprintf("%d", cloudinitFile.ID.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a cloudinitFile with Id %v", data.Id.ValueString()))
 
 	return nil
@@ -111,26 +108,21 @@ func (nc *CloudinitFileApi) updateCloudinitFile(ctx context.Context, planData *C
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// Time to call the API
-	apiResp, err := nc.client.Put(fmt.Sprintf("%s/%s",
-		CloudinitFileEndpoint,
-		url.PathEscape(apiData.Id),
-	), encodedBuffer)
-	// error checking
+	// Convert to SDK request format
+	var req vergeos.CloudInitFileUpdateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Call the SDK API
+	id, _ := strconv.Atoi(planData.Id.ValueString())
+	_, err := nc.sdk.CloudInitFiles.Update(ctx, id, &req)
 	if err != nil {
 		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
-
-	defer apiResp.Body.Close()
 
 	return nil
 }
@@ -140,26 +132,15 @@ func (nc *CloudinitFileApi) deleteCloudinitFile(ctx context.Context, data *Cloud
 
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill CloudinitFile API for CloudinitFile %v", data.Id.ValueString()))
 
-	// call the API
-	apiResp, err := nc.client.Delete(fmt.Sprintf("%s/%s",
-		CloudinitFileEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	))
-	// error checking
+	// Call the SDK API
+	id, _ := strconv.Atoi(data.Id.ValueString())
+	err := nc.sdk.CloudInitFiles.Delete(ctx, id)
 	if err != nil {
 		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Deleted the cloudinitFile with the ID %v", data.Id))
-
-	defer apiResp.Body.Close()
 
 	return nil
 }
@@ -169,30 +150,22 @@ func (nc *CloudinitFileApi) readCloudinitFile(ctx context.Context, data *Cloudin
 
 	tflog.Debug(ctx, "Reading the cloudinitFile data")
 
-	// Call the Get API with the cloudinitFile id and get the fields we need
-	// most fields are not returned by default
-	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
-		CloudinitFileEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "$key,name,filesize,contents,containsVariables"})
-
-	// error checking
+	// Call the SDK API
+	id, _ := strconv.Atoi(data.Id.ValueString())
+	cloudinitFile, err := nc.sdk.CloudInitFiles.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the cloudinitFile resource %v", cloudinitFile))
 
-	// Decode the API response
-	var cloudinitFileAPIResp CloudinitFileAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&cloudinitFileAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
+	// Convert SDK cloudinitFile to API model for existing field mapping logic
+	cloudinitFileAPIResp := CloudinitFileAPIResourceModel{
+		Id:                fmt.Sprintf("%d", cloudinitFile.ID.Int()),
+		Name:              cloudinitFile.Name,
+		Contents:          cloudinitFile.Contents,
+		ContainsVariables: cloudinitFile.ContainsVariables,
+		Filesize:          cloudinitFile.FileSize,
 	}
 
 	// save into the resource model
@@ -211,35 +184,30 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 
 	tflog.Debug(ctx, "Reading the cloudinitFile data")
 
-	// What fields do we want
-	opts := vergeio.Options{Fields: "$key,name,filesize,contents,containsVariables"}
-
 	// Build filter
+	var listOpts []vergeos.ListOption
 	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+		listOpts = append(listOpts, vergeos.WithFilter(fmt.Sprintf("name eq '%s'", fn)))
 	}
 
-	// Call the API
-	apiResp, err := va.client.Get(CloudinitFileEndpoint,
-		&opts)
-
-	// error checking
+	// Call the SDK API
+	cloudinitFiles, err := va.sdk.CloudInitFiles.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", cloudinitFiles))
 
-	// Decode the API response
+	// Convert SDK cloudinitFiles to API model for existing field mapping logic
 	var cloudinitFileAPIResp []CloudinitFileAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&cloudinitFileAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	for _, file := range cloudinitFiles {
+		cloudinitFileAPIResp = append(cloudinitFileAPIResp, CloudinitFileAPIResourceModel{
+			Id:                fmt.Sprintf("%d", file.ID.Int()),
+			Name:              file.Name,
+			Filesize:          file.FileSize,
+			Contents:          file.Contents,
+			ContainsVariables: file.ContainsVariables,
+		})
 	}
 
 	// save into the resource model

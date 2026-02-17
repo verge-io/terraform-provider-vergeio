@@ -15,6 +15,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -131,15 +132,22 @@ const (
 var _ vergeio.IClient = &DeviceApi{}
 
 func NewDeviceApi(c *vergeio.Client) *DeviceApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &DeviceApi{
 		name:   "Device Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type DeviceApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (da *DeviceApi) Name() string {

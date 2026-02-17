@@ -3,7 +3,11 @@
 
 package vergeio
 
-import "github.com/hashicorp/terraform-plugin-framework/types"
+import (
+	"strings"
+	
+	"github.com/hashicorp/terraform-plugin-framework/types"
+)
 
 func StringToNil(planValue types.String, stateValue types.String, defaultValue string) string {
 	if planValue.IsUnknown() {
@@ -49,4 +53,12 @@ func Float64ToNil(planValue types.Float64, stateValue types.Float64, defaultValu
 		return stateValue.ValueFloat64()
 	}
 	return planValue.ValueFloat64()
+}
+
+// EnsureHTTPSPrefix adds https:// to the host if no protocol is specified
+func EnsureHTTPSPrefix(host string) string {
+	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {
+		return host
+	}
+	return "https://" + host
 }

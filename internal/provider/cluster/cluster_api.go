@@ -5,34 +5,36 @@ package cluster
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
-// API endpoint.
-const (
-	ClusterEndpoint = vergeio.APIEndpoint + "/clusters"
-)
 
 // IClient interface.
 var _ vergeio.IClient = &ClusterApi{}
 
 func NewClusterApi(c *vergeio.Client) *ClusterApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &ClusterApi{
 		name:   "Cluster Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type ClusterApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *ClusterApi) Name() string {
@@ -59,27 +61,27 @@ func (va *ClusterApi) readClusters(ctx context.Context, data *ClusterDataSourceM
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
 
-	// Call the API
-	apiResp, err := va.client.Get(ClusterEndpoint,
-		&opts)
+	// Call the SDK API
+	var listOpts []vergeos.ListOption
+	if opts.Filter != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(opts.Filter))
+	}
 
-	// error checking
+	clusters, err := va.sdk.Clusters.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", clusters))
 
-	// Decode the API response
+	// Convert SDK clusters to API model for existing field mapping logic
 	var clusterAPIResp []ClusterAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&clusterAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	for _, cluster := range clusters {
+		clusterAPIResp = append(clusterAPIResp, ClusterAPIDataSourceModel{
+			Id:          int32(cluster.Key.Int()),
+			Name:        cluster.Name,
+			Description: cluster.Description,
+		})
 	}
 
 	// save into the resource model

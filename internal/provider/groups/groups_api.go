@@ -5,34 +5,35 @@ package groups
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-)
-
-// API endpoint.
-const (
-	GroupsEndpoint = vergeio.APIEndpoint + "/groups"
+	vergeos "github.com/verge-io/govergeos"
 )
 
 // IClient interface.
 var _ vergeio.IClient = &GroupsApi{}
 
 func NewGroupsApi(c *vergeio.Client) *GroupsApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &GroupsApi{
 		name:   "Group Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type GroupsApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *GroupsApi) Name() string {
@@ -60,27 +61,28 @@ func (va *GroupsApi) readGroups(ctx context.Context, data *GroupDataSourceModel)
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
 
-	// Call the API
-	apiResp, err := va.client.Get(GroupsEndpoint,
-		&opts)
+	// Call the SDK API
+	var listOpts []vergeos.ListOption
+	if opts.Filter != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(opts.Filter))
+	}
 
-	// error checking
+	groups, err := va.sdk.Groups.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", groups))
 
-	// Decode the API response
+	// Convert SDK groups to API model for existing field mapping logic
 	var groupsAPIResp []GroupsAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&groupsAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	for _, group := range groups {
+		groupsAPIResp = append(groupsAPIResp, GroupsAPIDataSourceModel{
+			Id:          int32(group.ID.Int()),
+			Name:        group.Name,
+			Description: group.Description,
+			Enabled:     group.Enabled,
+		})
 	}
 
 	// Convert the API response to a resource

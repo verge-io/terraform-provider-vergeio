@@ -18,6 +18,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
 // NIC Resource Models.
@@ -78,15 +79,22 @@ const (
 var _ vergeio.IClient = &NICApi{}
 
 func NewNICApi(c *vergeio.Client) *NICApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &NICApi{
 		name:   "NIC Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type NICApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *NICApi) Name() string {
@@ -343,13 +351,11 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 		continue
 	}
 
-	// Call the Get API with the user id and Proceed with user deletion
-	_, err := na.client.Delete(fmt.Sprintf("%s/%s",
-		NICEndpoint,
-		url.PathEscape(data.Id.ValueString())))
+	// Call the API
+	_, apiErr := na.client.Delete(NICEndpoint + "/" + data.Id.ValueString())
 
-	if err != nil {
-		return errors.New("Error deleting the NIC: " + err.Error())
+	if apiErr != nil {
+		return errors.New("Error deleting the NIC: " + apiErr.Error())
 	}
 
 	tflog.Debug(ctx, "NIC was successfully deleted")
