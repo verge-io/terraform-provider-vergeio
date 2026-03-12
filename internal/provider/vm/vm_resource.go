@@ -812,6 +812,24 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 			)
 			return
 		}
+
+		// Detach cloud-init after power-on if cloud-init files were configured.
+		// The cloud-init files are already attached to the VM at creation time,
+		// so the guest will read them during boot regardless. Deleting the
+		// cloud-init files prevents the VM from depending on them on subsequent
+		// boots.
+		if data.CloudInitFiles != nil && len(data.CloudInitFiles) > 0 {
+			tflog.Debug(ctx, "Waiting 1 second before detaching cloud-init")
+			time.Sleep(1 * time.Second)
+
+			if detachError := r.vmApi.detachCloudInit(ctx, &data); detachError != nil {
+				resp.Diagnostics.AddError(
+					"Error detaching cloud-init",
+					detachError.Error(),
+				)
+				return
+			}
+		}
 	}
 
 	// First get both guest agent info and timeout values
@@ -863,6 +881,13 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		fmt.Println(i)
 	}
 
+	// Preserve cloud-init config values before the final read.
+	// If we detached cloud-init, the API now returns "none" but Terraform
+	// expects the planned value ("nocloud"/"config_drive_v2") for consistency.
+	// On subsequent Read() calls, ignore_changes prevents drift.
+	plannedCloudInitDS := data.CloudInitDataSource
+	plannedCloudInitFiles := data.CloudInitFiles
+
 	// read the final state of the VM
 	if readError := r.vmApi.readVM(ctx, &data); readError != nil {
 		resp.Diagnostics.AddError(
@@ -871,6 +896,10 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		)
 		return
 	}
+
+	// Restore planned cloud-init values so Terraform's consistency check passes
+	data.CloudInitDataSource = plannedCloudInitDS
+	data.CloudInitFiles = plannedCloudInitFiles
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)

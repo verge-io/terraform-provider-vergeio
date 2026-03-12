@@ -470,6 +470,55 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 	return nil
 }
 
+// detachCloudInit deletes the cloud-init files owned by this VM
+// so it no longer depends on them on subsequent boots.
+func (va *VMApi) detachCloudInit(ctx context.Context, data *VMResourceModel) error {
+	vmId := data.Id.ValueString()
+	tflog.Debug(ctx, fmt.Sprintf("Detaching cloud-init files from VM %s", vmId))
+
+	cloudInitEndpoint := vergeio.APIEndpoint + "/cloudinit_files"
+
+	// Query cloud-init files owned by this VM
+	apiResp, err := va.client.Get(cloudInitEndpoint, &vergeio.Options{
+		Fields: "$key",
+		Filter: fmt.Sprintf("owner eq 'vms/%s'", vmId),
+	})
+	if err != nil {
+		return fmt.Errorf("error querying cloud-init files: %v", err)
+	}
+	if apiResp == nil {
+		return errors.New("missing response from API when querying cloud-init files")
+	}
+
+	// Decode the list of cloud-init files
+	type cloudInitFileRef struct {
+		Key json.Number `json:"$key"`
+	}
+	var files []cloudInitFileRef
+	if err := json.NewDecoder(apiResp.Body).Decode(&files); err != nil {
+		return fmt.Errorf("error decoding cloud-init files response: %v", err)
+	}
+
+	// Delete each cloud-init file
+	for _, file := range files {
+		fileKey := file.Key.String()
+		tflog.Debug(ctx, fmt.Sprintf("Deleting cloud-init file %s", fileKey))
+		delResp, err := va.client.Delete(fmt.Sprintf("%s/%s",
+			cloudInitEndpoint,
+			url.PathEscape(fileKey)))
+		if err != nil {
+			return fmt.Errorf("error deleting cloud-init file %s: %v", fileKey, err)
+		}
+		if delResp == nil {
+			return fmt.Errorf("missing response from API when deleting cloud-init file %s", fileKey)
+		}
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Deleted %d cloud-init files from VM %s", len(files), vmId))
+
+	return nil
+}
+
 // Delete the VM from the API.
 func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 
