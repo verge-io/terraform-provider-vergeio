@@ -4,11 +4,10 @@ go 1.23.4
 
 require (
 	github.com/hashicorp/terraform-plugin-framework v1.13.0
+	github.com/hashicorp/terraform-plugin-go v0.26.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/verge-io/govergeos v0.0.0
 )
-
-require github.com/hashicorp/terraform-plugin-go v0.26.0 // indirect
 
 require (
 	github.com/fatih/color v1.16.0 // indirect
