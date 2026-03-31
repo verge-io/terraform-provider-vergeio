@@ -42,7 +42,7 @@ type CloudinitFileDataSourceModel struct {
 }
 
 func (d *CloudinitFileDataSource) Metadata(ctx context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_cloudinitfiles"
+	resp.TypeName = req.ProviderTypeName + "_cloudinit_files"
 }
 
 // Schema defines the schema for the data source.
