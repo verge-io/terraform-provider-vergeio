@@ -94,8 +94,8 @@ func (nc *UserApi) createUser(ctx context.Context, data *UserResourceModel) erro
 		return err
 	}
 
-	// Fill the data.id with the new user id from the API  
-	data.Id = types.StringValue(user.ID)
+	// Fill the data.id with the new user key from the API  
+	data.Id = types.StringValue(fmt.Sprintf("%d", user.Key.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a user with Id %v", data.Id.ValueString()))
 
 	return nil
@@ -181,6 +181,7 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 	}
 
 	// save into the resource model
+	data.Id = types.StringValue(fmt.Sprintf("%d", user.Key.Int()))
 	data.Name = types.StringValue(userAPIResp.Name)
 	data.Enabled = types.BoolValue(userAPIResp.Enabled)
 	data.DisplayName = types.StringValue(userAPIResp.DisplayName)
@@ -188,8 +189,13 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 	data.AuthSource = types.Int32Value(userAPIResp.AuthSource)
 	data.RemoteName = types.StringValue(userAPIResp.RemoteName)
 	data.Type = types.StringValue(userAPIResp.Type)
-	// data.Password = types.StringValue(userAPIResp.Password) // Password not returned for security
-	// data.ChangePassword = types.BoolValue(userAPIResp.ChangePassword) // Handled at creation
+	// Password not returned for security reasons - preserve planned value if it exists
+	if data.Password.IsNull() || data.Password.IsUnknown() {
+		// For new resources, password is not readable from API
+		data.Password = types.StringNull()
+	}
+	// ChangePassword defaults to false after creation since API doesn't return this field
+	data.ChangePassword = types.BoolValue(false)
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
