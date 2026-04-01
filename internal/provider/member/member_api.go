@@ -9,32 +9,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"strconv"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
 // API endpoint.
-const (
-	MemberEndpoint = vergeio.APIEndpoint + "/members"
-)
 
 // IClient interface.
 var _ vergeio.IClient = &MemberApi{}
 
 func NewMemberApi(c *vergeio.Client) *MemberApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &MemberApi{
 		name:   "Member Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type MemberApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *MemberApi) Name() string {
@@ -67,27 +72,20 @@ func (nc *MemberApi) createMember(ctx context.Context, data *MemberResourceModel
 
 	tflog.Debug(ctx, fmt.Sprintf("Encoded buffer %v", encodedBuffer.String()))
 
-	// Call the API
-	apiResp, err := nc.client.Post(MemberEndpoint, encodedBuffer)
-	// error checking
+	// Convert to SDK request format
+	var req vergeos.MemberCreateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Call the SDK API
+	member, err := nc.sdk.Members.Create(ctx, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
-
-	// Decode the API response and put it in the response object
-	var memberAPIResp vergeio.VergeResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&memberAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
-	}
 
 	// Extract the id and put it in the state
-	data.Id = types.StringValue(memberAPIResp.Key)
+	data.Id = types.StringValue(fmt.Sprintf("%d", member.ID.Int()))
 
 	tflog.Debug(ctx, fmt.Sprintf("Created a member with Id %v", data.Id))
 
@@ -99,6 +97,7 @@ func (nc *MemberApi) updateMember(ctx context.Context, planData *MemberResourceM
 
 	// Prepare the API data packet from the plan
 	apiData := MemberAPIResourceModel{
+		Id:     planData.Id.ValueString(),
 		Group:  vergeio.Int32ToNil(planData.Group, stateData.Group, 0),
 		Member: vergeio.StringToNil(planData.Member, stateData.Member, ""),
 	}
@@ -109,25 +108,20 @@ func (nc *MemberApi) updateMember(ctx context.Context, planData *MemberResourceM
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// Call the API
-	apiResp, err := nc.client.Put(fmt.Sprintf("%s/%s",
-		MemberEndpoint,
-		url.PathEscape(apiData.Id),
-	), encodedBuffer)
-	// error checking
+	// Convert to SDK request format
+	var req vergeos.MemberUpdateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Call the SDK API
+	id, _ := strconv.Atoi(planData.Id.ValueString())
+	_, err := nc.sdk.Members.Update(ctx, id, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
-
-	defer apiResp.Body.Close()
 
 	// Read data into the model to get all the attributes
 	if readDataError := nc.readMember(ctx, planData); readDataError != nil {
@@ -142,34 +136,20 @@ func (nc *MemberApi) readMember(ctx context.Context, data *MemberResourceModel) 
 
 	tflog.Debug(ctx, "Reading the member data")
 
-	// Call the Get API with the member id and get the fields we need
-	// most fields are not returned by default
-	tflog.Debug(ctx, fmt.Sprintf("Member endpoint %v", fmt.Sprintf("%s/%s",
-		MemberEndpoint,
-		url.PathEscape(data.Id.ValueString()))))
-
-	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
-		MemberEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	), nil)
-
-	// error checking
+	// Call the SDK API
+	id, _ := strconv.Atoi(data.Id.ValueString())
+	member, err := nc.sdk.Members.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Member API resonse body %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the member resource %v", member))
 
-	// Decode the API response
-	var memberAPIResp MemberAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&memberAPIResp); err != nil {
-		return fmt.Errorf("invalid format received for Item %v", err)
+	// Convert SDK member to API model for existing field mapping logic
+	memberAPIResp := MemberAPIResourceModel{
+		Id:     fmt.Sprintf("%d", member.ID.Int()),
+		Group:  int32(member.Group.Int()),
+		Member: member.Member,
 	}
 
 	// save into the resource model
@@ -186,17 +166,16 @@ func (nc *MemberApi) deleteMember(ctx context.Context, data *MemberResourceModel
 
 	tflog.Debug(ctx, "Deleting the member data")
 
-	// Call the Get API with the member id and Proceed with member deletion
-	_, err := nc.client.Delete(fmt.Sprintf("%s/%s",
-		MemberEndpoint,
-		url.PathEscape(data.Id.ValueString())))
+	// Call the SDK API
+	id, _ := strconv.Atoi(data.Id.ValueString())
+	err := nc.sdk.Members.Delete(ctx, id)
 
 	// error checking
 	if err != nil {
 		return errors.New("Error deleting the member: " + err.Error())
 	}
 
-	tflog.Debug(ctx, "Data was successfully converted to a resource")
+	tflog.Debug(ctx, "Member was successfully deleted")
 
 	return nil
 }

@@ -5,34 +5,37 @@ package resourseGroups
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
 // API endpoint.
-const (
-	ResourceGroupsEndpoint = vergeio.APIEndpoint + "/resource_groups"
-)
 
 // IClient interface.
 var _ vergeio.IClient = &ResourceGroupsApi{}
 
 func NewResourceGroupsApi(c *vergeio.Client) *ResourceGroupsApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &ResourceGroupsApi{
 		name:   "Resource Groups Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type ResourceGroupsApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *ResourceGroupsApi) Name() string {
@@ -62,27 +65,30 @@ func (va *ResourceGroupsApi) readResourceGroups(ctx context.Context, data *Resou
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
 
-	// Call the API
-	apiResp, err := va.client.Get(ResourceGroupsEndpoint,
-		&opts)
+	// Call the SDK API
+	var listOpts []vergeos.ListOption
+	if opts.Filter != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(opts.Filter))
+	}
 
-	// error checking
+	resourceGroups, err := va.sdk.ResourceGroups.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", resourceGroups))
 
-	// Decode the API response
+	// Convert SDK resource groups to API model for existing field mapping logic
 	var resourceGroupsAPIResp []ResourceGroupsAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&resourceGroupsAPIResp); err != nil {
-		return errors.New("invalid format received for resource group Item")
+	for _, rg := range resourceGroups {
+		resourceGroupsAPIResp = append(resourceGroupsAPIResp, ResourceGroupsAPIDataSourceModel{
+			Id:          rg.ID,
+			Name:        rg.Name,
+			Description: rg.Description,
+			Enabled:     rg.Enabled,
+			Type:        rg.Type,
+			Class:       "", // Class field not available in SDK
+		})
 	}
 
 	// Convert the API response to a resource

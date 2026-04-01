@@ -222,14 +222,17 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	// Copy the ID from state to plan since ID is computed and not in plan
+	planData.Id = stateData.Id
+
 	// Read data into the model to get all the attributes
-	if readDataError := r.userApi.readUser(ctx, &stateData); readDataError != nil {
+	if readDataError := r.userApi.readUser(ctx, &planData); readDataError != nil {
 		resp.Diagnostics.AddError("Error Fetching Data", readDataError.Error())
 		return
 	}
 
 	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
 }
 
 // Delete a user.

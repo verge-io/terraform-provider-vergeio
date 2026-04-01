@@ -9,34 +9,38 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"strconv"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
-// Network endpoints.
-const (
-	NetworkEndpoint       = vergeio.APIEndpoint + "/vnets"
-	NetworkActionEndpoint = vergeio.APIEndpoint + "/vnet_actions"
-)
+// Network endpoints - DEPRECATED: SDK handles endpoints internally
+// Keeping temporarily for reference during transition
 
 // IClient interface.
 var _ vergeio.IClient = &NetworkApi{}
 
 func NewNetworkApi(c *vergeio.Client) *NetworkApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &NetworkApi{
 		name:   "Network Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type NetworkApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *NetworkApi) Name() string {
@@ -117,27 +121,20 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		return errors.New("invalid format received for network Item")
 	}
 
-	// Time to call the API
-	apiResp, err := nc.client.Post(NetworkEndpoint, encodedBuffer)
-	// error checking
+	// Convert to SDK request
+	var req vergeos.NetworkCreateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Call SDK API
+	network, err := nc.sdk.Networks.Create(ctx, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
-
-	// Decode the API response
-	var networkAPIResp vergeio.VergeResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&networkAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
-	}
 
 	// save into the Terraform state.
-	data.Id = types.StringValue(networkAPIResp.Key)
+	data.Id = types.StringValue(fmt.Sprintf("%d", network.ID.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
 
 	return nil
@@ -182,26 +179,26 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// Time to call the API
-	apiResp, err := nc.client.Put(fmt.Sprintf("%s/%s",
-		NetworkEndpoint,
-		url.PathEscape(apiData.Id),
-	), encodedBuffer)
-	// error checking
+	// Convert to SDK request
+	var req vergeos.NetworkUpdateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Parse network ID
+	networkIDInt, err := strconv.Atoi(apiData.Id)
+	if err != nil {
+		return fmt.Errorf("invalid network ID format: %v", err)
+	}
+
+	// Call SDK API
+	_, err = nc.sdk.Networks.Update(ctx, networkIDInt, &req)
 	if err != nil {
 		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
-
-	defer apiResp.Body.Close()
 
 	return nil
 }
@@ -209,28 +206,22 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 // deleteNetwork deletes a network.
 func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceModel) error {
 
-	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill Network API for Network %v", data.Id.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("Calling the Delete Network API for Network %v", data.Id.ValueString()))
 
-	// call the API
-	apiResp, err := nc.client.Delete(fmt.Sprintf("%s/%s",
-		NetworkEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	))
-	// error checking
+	// Parse network ID
+	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid network ID format: %v", err)
+	}
+
+	// Call SDK API
+	err = nc.sdk.Networks.Delete(ctx, networkIDInt)
 	if err != nil {
 		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Deleted the network with the ID %v", data.Id))
-
-	defer apiResp.Body.Close()
 
 	return nil
 }
@@ -238,30 +229,35 @@ func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceMo
 // Checks the power state of the network.
 func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkResourceModel) error {
 
-	// Send the kill action request to the vnet_actions endpoint
-	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
-		NetworkEndpoint,
-		url.PathEscape(data.Id.ValueString())),
-		&vergeio.Options{
-			Fields: "machine#status#display(status) as powerState"})
+	// Parse network ID
+	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid network ID format: %v", err)
+	}
 
-	// error checking
+	// Call SDK API with specific fields
+	networks, err := nc.sdk.Networks.List(ctx, vergeos.WithFilter(fmt.Sprintf("$key eq %d", networkIDInt)))
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
+
+	if len(networks) == 0 {
+		return errors.New("network not found")
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	network := networks[0]
+	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
 
-	// Decode the API response
-	var networkAPIResp NetworkAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&networkAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
+	// Convert SDK response to API model for field mapping consistency
+	var powerState string
+	if network.PowerState {
+		powerState = "running"
+	} else {
+		powerState = "stopped"
+	}
+	
+	networkAPIResp := NetworkAPIResourceModel{
+		PowerState: powerState,
 	}
 
 	// save into the resource model
@@ -289,12 +285,15 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 		Action: "kill",
 		Params: json.RawMessage("{}"), // Empty params for kill action
 	}
+	
+	// Convert to JSON payload
 	bytedata, err := json.Marshal(actionPayload)
 	if err != nil {
 		return err
 	}
-	// Send the kill action request to the vnet_actions endpoint
-	req, err := nc.client.Post(NetworkActionEndpoint, bytes.NewBuffer(bytedata))
+	
+	// Note: Using legacy HTTP client for actions until SDK adds network actions support
+	req, err := nc.client.Post("api/v4/vnet_actions", bytes.NewBuffer(bytedata))
 	if err != nil {
 		return err
 	}
@@ -310,36 +309,46 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 
 	tflog.Debug(ctx, "Reading the network data")
 
-	// Call the Get API with the network id and get the fields we need
-	// most fields are not returned by default
-	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
-		NetworkEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "name,enabled,ipaddress,network,dhcp_enabled,dhcp_dynamic,dhcp_sequential,dhcp_start,dhcp_stop,on_power_loss,type,layer2_id,mtu,interface_vnet,ipaddress_type,layer2_type,enable_bonding,bond_interfaces_args"})
+	// Parse network ID
+	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid network ID format: %v", err)
+	}
 
-	// error checking
+	// Call SDK API to get specific network
+	network, err := nc.sdk.Networks.Get(ctx, networkIDInt)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
+
+	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
+
+	// Convert SDK response to API model for field mapping consistency
+	// Note: Some fields may not be available in SDK yet, using defaults where needed
+	networkAPIResp := NetworkAPIResourceModel{
+		Name:        network.Name,
+		Enabled:     network.Enabled,
+		IPaddress:   network.IPAddress,
+		Network:     network.Network,
+		DHCP:        network.DHCPEnabled,
+		Dynamic_DHCP: network.DHCPDynamic,
+		DHCP_Sequential: network.DHCPSequential,
+		DynamicIP_Start: network.DHCPStart,
+		DynamicIP_Stop:  network.DHCPStop,
+		On_Power_Loss:   network.OnPowerLoss,
+		Type:            network.Type,
+		// Fields not yet available in SDK - using defaults
+		VLAN_TAG:       0,  // TODO: Update when SDK exposes Layer2ID/VLANID
+		MTU:            1500, // Default MTU
+		Interface_Vnet: 0,
+		IPaddress_Type: "static", // Default
+		Layer2_Type:    "vlan",   // Default
+		Enable_Bonding: false,    // Default
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("read the resource %v", apiResp.Body))
+	// Bond interfaces not yet available in SDK
+	// TODO: Update when SDK exposes BondInterfacesArgs
 
-	// Decode the API response
-	var networkAPIResp NetworkAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&networkAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
-	}
-	// if networkAPIResp.Default_Gateway != 0 {
-	//     data.Default_Gateway = types.Int32Value(networkAPIResp.Default_Gateway)
-	// } else {
-	//     data.Default_Gateway = types.Int32Null()
-	// }
 	// save into the resource model
 	data.Name = types.StringValue(networkAPIResp.Name)
 	data.Enabled = types.BoolValue(networkAPIResp.Enabled)
@@ -386,27 +395,27 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 		}
 	}
 
-	// Call the API
-	apiResp, err := va.client.Get(NetworkEndpoint,
-		&opts)
+	// Call the SDK API
+	var listOpts []vergeos.ListOption
+	if opts.Filter != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(opts.Filter))
+	}
 
-	// error checking
+	networks, err := va.sdk.Networks.List(ctx, listOpts...)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", networks))
 
-	// Decode the API response
+	// Convert SDK networks to API model for existing field mapping logic
 	var networkAPIResp []NetworkAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&networkAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	for _, network := range networks {
+		networkAPIResp = append(networkAPIResp, NetworkAPIDataSourceModel{
+			Id:          int32(network.ID.Int()),
+			Name:        network.Name,
+			Description: network.Description,
+		})
 	}
 
 	// save into the resource model

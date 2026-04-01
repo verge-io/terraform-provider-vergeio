@@ -18,6 +18,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
@@ -80,10 +81,21 @@ func getValidDiskInterfaces() []string {
 	}
 }
 
-// GetDiskInterfacesFromAPI fetches the list of valid disk interfaces from the VergeOS API with caching
+// GetDiskInterfacesFromAPI fetches the list of valid disk interfaces from the VergeOS API via SDK
 func (da *DiskApi) GetDiskInterfacesFromAPI(ctx context.Context) ([]string, error) {
-	// Use field cache for session-based lazy loading
-	return da.client.FieldCache.GetDiskInterfaces(ctx)
+	// Use SDK schema service instead of manual endpoint construction
+	interfacesMap, err := da.sdk.Schema.GetValidValues(ctx, "machine_drives", "interface")
+	if err != nil {
+		return nil, fmt.Errorf("unable to fetch valid disk interfaces from VergeOS API: %w", err)
+	}
+	
+	// Convert map keys to slice of strings
+	interfaces := make([]string, 0, len(interfacesMap))
+	for iface := range interfacesMap {
+		interfaces = append(interfaces, iface)
+	}
+	
+	return interfaces, nil
 }
 
 // List of valid disk media.
@@ -106,15 +118,22 @@ const (
 var _ vergeio.IClient = &DiskApi{}
 
 func NewDiskApi(c *vergeio.Client) *DiskApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &DiskApi{
 		name:   "Disk Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type DiskApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (da *DiskApi) Name() string {

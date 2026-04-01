@@ -18,6 +18,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	vergeos "github.com/verge-io/govergeos"
 )
 
 const (
@@ -28,15 +29,22 @@ const (
 var _ vergeio.IClient = &VMApi{}
 
 func NewVMApi(c *vergeio.Client) *VMApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &VMApi{
 		name:   "VM Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type VMApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (va *VMApi) Name() string {
@@ -121,10 +129,21 @@ type TableSchemaResponse struct {
 	Fields map[string]TableSchemaField `json:"fields"` // Map of field name -> field info
 }
 
-// GetMachineTypesFromAPI fetches the list of valid machine types from the VergeOS API with caching
+// GetMachineTypesFromAPI fetches the list of valid machine types from the VergeOS API via SDK
 func (va *VMApi) GetMachineTypesFromAPI(ctx context.Context) ([]string, error) {
-	// Use field cache for session-based lazy loading
-	return va.client.FieldCache.GetMachineTypes(ctx)
+	// Use SDK schema service instead of manual endpoint construction
+	machineTypesMap, err := va.sdk.Schema.GetVMMachineTypes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("vm GetMachineTypesFromAPI SDK error: %w", err)
+	}
+
+	// Convert map keys to slice of strings
+	machineTypes := make([]string, 0, len(machineTypesMap))
+	for machineType := range machineTypesMap {
+		machineTypes = append(machineTypes, machineType)
+	}
+
+	return machineTypes, nil
 }
 
 type VMAPIDataSourceModel struct {
@@ -202,7 +221,7 @@ type VMAPIResourceModel struct {
 	Id                   string             `json:"id,omitempty"`
 	Machine              int32              `json:"machine,omitempty"`
 	Name                 string             `json:"name,omitempty"`
-	Cluster              string             `json:"cluster,omitempty"`
+	Cluster              int32              `json:"cluster,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Enabled              bool               `json:"enabled,omitempty"`
 	MachineType          string             `json:"machine_type,omitempty"`
@@ -226,8 +245,8 @@ type VMAPIResourceModel struct {
 	SecureBoot           bool               `json:"secure_boot,omitempty"`
 	SerialPort           bool               `json:"serial_port,omitempty"`
 	BootDelay            int32              `json:"boot_delay,omitempty"`
-	PreferredNode        string             `json:"preferred_node,omitempty"`
-	SnapshotProfile      string             `json:"snapshot_profile,omitempty"`
+	PreferredNode        int32              `json:"preferred_node,omitempty"`
+	SnapshotProfile      int32              `json:"snapshot_profile,omitempty"`
 	CloudInitDataSource  string             `json:"cloudinit_datasource,omitempty"`
 	CloudInitFiles       []CloudInitFileAPI `json:"cloudinit_files,omitempty"`
 	PowerState           bool               `json:"powerstate,omitempty"`
@@ -271,7 +290,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	apiData := VMAPIResourceModel{
 		Machine:             data.Machine.ValueInt32(),
 		Name:                data.Name.ValueString(),
-		Cluster:             data.Cluster.ValueString(),
+		Cluster:             data.Cluster.ValueInt32(),
 		Description:         data.Description.ValueString(),
 		Enabled:             data.Enabled.ValueBool(),
 		MachineType:         data.MachineType.ValueString(),
@@ -295,8 +314,8 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		SecureBoot:          data.SecureBoot.ValueBool(),
 		SerialPort:          data.SerialPort.ValueBool(),
 		BootDelay:           data.BootDelay.ValueInt32(),
-		PreferredNode:       data.PreferredNode.ValueString(),
-		SnapshotProfile:     data.SnapshotProfile.ValueString(),
+		PreferredNode:       data.PreferredNode.ValueInt32(),
+		SnapshotProfile:     data.SnapshotProfile.ValueInt32(),
 		CloudInitDataSource: data.CloudInitDataSource.ValueString(),
 		// We are not sending the power state here, as it will be handled separately.
 		// When send the power state via the create API, it doesn't start the devices like drives and nics.
@@ -324,29 +343,21 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// Time to call the API
-	apiResp, err := va.client.Post(VMEndpoint, encodedBuffer)
-	// error checking
+	// Time to call the SDK API - convert to SDK request
+	var req vergeos.VMCreateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	vm, err := va.sdk.VMs.Create(ctx, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	// Decode the API response
-	var vmAPIResp NewResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return fmt.Errorf("invalid format received for VM Item: %v", err)
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vmAPIResp.Response))
+	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vm.ID))
 
 	// save into the Terraform state.
-	data.Id = types.StringValue(vmAPIResp.Key)
+	data.Id = types.StringValue(strconv.Itoa(vm.ID.Int()))
 
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
 
@@ -366,7 +377,7 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		Id: vergeio.StringToNil(planData.Id, stateData.Id, ""),
 		// Machine is read only
 		Name:                 vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Cluster:              vergeio.StringToNil(planData.Cluster, stateData.Cluster, ""),
+		Cluster:              vergeio.Int32ToNil(planData.Cluster, stateData.Cluster, 0),
 		Description:          vergeio.StringToNil(planData.Description, stateData.Description, ""),
 		Enabled:              vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
 		MachineType:          vergeio.StringToNil(planData.MachineType, stateData.MachineType, ""),
@@ -390,8 +401,8 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		SecureBoot:           vergeio.BoolToNil(planData.SecureBoot, stateData.SecureBoot, false),
 		SerialPort:           vergeio.BoolToNil(planData.SerialPort, stateData.SerialPort, false),
 		BootDelay:            vergeio.Int32ToNil(planData.BootDelay, stateData.BootDelay, 0),
-		PreferredNode:        vergeio.StringToNil(planData.PreferredNode, stateData.PreferredNode, ""),
-		SnapshotProfile:      vergeio.StringToNil(planData.SnapshotProfile, stateData.SnapshotProfile, ""),
+		PreferredNode:        vergeio.Int32ToNil(planData.PreferredNode, stateData.PreferredNode, 0),
+		SnapshotProfile:      vergeio.Int32ToNil(planData.SnapshotProfile, stateData.SnapshotProfile, 0),
 		CloudInitDataSource:  vergeio.StringToNil(planData.CloudInitDataSource, stateData.CloudInitDataSource, ""),
 		PowerState:           vergeio.BoolToNil(planData.PowerState, stateData.PowerState, false),
 		GuestAgent:           vergeio.BoolToNil(planData.GuestAgent, stateData.GuestAgent, false),
@@ -407,23 +418,21 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
-	// Time to call the API
-	apiResp, err := va.client.Put(fmt.Sprintf("%s/%s",
-		VMEndpoint,
-		url.PathEscape(apiData.Id),
-	), encodedBuffer)
-	// error checking
+	// Time to call the SDK API - convert to SDK request
+	var req vergeos.VMUpdateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	vmID, err := strconv.Atoi(apiData.Id)
+	if err != nil {
+		return fmt.Errorf("invalid VM ID: %v", err)
+	}
+
+	_, err = va.sdk.VMs.Update(ctx, vmID, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
-
-	defer apiResp.Body.Close()
 
 	// We now have to handle the desired power state.
 	// If it's set to true, we have to check the power state.
@@ -524,12 +533,13 @@ func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 
 	tflog.Debug(ctx, "Deleting the vm")
 
-	// Call the Get API with the VM id and Proceed with user deletion
-	_, err := va.client.Delete(fmt.Sprintf("%s/%s",
-		VMEndpoint,
-		url.PathEscape(data.Id.ValueString())))
+	// Call the SDK API to delete the VM
+	vmID, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid VM ID: %v", err)
+	}
 
-	// error checking
+	err = va.sdk.VMs.Delete(ctx, vmID)
 	if err != nil {
 		return errors.New("Error deleting the vm: " + err.Error())
 	}
@@ -542,35 +552,20 @@ func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 // This function checks the power state of the VM by calling the API and set the powerstate to true or false
 func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
 
-	// call the Get API with the vm id and get the fields we need
-	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
-		VMEndpoint,
-		url.PathEscape(vmId)),
-		&vergeio.Options{
-			Fields: "machine#status#running as powerstate"})
+	// call the SDK API to get the VM and check power state
+	vmID, err := strconv.Atoi(vmId)
+	if err != nil {
+		return nil, fmt.Errorf("invalid VM ID: %v", err)
+	}
 
-	// error checking
+	vm, err := va.sdk.VMs.Get(ctx, vmID)
 	if err != nil {
 		return nil, err
 	}
-	if apiResp == nil {
-		return nil, errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return nil, fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the powerstate %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("VM powerstate read from API: %v", vm.PowerState))
 
-	// Decode the API response
-	var vmAPIResp VMPowerState
-	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return nil, fmt.Errorf("invalid format received for VM Item: %v", err)
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("VM powerstate read from API: %v", vmAPIResp.PowerState))
-
-	return vmAPIResp.PowerState, nil
+	return &vm.PowerState, nil
 }
 
 // This function kills the VM
@@ -606,25 +601,20 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 		return fmt.Errorf("invalid VM ID format: %v", err)
 	}
 
-	// Create the action payload according to vnet_actions schema
-	actionPayload := VMAction{
-		VM:     int32(vmIDInt),
-		Action: desiredState,
+	// Send the power action using SDK
+	switch desiredState {
+	case "poweron":
+		err = va.sdk.VMs.PowerOn(ctx, vmIDInt)
+	case "kill":
+		err = va.sdk.VMs.PowerOff(ctx, vmIDInt) // Kill maps to PowerOff in SDK
+	default:
+		return fmt.Errorf("invalid desired state: %s", desiredState)
 	}
-	bytedata, err := json.Marshal(actionPayload)
 	if err != nil {
-		return err
-	}
-	// Send the action request to the vnet_actions endpoint
-	req, err := va.client.Post(VMActionEndpoint, bytes.NewBuffer(bytedata))
-	if err != nil {
-		return err
-	}
-	if req.StatusCode != 201 {
-		return fmt.Errorf("failed to change the VM power state: status code %v", req.StatusCode)
+		return fmt.Errorf("failed to change the VM power state: %v", err)
 	}
 
-	// Now wait for the VM to be in the desired state
+	// Now wait for the VM to be in the desired state (even though SDK waits internally, we verify)
 	tflog.Debug(ctx, fmt.Sprintf("Waiting for the VM %v to be in the desired state %v", data.Id.ValueString(), desiredState))
 
 	var currentPowerState *bool = nil
@@ -637,7 +627,7 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 	default:
 		return fmt.Errorf("invalid desired state: %s", desiredState)
 	}
-	boolDesriredState := &desiredBoolState
+	boolDesiredState := &desiredBoolState
 
 	// Check the power state of the VM
 	if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
@@ -645,17 +635,17 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 	}
 	Retries := 1
 
-	// If the power state is not running, we have to wait for it to be running.
-	for *currentPowerState != *boolDesriredState {
+	// If the power state is not as desired, wait a bit more (SDK might still be completing)
+	for *currentPowerState != *boolDesiredState {
 
-		// Wait for a short period to allow the kill operation to complete
+		// Wait for a short period to allow the operation to complete
 		time.Sleep(5 * time.Second)
 
 		// Check the power state of the VM
 		if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
 			return fmt.Errorf("error checking the power state of the VM: %v", err)
 		}
-		tflog.Debug(ctx, fmt.Sprintf("VM power state after the wait %v", data.PowerState.ValueBool()))
+		tflog.Debug(ctx, fmt.Sprintf("VM power state after the wait %v", *currentPowerState))
 
 		Retries += 1
 
@@ -676,37 +666,72 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 
 	tflog.Debug(ctx, "Reading the vm data")
 
-	// Call the Get API with the vm id and get the fields we need
-	// most fields are not returned by default
-	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
-		VMEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,guest_agent,advanced,nested_virtualization,disable_hypervisor,machine#status#running as powerstate"})
-	// ), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,machine#status#running as powerstate,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
+	// Call the SDK API to get the VM
+	vmID, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid VM ID: %v", err)
+	}
 
-	// error checking
+	vm, err := va.sdk.VMs.Get(ctx, vmID)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
+
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
+
+	// Convert SDK VM to API model for existing field mapping logic
+	vmAPIResp := VMAPIResourceModel{
+		Machine:              int32(vm.Machine),
+		Name:                 vm.Name,
+		Cluster:              int32(vm.Cluster.Int()),
+		Description:          vm.Description,
+		Enabled:              vm.Enabled,
+		MachineType:          vm.MachineType,
+		AllowHotplug:         vm.AllowHotplug,
+		DisablePowercycle:    vm.DisablePowercycle,
+		CPUCores:             int32(vm.CPUCores),
+		CPUType:              vm.CPUType,
+		RAM:                  int32(vm.RAM),
+		Console:              vm.Console,
+		Display:              vm.Display,
+		Video:                vm.Video,
+		Sound:                vm.Sound,
+		OSFamily:             vm.OSFamily,
+		OSDescription:        vm.OSDescription,
+		RTCBase:              vm.RTCBase,
+		BootOrder:            vm.BootOrder,
+		ConsolePassEnabled:   vm.ConsolePassEnabled,
+		ConsolePass:          vm.ConsolePass,
+		USBTablet:            vm.USBTablet,
+		UEFI:                 vm.UEFI,
+		SecureBoot:           vm.SecureBoot,
+		SerialPort:           vm.SerialPort,
+		BootDelay:            int32(vm.BootDelay),
+		PreferredNode:        int32(vm.PreferredNode.Int()),
+		SnapshotProfile:      int32(vm.SnapshotProfile.Int()),
+		CloudInitDataSource:  vm.CloudInitDataSource,
+		GuestAgent:           vm.GuestAgent,
+		HAGroup:              vm.HAGroup,
+		Advanced:             vm.Advanced,
+		NestedVirtualization: vm.NestedVirtualization,
+		DisableHypervisor:    vm.DisableHypervisor,
+		PowerState:           vm.PowerState,
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
-
-	// Decode the API response
-	var vmAPIResp VMAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return fmt.Errorf("invalid format received for VM Item: %v", err)
+	// Convert cloud init files
+	if vm.CloudInitFiles != nil {
+		for _, file := range vm.CloudInitFiles {
+			vmAPIResp.CloudInitFiles = append(vmAPIResp.CloudInitFiles, CloudInitFileAPI{
+				Name:     file.Name,
+				Contents: file.Contents,
+			})
+		}
 	}
 
 	// save into the resource model
 	data.Machine = types.Int32Value(vmAPIResp.Machine)
 	data.Name = types.StringValue(vmAPIResp.Name)
-	data.Cluster = types.StringValue(vmAPIResp.Cluster)
+	data.Cluster = types.Int32Value(vmAPIResp.Cluster)
 	data.Description = types.StringValue(vmAPIResp.Description)
 	data.Enabled = types.BoolValue(vmAPIResp.Enabled)
 	// Preserve the configured machine_type if semantically equivalent to API response.
@@ -734,8 +759,8 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.SecureBoot = types.BoolValue(vmAPIResp.SecureBoot)
 	data.SerialPort = types.BoolValue(vmAPIResp.SerialPort)
 	data.BootDelay = types.Int32Value(vmAPIResp.BootDelay)
-	data.PreferredNode = types.StringValue(vmAPIResp.PreferredNode)
-	data.SnapshotProfile = types.StringValue(vmAPIResp.SnapshotProfile)
+	data.PreferredNode = types.Int32Value(vmAPIResp.PreferredNode)
+	data.SnapshotProfile = types.Int32Value(vmAPIResp.SnapshotProfile)
 	data.CloudInitDataSource = types.StringValue(vmAPIResp.CloudInitDataSource)
 	data.GuestAgent = types.BoolValue(vmAPIResp.GuestAgent)
 	data.HAGroup = types.StringValue(vmAPIResp.HAGroup)
@@ -829,35 +854,39 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 	tflog.Debug(ctx, "Reading the vm data")
 
-	// Define the fields. Not all the fields are returned by default
-	opts := vergeio.Options{Fields: "machine#$key as id, dashboard"} //"machine,name,$key,is_snapshot,cpu_type,machine_type,os_family,uefi"}
+	// Build filter conditions for SDK
+	var listOpts []vergeos.ListOption
 
-	// Build filter
+	// Add name filter if specified
 	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+		listOpts = append(listOpts, vergeos.WithFilter(fmt.Sprintf("name eq '%s'", fn)))
 	}
 
-	// Call the Get API with filter and fields options
-	apiResp, err := va.client.Get(VMEndpoint,
-		&opts)
+	tflog.Debug(ctx, "Calling SDK VMs.List")
 
-	// error checking
+	// Call the SDK API
+	vms, err := va.sdk.VMs.List(ctx, listOpts...)
 	if err != nil {
-		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
+		return fmt.Errorf("failed to list VMs via SDK: %v", err)
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("===Read the VMs %#v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("SDK returned %d VMs", len(vms)))
 
-	// Decode the API response
+	// Convert SDK VMs to API model for existing field mapping logic
 	var vmAPIResp []VMAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&vmAPIResp); err != nil {
-		return fmt.Errorf("invalid format received for VM Item: %v", err)
+	for _, vm := range vms {
+		vmAPIResp = append(vmAPIResp, VMAPIDataSourceModel{
+			Id:          int32(vm.Machine), // Machine reference ID
+			Name:        vm.Name,
+			Key:         int32(vm.ID.Int()), // VM Key (was $key in API)
+			IsSnapshot:  vm.IsSnapshot,
+			CPUType:     vm.CPUType,
+			MachineType: vm.MachineType,
+			OSFamily:    vm.OSFamily,
+			UEFI:        vm.UEFI,
+			// Note: Machine.Drives and Machine.Nics are not available in basic VM list
+			// These would need separate API calls if needed
+		})
 	}
 
 	// Filter the response for snapshots

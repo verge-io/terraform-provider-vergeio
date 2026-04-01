@@ -5,32 +5,35 @@ package version
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
-const (
-	VersionEndpoint = "/version.json"
-)
 
 var _ vergeio.IClient = &VersionApi{}
 
 func NewVersionApi(c *vergeio.Client) *VersionApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &VersionApi{
 		name:   "Version Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type VersionApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *VersionApi) Name() string {
@@ -48,26 +51,19 @@ func (va *VersionApi) readVersion(ctx context.Context, data *VersionDataSourceMo
 
 	tflog.Debug(ctx, "Reading the version data")
 
-	apiResp, err := va.client.Get(VersionEndpoint,
-		nil)
-
-	// error checking
+	// Call the SDK API
+	version, err := va.sdk.System.GetVersion(ctx)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the version resource %v", version))
 
-	// Decode the API response
-	var versionAPIResp VersionAPIDataSourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&versionAPIResp); err != nil {
-		return errors.New("invalid format received for VM Item")
+	// Convert SDK version to API model for existing field mapping logic
+	versionAPIResp := VersionAPIDataSourceModel{
+		Name:    version,
+		Version: version, // SDK returns version string directly
+		Hash:    "",      // Hash may not be available in SDK
 	}
 
 	data.Name = types.StringValue(versionAPIResp.Name)
