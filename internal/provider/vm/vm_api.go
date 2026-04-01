@@ -136,13 +136,13 @@ func (va *VMApi) GetMachineTypesFromAPI(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vm GetMachineTypesFromAPI SDK error: %w", err)
 	}
-	
+
 	// Convert map keys to slice of strings
 	machineTypes := make([]string, 0, len(machineTypesMap))
 	for machineType := range machineTypesMap {
 		machineTypes = append(machineTypes, machineType)
 	}
-	
+
 	return machineTypes, nil
 }
 
@@ -221,7 +221,7 @@ type VMAPIResourceModel struct {
 	Id                   string             `json:"id,omitempty"`
 	Machine              int32              `json:"machine,omitempty"`
 	Name                 string             `json:"name,omitempty"`
-	Cluster              string             `json:"cluster,omitempty"`
+	Cluster              int32              `json:"cluster,omitempty"`
 	Description          string             `json:"description,omitempty"`
 	Enabled              bool               `json:"enabled,omitempty"`
 	MachineType          string             `json:"machine_type,omitempty"`
@@ -245,8 +245,8 @@ type VMAPIResourceModel struct {
 	SecureBoot           bool               `json:"secure_boot,omitempty"`
 	SerialPort           bool               `json:"serial_port,omitempty"`
 	BootDelay            int32              `json:"boot_delay,omitempty"`
-	PreferredNode        string             `json:"preferred_node,omitempty"`
-	SnapshotProfile      string             `json:"snapshot_profile,omitempty"`
+	PreferredNode        int32              `json:"preferred_node,omitempty"`
+	SnapshotProfile      int32              `json:"snapshot_profile,omitempty"`
 	CloudInitDataSource  string             `json:"cloudinit_datasource,omitempty"`
 	CloudInitFiles       []CloudInitFileAPI `json:"cloudinit_files,omitempty"`
 	PowerState           bool               `json:"powerstate,omitempty"`
@@ -290,7 +290,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	apiData := VMAPIResourceModel{
 		Machine:             data.Machine.ValueInt32(),
 		Name:                data.Name.ValueString(),
-		Cluster:             data.Cluster.ValueString(),
+		Cluster:             data.Cluster.ValueInt32(),
 		Description:         data.Description.ValueString(),
 		Enabled:             data.Enabled.ValueBool(),
 		MachineType:         data.MachineType.ValueString(),
@@ -314,8 +314,8 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		SecureBoot:          data.SecureBoot.ValueBool(),
 		SerialPort:          data.SerialPort.ValueBool(),
 		BootDelay:           data.BootDelay.ValueInt32(),
-		PreferredNode:       data.PreferredNode.ValueString(),
-		SnapshotProfile:     data.SnapshotProfile.ValueString(),
+		PreferredNode:       data.PreferredNode.ValueInt32(),
+		SnapshotProfile:     data.SnapshotProfile.ValueInt32(),
 		CloudInitDataSource: data.CloudInitDataSource.ValueString(),
 		// We are not sending the power state here, as it will be handled separately.
 		// When send the power state via the create API, it doesn't start the devices like drives and nics.
@@ -377,7 +377,7 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		Id: vergeio.StringToNil(planData.Id, stateData.Id, ""),
 		// Machine is read only
 		Name:                 vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Cluster:              vergeio.StringToNil(planData.Cluster, stateData.Cluster, ""),
+		Cluster:              vergeio.Int32ToNil(planData.Cluster, stateData.Cluster, 0),
 		Description:          vergeio.StringToNil(planData.Description, stateData.Description, ""),
 		Enabled:              vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
 		MachineType:          vergeio.StringToNil(planData.MachineType, stateData.MachineType, ""),
@@ -401,8 +401,8 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		SecureBoot:           vergeio.BoolToNil(planData.SecureBoot, stateData.SecureBoot, false),
 		SerialPort:           vergeio.BoolToNil(planData.SerialPort, stateData.SerialPort, false),
 		BootDelay:            vergeio.Int32ToNil(planData.BootDelay, stateData.BootDelay, 0),
-		PreferredNode:        vergeio.StringToNil(planData.PreferredNode, stateData.PreferredNode, ""),
-		SnapshotProfile:      vergeio.StringToNil(planData.SnapshotProfile, stateData.SnapshotProfile, ""),
+		PreferredNode:        vergeio.Int32ToNil(planData.PreferredNode, stateData.PreferredNode, 0),
+		SnapshotProfile:      vergeio.Int32ToNil(planData.SnapshotProfile, stateData.SnapshotProfile, 0),
 		CloudInitDataSource:  vergeio.StringToNil(planData.CloudInitDataSource, stateData.CloudInitDataSource, ""),
 		PowerState:           vergeio.BoolToNil(planData.PowerState, stateData.PowerState, false),
 		GuestAgent:           vergeio.BoolToNil(planData.GuestAgent, stateData.GuestAgent, false),
@@ -634,7 +634,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	vmAPIResp := VMAPIResourceModel{
 		Machine:              int32(vm.Machine),
 		Name:                 vm.Name,
-		Cluster:              strconv.Itoa(vm.Cluster.Int()),
+		Cluster:              int32(vm.Cluster.Int()),
 		Description:          vm.Description,
 		Enabled:              vm.Enabled,
 		MachineType:          vm.MachineType,
@@ -658,8 +658,8 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 		SecureBoot:           vm.SecureBoot,
 		SerialPort:           vm.SerialPort,
 		BootDelay:            int32(vm.BootDelay),
-		PreferredNode:        strconv.Itoa(vm.PreferredNode.Int()),
-		SnapshotProfile:      strconv.Itoa(vm.SnapshotProfile.Int()),
+		PreferredNode:        int32(vm.PreferredNode.Int()),
+		SnapshotProfile:      int32(vm.SnapshotProfile.Int()),
 		CloudInitDataSource:  vm.CloudInitDataSource,
 		GuestAgent:           vm.GuestAgent,
 		HAGroup:              vm.HAGroup,
@@ -682,7 +682,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	// save into the resource model
 	data.Machine = types.Int32Value(vmAPIResp.Machine)
 	data.Name = types.StringValue(vmAPIResp.Name)
-	data.Cluster = types.StringValue(vmAPIResp.Cluster)
+	data.Cluster = types.Int32Value(vmAPIResp.Cluster)
 	data.Description = types.StringValue(vmAPIResp.Description)
 	data.Enabled = types.BoolValue(vmAPIResp.Enabled)
 	// Preserve the configured machine_type if semantically equivalent to API response.
@@ -710,8 +710,8 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.SecureBoot = types.BoolValue(vmAPIResp.SecureBoot)
 	data.SerialPort = types.BoolValue(vmAPIResp.SerialPort)
 	data.BootDelay = types.Int32Value(vmAPIResp.BootDelay)
-	data.PreferredNode = types.StringValue(vmAPIResp.PreferredNode)
-	data.SnapshotProfile = types.StringValue(vmAPIResp.SnapshotProfile)
+	data.PreferredNode = types.Int32Value(vmAPIResp.PreferredNode)
+	data.SnapshotProfile = types.Int32Value(vmAPIResp.SnapshotProfile)
 	data.CloudInitDataSource = types.StringValue(vmAPIResp.CloudInitDataSource)
 	data.GuestAgent = types.BoolValue(vmAPIResp.GuestAgent)
 	data.HAGroup = types.StringValue(vmAPIResp.HAGroup)
@@ -827,9 +827,9 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	var vmAPIResp []VMAPIDataSourceModel
 	for _, vm := range vms {
 		vmAPIResp = append(vmAPIResp, VMAPIDataSourceModel{
-			Id:          int32(vm.Machine),     // Machine reference ID
+			Id:          int32(vm.Machine), // Machine reference ID
 			Name:        vm.Name,
-			Key:         int32(vm.ID.Int()),    // VM Key (was $key in API)
+			Key:         int32(vm.ID.Int()), // VM Key (was $key in API)
 			IsSnapshot:  vm.IsSnapshot,
 			CPUType:     vm.CPUType,
 			MachineType: vm.MachineType,

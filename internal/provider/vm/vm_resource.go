@@ -50,7 +50,7 @@ type VMResourceModel struct {
 	Id                    types.String    `tfsdk:"id"`
 	Machine               types.Int32     `tfsdk:"machine"`
 	Name                  types.String    `tfsdk:"name"`
-	Cluster               types.String    `tfsdk:"cluster"`
+	Cluster               types.Int32     `tfsdk:"cluster"`
 	Description           types.String    `tfsdk:"description"`
 	Enabled               types.Bool      `tfsdk:"enabled"`
 	MachineType           types.String    `tfsdk:"machine_type"`
@@ -74,8 +74,8 @@ type VMResourceModel struct {
 	SecureBoot            types.Bool      `tfsdk:"secure_boot"`
 	SerialPort            types.Bool      `tfsdk:"serial_port"`
 	BootDelay             types.Int32     `tfsdk:"boot_delay"`
-	PreferredNode         types.String    `tfsdk:"preferred_node"`
-	SnapshotProfile       types.String    `tfsdk:"snapshot_profile"`
+	PreferredNode         types.Int32     `tfsdk:"preferred_node"`
+	SnapshotProfile       types.Int32     `tfsdk:"snapshot_profile"`
 	CloudInitDataSource   types.String    `tfsdk:"cloudinit_datasource"`
 	HAGroup               types.String    `tfsdk:"ha_group"`
 	CloudInitFiles        []CloudInitFile `tfsdk:"cloudinit_files"`
@@ -244,17 +244,17 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Optional:            true,
 				Computed:            true,
 			},
-			"preferred_node": schema.StringAttribute{
+			"preferred_node": schema.Int32Attribute{
 				MarkdownDescription: "Preferred node",
 				Optional:            true,
 				Computed:            true,
 			},
-			"snapshot_profile": schema.StringAttribute{
+			"snapshot_profile": schema.Int32Attribute{
 				MarkdownDescription: "Snapshot profile",
 				Optional:            true,
 				Computed:            true,
 			},
-			"cluster": schema.StringAttribute{
+			"cluster": schema.Int32Attribute{
 				MarkdownDescription: "Cluster",
 				Optional:            true,
 				Computed:            true,

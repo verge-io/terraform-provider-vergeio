@@ -39,6 +39,7 @@ type CloudinitFileResourceModel struct {
 	Filesize          types.Int64  `tfsdk:"filesize"`
 	Contents          types.String `tfsdk:"contents"`
 	ContainsVariables types.Bool   `tfsdk:"contains_variables"`
+	Owner             types.String `tfsdk:"owner"`
 }
 
 // Metadata returns the resource type name.
@@ -75,6 +76,11 @@ func (r *CloudinitFileResource) Schema(ctx context.Context, req resource.SchemaR
 			},
 			"contains_variables": schema.BoolAttribute{
 				MarkdownDescription: "Contains variables",
+				Optional:            true,
+				Computed:            true,
+			},
+			"owner": schema.StringAttribute{
+				MarkdownDescription: "Owner of the file",
 				Optional:            true,
 				Computed:            true,
 			},
