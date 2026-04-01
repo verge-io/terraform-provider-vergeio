@@ -4,6 +4,7 @@
 package vergeio
 
 import (
+	"strconv"
 	"strings"
 	
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -53,6 +54,29 @@ func Float64ToNil(planValue types.Float64, stateValue types.Float64, defaultValu
 		return stateValue.ValueFloat64()
 	}
 	return planValue.ValueFloat64()
+}
+
+// StringToInt32 converts string to int32, following same pattern as other utility functions
+func StringToInt32(planValue types.String, stateValue types.String, defaultValue int32) int32 {
+	var stringValue string
+	if planValue.IsUnknown() {
+		if stateValue.IsUnknown() {
+			return defaultValue
+		}
+		stringValue = stateValue.ValueString()
+	} else {
+		stringValue = planValue.ValueString()
+	}
+	
+	if stringValue == "" {
+		return defaultValue
+	}
+	
+	if intValue, err := strconv.Atoi(stringValue); err == nil {
+		return int32(intValue)
+	}
+	
+	return defaultValue
 }
 
 // EnsureHTTPSPrefix adds https:// to the host if no protocol is specified

@@ -318,7 +318,9 @@ func (p *testProvider) DataSources(ctx context.Context) []func() datasource.Data
 }
 
 func (p *testProvider) Resources(ctx context.Context) []func() fwresource.Resource {
-	return []func() fwresource.Resource{}
+	return []func() fwresource.Resource{
+		NewVMResource,
+	}
 }
 
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
