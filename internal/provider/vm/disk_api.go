@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -22,21 +23,21 @@ import (
 
 // Ensure provider defined types fully satisfy framework interfaces.
 type diskResourceModel struct {
-	Key                 types.String `tfsdk:"key"`
-	Machine             types.Int32  `tfsdk:"machine"`
-	Name                types.String `tfsdk:"name"`
-	Description         types.String `tfsdk:"description"`
-	Interface           types.String `tfsdk:"interface"`
-	Media               types.String `tfsdk:"media"`
-	MediaSource         types.Int32  `tfsdk:"media_source"`
-	DiskSize            types.Int64  `tfsdk:"disksize"`
-	PreferredTier       types.String `tfsdk:"preferred_tier"`
-	Enabled             types.Bool   `tfsdk:"enabled"`
-	ReadOnly            types.Bool   `tfsdk:"readonly"`
-	Serial              types.String `tfsdk:"serial"`
-	Asset               types.String `tfsdk:"asset"`
-	OrderId             types.Int32  `tfsdk:"orderid"`
-	PreserveDriveFormat types.Bool   `tfsdk:"preserve_drive_format"`
+	Key                 types.String  `tfsdk:"key"`
+	Machine             types.Int32   `tfsdk:"machine"`
+	Name                types.String  `tfsdk:"name"`
+	Description         types.String  `tfsdk:"description"`
+	Interface           types.String  `tfsdk:"interface"`
+	Media               types.String  `tfsdk:"media"`
+	MediaSource         types.Int32   `tfsdk:"media_source"`
+	DiskSize            types.Float64 `tfsdk:"disksize"`
+	PreferredTier       types.String  `tfsdk:"preferred_tier"`
+	Enabled             types.Bool    `tfsdk:"enabled"`
+	ReadOnly            types.Bool    `tfsdk:"readonly"`
+	Serial              types.String  `tfsdk:"serial"`
+	Asset               types.String  `tfsdk:"asset"`
+	OrderId             types.Int32   `tfsdk:"orderid"`
+	PreserveDriveFormat types.Bool    `tfsdk:"preserve_drive_format"`
 }
 
 // API resource model.
@@ -132,7 +133,7 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 		Interface:           data.Interface.ValueString(),
 		Media:               data.Media.ValueString(),
 		MediaSource:         data.MediaSource.ValueInt32(),
-		DiskSize:            data.DiskSize.ValueInt64() * 1024 * 1024 * 1024,
+		DiskSize:            int64(data.DiskSize.ValueFloat64() * 1024 * 1024 * 1024),
 		PreferredTier:       data.PreferredTier.ValueString(),
 		Enabled:             data.Enabled.ValueBool(),
 		ReadOnly:            data.ReadOnly.ValueBool(),
@@ -208,7 +209,7 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 		}
 
 		// Import has been finished, now resize the disk if needed
-		tflog.Debug(ctx, fmt.Sprintf("Resizing the imported disk from %v to %v", origData.DiskSize.ValueInt64(), data.DiskSize.ValueInt64()))
+		tflog.Debug(ctx, fmt.Sprintf("Resizing the imported disk from %v to %v", origData.DiskSize.ValueFloat64(), data.DiskSize.ValueFloat64()))
 		if data.DiskSize != origData.DiskSize {
 
 			// Call the update API to resize the disk
@@ -230,7 +231,7 @@ func (da *DiskApi) updateDisk(ctx context.Context, planData *diskResourceModel, 
 		Name:                vergeio.StringToNil(planData.Name, stateData.Name, ""),
 		Description:         vergeio.StringToNil(planData.Description, stateData.Description, ""),
 		Interface:           vergeio.StringToNil(planData.Interface, stateData.Interface, ""),
-		DiskSize:            vergeio.Int64ToNil(planData.DiskSize, stateData.DiskSize, 0) * 1024 * 1024 * 1024,
+		DiskSize:            int64(vergeio.Float64ToNil(planData.DiskSize, stateData.DiskSize, 0) * 1024 * 1024 * 1024),
 		PreferredTier:       vergeio.StringToNil(planData.PreferredTier, stateData.PreferredTier, ""),
 		Enabled:             vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
 		ReadOnly:            vergeio.BoolToNil(planData.ReadOnly, stateData.ReadOnly, false),
@@ -311,7 +312,7 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 	data.Name = types.StringValue(diskAPIResp.Name)
 	data.Description = types.StringValue(diskAPIResp.Description)
 	data.Interface = types.StringValue(diskAPIResp.Interface)
-	data.DiskSize = types.Int64Value(diskAPIResp.DiskSize / (1024 * 1024 * 1024))
+	data.DiskSize = types.Float64Value(math.Round(float64(diskAPIResp.DiskSize)/(1024*1024*1024)*100) / 100)
 	data.PreferredTier = types.StringValue(diskAPIResp.PreferredTier)
 	data.Enabled = types.BoolValue(diskAPIResp.Enabled)
 	data.ReadOnly = types.BoolValue(diskAPIResp.ReadOnly)
@@ -428,7 +429,7 @@ func (da *DiskApi) syncDisks(ctx context.Context, planData *[]*diskResourceModel
 					plan.Interface.ValueString() != state.Interface.ValueString() ||
 					plan.Media.ValueString() != state.Media.ValueString() ||
 					plan.MediaSource.ValueInt32() != state.MediaSource.ValueInt32() ||
-					plan.DiskSize.ValueInt64() != state.DiskSize.ValueInt64() ||
+					math.Abs(plan.DiskSize.ValueFloat64()-state.DiskSize.ValueFloat64()) > 0.001 ||
 					plan.PreferredTier.ValueString() != state.PreferredTier.ValueString() ||
 					plan.Enabled.ValueBool() != state.Enabled.ValueBool() ||
 					plan.ReadOnly.ValueBool() != state.ReadOnly.ValueBool() ||

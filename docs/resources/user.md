@@ -43,7 +43,7 @@ resource "vergeio_member" "membership" {
 - `displayname` (String)
 - `email` (String)
 - `enabled` (Boolean) - Default = True
-- `password` (String)
+- `password` (String, Sensitive)
 - `remote_name` (String) - Depends on `auth_source`. Only necessary when the remote username differs from the username (name).
 - `type` (String) - The type of user being created. Normal is the default without specification.
     - `normal`

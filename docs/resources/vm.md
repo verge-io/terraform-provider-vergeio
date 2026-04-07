@@ -287,7 +287,7 @@ Optional:
 
 - `asset` (String)
 - `description` (String)
-- `disksize` (Number) - Formatted in 1024 based GB. Ex: 1024GB = 1TB
+- `disksize` (Number) - Size in GB (supports fractional values, e.g., 8.5). Formatted in 1024 based GB. Ex: 1024GB = 1TB
 - `enabled` (Boolean) - Default = True
 - `interface` (String)
 	- `virtio`                (Virtio Legacy)

@@ -20,12 +20,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &VMResource{}
 var _ resource.ResourceWithImportState = &VMResource{}
+var _ resource.ResourceWithUpgradeState = &VMResource{}
 
 func NewVMResource() resource.Resource {
 	return &VMResource{}
@@ -104,6 +106,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "VM resource in VergeIO",
+		Version:             1,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -433,7 +436,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Optional: true,
 							// Computed: true,
 						},
-						"disksize": schema.Int64Attribute{
+						"disksize": schema.Float64Attribute{
 							Optional: true,
 							Computed: true,
 						},
@@ -606,6 +609,36 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						},
 					},
 				},
+			},
+		},
+	}
+}
+
+// UpgradeState handles state migrations between schema versions.
+// Version 0→1: disksize in vergeio_drive changed from Int64 to Float64
+// to support fractional GB sizes (e.g., 8.5 GB imported disks).
+func (r *VMResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				tflog.Info(ctx, "Upgrading VM state from v0 to v1: disksize changed from int64 to float64")
+
+				// Get the v1 schema's tftypes type definition
+				newSchemaType := resp.State.Schema.Type().TerraformType(ctx)
+
+				// Re-parse the raw JSON state using the new schema type.
+				// JSON numbers are untyped, so integer 60 parses as float64 60.0
+				// without any manual transformation needed.
+				newStateValue, err := tftypes.ValueFromJSON(req.RawState.JSON, newSchemaType)
+				if err != nil {
+					resp.Diagnostics.AddError(
+						"Error upgrading VM state from v0 to v1",
+						fmt.Sprintf("Failed to parse state: %s", err),
+					)
+					return
+				}
+
+				resp.State.Raw = newStateValue
 			},
 		},
 	}

@@ -41,3 +41,12 @@ func Int64ToNil(planValue types.Int64, stateValue types.Int64, defaultValue int6
 	}
 	return planValue.ValueInt64()
 }
+func Float64ToNil(planValue types.Float64, stateValue types.Float64, defaultValue float64) float64 {
+	if planValue.IsUnknown() {
+		if stateValue.IsUnknown() {
+			return defaultValue
+		}
+		return stateValue.ValueFloat64()
+	}
+	return planValue.ValueFloat64()
+}
