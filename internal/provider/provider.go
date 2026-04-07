@@ -67,6 +67,7 @@ func (p *vergeioProvider) Schema(ctx context.Context, req provider.SchemaRequest
 			"password": schema.StringAttribute{
 				MarkdownDescription: "Password",
 				Required:            true,
+				Sensitive:           true,
 			},
 			"insecure": schema.BoolAttribute{
 				MarkdownDescription: "Allow insecure connections",

@@ -105,6 +105,7 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				MarkdownDescription: "User password",
 				Optional:            true,
 				Computed:            true,
+				Sensitive:           true,
 			},
 			"change_password": schema.BoolAttribute{
 				MarkdownDescription: "Change password",
