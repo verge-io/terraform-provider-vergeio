@@ -6,7 +6,8 @@ require (
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
 	github.com/hashicorp/terraform-plugin-go v0.31.0
 	github.com/hashicorp/terraform-plugin-log v0.10.0
-	github.com/verge-io/govergeos v0.0.0
+	github.com/hashicorp/terraform-plugin-testing v1.15.0
+	github.com/verge-io/govergeos v0.2.0
 )
 
 require (
@@ -28,7 +29,6 @@ require (
 	github.com/hashicorp/terraform-exec v0.25.0 // indirect
 	github.com/hashicorp/terraform-json v0.27.2 // indirect
 	github.com/hashicorp/terraform-plugin-sdk/v2 v2.40.0 // indirect
-	github.com/hashicorp/terraform-plugin-testing v1.15.0 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
@@ -65,5 +65,3 @@ require (
 	google.golang.org/grpc v1.79.2 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/verge-io/govergeos => /Users/farooq/Dev/Verge/VergeOSlib/govergeos
