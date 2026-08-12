@@ -24,6 +24,7 @@ resource "vergeio_vm" "web-server" {
   ram                  = 2048
   powerstate           = false
   guest_agent          = true
+  on_power_loss        = "last_state"
   cloudinit_datasource = "nocloud"
   ha_group             = "web"
 
@@ -225,6 +226,10 @@ resource "vergeio_vm" "web-server" {
 
     **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider
 - `nested_virtualization` (Boolean), Default = False
+- `on_power_loss` (String) - Sets the power state of the VM after a power loss
+    - `last_state` Last Power State (**Default**)
+    - `power_on`   Power On
+    - `leave_off`  Leave Off
 - `os_description` (String)
 - `os_family` (String)
     - `linux`   (**Default**)

@@ -58,6 +58,7 @@ type VMResourceModel struct {
 	MachineType           types.String    `tfsdk:"machine_type"`
 	AllowHotplug          types.Bool      `tfsdk:"allow_hotplug"`
 	DisablePowercycle     types.Bool      `tfsdk:"disable_powercycle"`
+	OnPowerLoss           types.String    `tfsdk:"on_power_loss"`
 	CPUCores              types.Int32     `tfsdk:"cpu_cores"`
 	CPUType               types.String    `tfsdk:"cpu_type"`
 	RAM                   types.Int32     `tfsdk:"ram"`
@@ -152,6 +153,15 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				MarkdownDescription: "Disable powercycle",
 				Optional:            true,
 				Computed:            true,
+			},
+			"on_power_loss": schema.StringAttribute{
+				MarkdownDescription: "What to do on power loss",
+				Validators: []validator.String{
+					// Validate string value must be "power_on", "leave_off", or "last_state"
+					stringvalidator.OneOf([]string{"power_on", "leave_off", "last_state"}...),
+				},
+				Optional: true,
+				Computed: true,
 			},
 			"cpu_cores": schema.Int32Attribute{
 				MarkdownDescription: "CPU cores",

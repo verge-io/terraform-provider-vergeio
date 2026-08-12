@@ -10,6 +10,7 @@ resource "vergeio_vm" "web-server" {
   ram                  = 2048
   powerstate           = false
   guest_agent          = true
+  on_power_loss        = "last_state"
   cloudinit_datasource = "nocloud"
   ha_group             = "web"
 

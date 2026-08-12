@@ -208,6 +208,7 @@ type VMAPIResourceModel struct {
 	MachineType          string             `json:"machine_type,omitempty"`
 	AllowHotplug         bool               `json:"allow_hotplug,omitempty"`
 	DisablePowercycle    bool               `json:"disable_powercycle,omitempty"`
+	OnPowerLoss          string             `json:"on_power_loss,omitempty"`
 	CPUCores             int32              `json:"cpu_cores,omitempty"`
 	CPUType              string             `json:"cpu_type,omitempty"`
 	RAM                  int32              `json:"ram,omitempty"`
@@ -277,6 +278,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		MachineType:         data.MachineType.ValueString(),
 		AllowHotplug:        data.AllowHotplug.ValueBool(),
 		DisablePowercycle:   data.DisablePowercycle.ValueBool(),
+		OnPowerLoss:         data.OnPowerLoss.ValueString(),
 		CPUCores:            data.CPUCores.ValueInt32(),
 		CPUType:             data.CPUType.ValueString(),
 		RAM:                 data.RAM.ValueInt32(),
@@ -372,6 +374,7 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		MachineType:          vergeio.StringToNil(planData.MachineType, stateData.MachineType, ""),
 		AllowHotplug:         vergeio.BoolToNil(planData.AllowHotplug, stateData.AllowHotplug, false),
 		DisablePowercycle:    vergeio.BoolToNil(planData.DisablePowercycle, stateData.DisablePowercycle, false),
+		OnPowerLoss:          vergeio.StringToNil(planData.OnPowerLoss, stateData.OnPowerLoss, ""),
 		CPUCores:             vergeio.Int32ToNil(planData.CPUCores, stateData.CPUCores, 0),
 		CPUType:              vergeio.StringToNil(planData.CPUType, stateData.CPUType, ""),
 		RAM:                  vergeio.Int32ToNil(planData.RAM, stateData.RAM, 0),
@@ -681,7 +684,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,guest_agent,advanced,nested_virtualization,disable_hypervisor,machine#status#running as powerstate"})
+	), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,on_power_loss,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,guest_agent,advanced,nested_virtualization,disable_hypervisor,machine#status#running as powerstate"})
 	// ), &vergeio.Options{Fields: "id,machine,name,cluster,description,enabled,machine_type,allow_hotplug,disable_powercycle,cpu_cores,cpu_type,ram,console,display,video,sound,os_family,os_description,rtc_base,boot_order,console_pass_enabled,console_pass,usb_tablet,uefi,secure_boot,serial_port,boot_delay,preferred_node,snapshot_profile,cloudinit_datasource,ha_group,machine#status#running as powerstate,guest_agent,advanced,nested_virtualization,disable_hypervisor"})
 
 	// error checking
@@ -716,6 +719,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	}
 	data.AllowHotplug = types.BoolValue(vmAPIResp.AllowHotplug)
 	data.DisablePowercycle = types.BoolValue(vmAPIResp.DisablePowercycle)
+	data.OnPowerLoss = types.StringValue(vmAPIResp.OnPowerLoss)
 	data.CPUCores = types.Int32Value(vmAPIResp.CPUCores)
 	data.CPUType = types.StringValue(vmAPIResp.CPUType)
 	data.RAM = types.Int32Value(vmAPIResp.RAM)
