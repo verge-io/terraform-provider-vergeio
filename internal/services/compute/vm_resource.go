@@ -15,6 +15,7 @@ import (
 	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/shared"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -118,10 +119,12 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "VM resource in VergeIO",
-		// Version 2: cluster, preferred_node, and snapshot_profile are numbers.
+		// Version 3: drive preferred_tier is a number from 1 to 5.
+		// Version 2 stored preferred_tier as a string and stored cluster,
+		// preferred_node, and snapshot_profile as numbers.
 		// Version 1 stored those keys as strings and widened disksize to float.
 		// Version 0 stored disksize as an integer.
-		Version: 2,
+		Version: 3,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -558,17 +561,17 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Optional: true,
 							Computed: true,
 						},
-						"preferred_tier": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
+						"preferred_tier": schema.Int32Attribute{
+							MarkdownDescription: "Storage tier from 1 to 5. VergeOS assigns the system default when this is omitted, and a later VM update does not move the drive.",
+							Optional:            true,
+							Computed:            true,
 							// VergeOS assigns the system default tier when this is omitted,
 							// and a later VM update does not move the drive.
-							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
+							PlanModifiers: []planmodifier.Int32{
+								int32planmodifier.UseStateForUnknown(),
 							},
-							Validators: []validator.String{
-								// Validate string value must be one of the allowed values
-								stringvalidator.OneOf("1", "2", "3", "4", "5"),
+							Validators: []validator.Int32{
+								int32validator.OneOf(1, 2, 3, 4, 5),
 							},
 						},
 						"enabled": schema.BoolAttribute{
@@ -769,12 +772,13 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 // Version 0 stored disksize as an integer and cluster, preferred_node, and
 // snapshot_profile as strings. Version 1 widened disksize to float (JSON
 // numbers need no rewrite) and still stored those keys as strings. Version 2
-// stores the keys as numbers. Both prior versions upgrade straight to the
-// current schema. Numeric strings are accepted by the number decoder; blank
-// strings become null so an unset key does not fail the upgrade.
+// stores those keys as numbers and preferred_tier as a string such as "4".
+// Version 3 stores preferred_tier as a number. Every prior version upgrades
+// straight to the current schema. Numeric strings are accepted by the number
+// decoder; blank strings become null so an unset key does not fail the upgrade.
 func (r *VMResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
 	upgrader := func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
-		tflog.Info(ctx, "Upgrading VM state to v2: disksize float and numeric cluster, preferred_node, snapshot_profile")
+		tflog.Info(ctx, "Upgrading VM state to v3: numeric cluster, preferred_node, snapshot_profile, and drive preferred_tier")
 
 		normalized, err := normalizeVMStateJSON(req.RawState.JSON)
 		if err != nil {
@@ -801,12 +805,14 @@ func (r *VMResource) UpgradeState(ctx context.Context) map[int64]resource.StateU
 	return map[int64]resource.StateUpgrader{
 		0: {StateUpgrader: upgrader},
 		1: {StateUpgrader: upgrader},
+		2: {StateUpgrader: upgrader},
 	}
 }
 
-// normalizeVMStateJSON rewrites prior VM state so it matches schema version 2.
-// cluster, preferred_node, and snapshot_profile may be JSON strings. A blank
-// string becomes null; a decimal integer string becomes a JSON number.
+// normalizeVMStateJSON rewrites prior VM state so it matches schema version 3.
+// cluster, preferred_node, snapshot_profile, and each drive preferred_tier
+// may be JSON strings. A blank string becomes null; a decimal integer string
+// becomes a JSON number. Values that are already numbers are left alone.
 func normalizeVMStateJSON(raw []byte) ([]byte, error) {
 	var state map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &state); err != nil {
@@ -824,8 +830,46 @@ func normalizeVMStateJSON(raw []byte) ([]byte, error) {
 		}
 		state[key] = converted
 	}
+	if err := convertDrivePreferredTiers(state); err != nil {
+		return nil, err
+	}
 
 	return json.Marshal(state)
+}
+
+// convertDrivePreferredTiers rewrites vergeio_drive[].preferred_tier from the
+// string stored by schema versions 0-2 into the number stored by version 3.
+func convertDrivePreferredTiers(state map[string]json.RawMessage) error {
+	rawVal, ok := state["vergeio_drive"]
+	if !ok {
+		return nil
+	}
+	trimmed := bytes.TrimSpace(rawVal)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+
+	var drives []map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &drives); err != nil {
+		return fmt.Errorf("vergeio_drive: %w", err)
+	}
+	for i := range drives {
+		rawTier, ok := drives[i]["preferred_tier"]
+		if !ok {
+			continue
+		}
+		converted, err := numericIDOrNull(rawTier)
+		if err != nil {
+			return fmt.Errorf("vergeio_drive[%d].preferred_tier: %w", i, err)
+		}
+		drives[i]["preferred_tier"] = converted
+	}
+	encoded, err := json.Marshal(drives)
+	if err != nil {
+		return err
+	}
+	state["vergeio_drive"] = encoded
+	return nil
 }
 
 func numericIDOrNull(raw json.RawMessage) (json.RawMessage, error) {

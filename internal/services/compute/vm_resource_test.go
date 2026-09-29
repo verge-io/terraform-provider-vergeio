@@ -150,9 +150,9 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 	assertInt32PlanModifiers(t, "vergeio_drive.machine", driveMachine.PlanModifiers, keepStateInt)
 	assertInt32KeepsPriorState(t, "vergeio_drive.machine", driveMachine.PlanModifiers, 66, 7)
 
-	driveTier := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "preferred_tier")
-	assertPlanModifiers(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, keepState)
-	assertStringKeepsPriorState(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, "4", "1")
+	driveTier := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_drive", "preferred_tier")
+	assertInt32PlanModifiers(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, keepStateInt)
+	assertInt32KeepsPriorState(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, 4, 1)
 
 	driveAsset := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "asset")
 	assertPlanModifiers(t, "vergeio_drive.asset", driveAsset.PlanModifiers, keepState)

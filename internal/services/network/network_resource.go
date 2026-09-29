@@ -27,6 +27,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &NetworkResource{}
 var _ resource.ResourceWithImportState = &NetworkResource{}
+var _ resource.ResourceWithUpgradeState = &NetworkResource{}
 
 func NewNetworkResource() resource.Resource {
 	return &NetworkResource{}
@@ -51,7 +52,7 @@ type NetworkResourceModel struct {
 	DynamicIP_Start      types.String `tfsdk:"dhcp_start"`
 	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
 	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
-	PowerState           types.String `tfsdk:"powerstate"`
+	PowerState           types.Bool   `tfsdk:"powerstate"`
 	RestartOnChange      types.Bool   `tfsdk:"restart_on_change"`
 	NeedRestart          types.Bool   `tfsdk:"need_restart"`
 	Type                 types.String `tfsdk:"type"`
@@ -73,6 +74,9 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Network or Vnet resource in VergeIO",
+		// Version 1 stores powerstate as a bool. Version 0 stored the
+		// strings "true" and "false".
+		Version: 1,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -140,8 +144,8 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Optional: true,
 				Computed: true,
 			},
-			"powerstate": schema.StringAttribute{
-				MarkdownDescription: "Power state of the network. Read from the API as \"true\" or \"false\".",
+			"powerstate": schema.BoolAttribute{
+				MarkdownDescription: "Whether the network is powered on. Read from the API powerstate boolean after create and import.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -390,7 +394,7 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Network state before deletion %v", data.PowerState.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("Network state before deletion %v", data.PowerState.ValueBool()))
 
 	// Proceed with network deletion
 	if err := r.networkApi.deleteNetwork(ctx, &data); err != nil {
@@ -406,4 +410,126 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// networkResourceModelV0 is version 0 state. powerstate was a string.
+type networkResourceModelV0 struct {
+	Id                   types.String `tfsdk:"id"`
+	Name                 types.String `tfsdk:"name"`
+	Enabled              types.Bool   `tfsdk:"enabled"`
+	Default_Gateway      types.Int32  `tfsdk:"vnet_default_gateway"`
+	IPaddress            types.String `tfsdk:"ipaddress"`
+	Network              types.String `tfsdk:"network"`
+	DHCP                 types.Bool   `tfsdk:"dhcp_enabled"`
+	Dynamic_DHCP         types.Bool   `tfsdk:"dynamic_dhcp"`
+	DHCP_Sequential      types.Bool   `tfsdk:"dhcp_sequential"`
+	DynamicIP_Start      types.String `tfsdk:"dhcp_start"`
+	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
+	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
+	PowerState           types.String `tfsdk:"powerstate"`
+	RestartOnChange      types.Bool   `tfsdk:"restart_on_change"`
+	NeedRestart          types.Bool   `tfsdk:"need_restart"`
+	Type                 types.String `tfsdk:"type"`
+	VLAN_TAG             types.Int32  `tfsdk:"layer2_id"`
+	MTU                  types.Int32  `tfsdk:"mtu"`
+	Interface_Vnet       types.Int32  `tfsdk:"interface_vnet"`
+	IPaddress_Type       types.String `tfsdk:"ipaddress_type"`
+	Layer2_Type          types.String `tfsdk:"layer2_type"`
+	Enable_Bonding       types.Bool   `tfsdk:"enable_bonding"`
+	Bond_Interfaces_Args types.List   `tfsdk:"bond_interfaces_args"`
+}
+
+// networkPriorSchema is schema version 0: the current schema with powerstate
+// still stored as a string.
+func networkPriorSchema(ctx context.Context) *schema.Schema {
+	var resp resource.SchemaResponse
+	(&NetworkResource{}).Schema(ctx, resource.SchemaRequest{}, &resp)
+	prior := resp.Schema
+	prior.Version = 0
+	prior.Attributes["powerstate"] = schema.StringAttribute{
+		MarkdownDescription: "Power state of the network stored as \"true\" or \"false\".",
+		Optional:            true,
+		Computed:            true,
+	}
+	return &prior
+}
+
+// UpgradeState converts version 0 network state, which stored powerstate as
+// the strings "true" and "false", to the bool stored by version 1.
+// "running" and "stopped" are accepted because an earlier delete path wrote
+// those words into the same attribute. A blank string becomes null.
+func (r *NetworkResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema: networkPriorSchema(ctx),
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				tflog.Info(ctx, "Upgrading network state to v1: powerstate bool")
+
+				var prior networkResourceModelV0
+				resp.Diagnostics.Append(req.State.Get(ctx, &prior)...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+
+				upgraded := networkModelFromV0(prior)
+				var powerDiags diag.Diagnostics
+				upgraded.PowerState, powerDiags = networkPowerStateBool(prior.PowerState)
+				resp.Diagnostics.Append(powerDiags...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+
+				resp.Diagnostics.Append(resp.State.Set(ctx, &upgraded)...)
+			},
+		},
+	}
+}
+
+func networkModelFromV0(prior networkResourceModelV0) NetworkResourceModel {
+	return NetworkResourceModel{
+		Id:                   prior.Id,
+		Name:                 prior.Name,
+		Enabled:              prior.Enabled,
+		Default_Gateway:      prior.Default_Gateway,
+		IPaddress:            prior.IPaddress,
+		Network:              prior.Network,
+		DHCP:                 prior.DHCP,
+		Dynamic_DHCP:         prior.Dynamic_DHCP,
+		DHCP_Sequential:      prior.DHCP_Sequential,
+		DynamicIP_Start:      prior.DynamicIP_Start,
+		DynamicIP_Stop:       prior.DynamicIP_Stop,
+		On_Power_Loss:        prior.On_Power_Loss,
+		RestartOnChange:      prior.RestartOnChange,
+		NeedRestart:          prior.NeedRestart,
+		Type:                 prior.Type,
+		VLAN_TAG:             prior.VLAN_TAG,
+		MTU:                  prior.MTU,
+		Interface_Vnet:       prior.Interface_Vnet,
+		IPaddress_Type:       prior.IPaddress_Type,
+		Layer2_Type:          prior.Layer2_Type,
+		Enable_Bonding:       prior.Enable_Bonding,
+		Bond_Interfaces_Args: prior.Bond_Interfaces_Args,
+	}
+}
+
+// networkPowerStateBool converts a version 0 powerstate string to a bool.
+func networkPowerStateBool(v types.String) (types.Bool, diag.Diagnostics) {
+	if v.IsNull() || v.IsUnknown() {
+		return types.BoolNull(), nil
+	}
+	switch strings.ToLower(strings.TrimSpace(v.ValueString())) {
+	case "true", "running":
+		return types.BoolValue(true), nil
+	case "false", "stopped":
+		return types.BoolValue(false), nil
+	case "":
+		return types.BoolNull(), nil
+	default:
+		var diags diag.Diagnostics
+		diags.AddError(
+			"Error upgrading network state",
+			fmt.Sprintf("powerstate: cannot convert %q to bool", v.ValueString()),
+		)
+		return types.BoolNull(), diags
+	}
 }

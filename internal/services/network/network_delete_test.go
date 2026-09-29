@@ -65,8 +65,8 @@ func TestStopNetworkBeforeDeleteKillsOnceThenWaits(t *testing.T) {
 	if err := api.stopNetworkBeforeDelete(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
-	if data.PowerState.ValueString() != "stopped" {
-		t.Fatalf("power state = %q, want stopped", data.PowerState.ValueString())
+	if data.PowerState.IsNull() || data.PowerState.ValueBool() {
+		t.Fatalf("power state = %#v, want false", data.PowerState)
 	}
 	if reads < 3 {
 		t.Fatalf("status reads = %d, want polls while the network is still running", reads)

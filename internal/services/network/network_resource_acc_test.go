@@ -90,7 +90,7 @@ func testAccNetworkResourceConfig(networkName, extra string) string {
 resource "vergeio_network" "test" {
   name       = %q
   type       = "internal"
-  powerstate = "false"
+  powerstate = false
   %s
 }
 `, networkName, extra))

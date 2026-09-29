@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -75,6 +76,25 @@ func TestVMDataSource_Schema(t *testing.T) {
 	// Check schema description
 	if resp.Schema.MarkdownDescription != "VM data source" {
 		t.Errorf("expected description 'VM data source', got '%s'", resp.Schema.MarkdownDescription)
+	}
+
+	vmsAttr, ok := resp.Schema.Attributes["vms"].(dsschema.ListNestedAttribute)
+	if !ok {
+		t.Fatal("vms should be a list nested attribute")
+	}
+	drives, ok := vmsAttr.NestedObject.Attributes["drives"].(dsschema.ListNestedAttribute)
+	if !ok {
+		t.Fatal("vms.drives should be a list nested attribute")
+	}
+	if _, ok := drives.NestedObject.Attributes["preferred_tier"].(dsschema.Int32Attribute); !ok {
+		t.Fatal("vms.drives.preferred_tier should be an int32 attribute")
+	}
+	nics, ok := vmsAttr.NestedObject.Attributes["nics"].(dsschema.ListNestedAttribute)
+	if !ok {
+		t.Fatal("vms.nics should be a list nested attribute")
+	}
+	if _, ok := nics.NestedObject.Attributes["vnet"].(dsschema.Int32Attribute); !ok {
+		t.Fatal("vms.nics.vnet should be an int32 attribute")
 	}
 }
 

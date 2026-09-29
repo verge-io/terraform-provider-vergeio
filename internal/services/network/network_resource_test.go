@@ -72,11 +72,16 @@ func TestNetworkResource_Schema(t *testing.T) {
 		t.Error("enabled should be optional")
 	}
 
-	// powerstate is read back after import, including when the config omits it.
-	if powerAttr, ok := resp.Schema.Attributes["powerstate"]; !ok {
-		t.Error("powerstate attribute should exist")
-	} else if !powerAttr.IsOptional() || !powerAttr.IsComputed() {
+	// powerstate is a bool, read back after import, including when the config omits it.
+	powerAttr, ok := resp.Schema.Attributes["powerstate"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatal("powerstate should be a bool attribute")
+	}
+	if !powerAttr.IsOptional() || !powerAttr.IsComputed() {
 		t.Error("powerstate should be optional and computed")
+	}
+	if resp.Schema.Version != 1 {
+		t.Fatalf("schema version = %d, want 1", resp.Schema.Version)
 	}
 
 	restartAttr, ok := resp.Schema.Attributes["restart_on_change"].(schema.BoolAttribute)
@@ -336,7 +341,7 @@ func TestNetworkResourceModel_Types(t *testing.T) {
 		DynamicIP_Start:      types.StringValue("192.168.1.100"),
 		DynamicIP_Stop:       types.StringValue("192.168.1.200"),
 		On_Power_Loss:        types.StringValue("laston"),
-		PowerState:           types.StringValue("running"),
+		PowerState:           types.BoolValue(true),
 		Type:                 types.StringValue("internal"),
 		VLAN_TAG:             types.Int32Value(100),
 		MTU:                  types.Int32Value(1500),
@@ -382,7 +387,7 @@ func TestNetworkResourceModel_NullValues(t *testing.T) {
 		DynamicIP_Start:      types.StringNull(),
 		DynamicIP_Stop:       types.StringNull(),
 		On_Power_Loss:        types.StringNull(),
-		PowerState:           types.StringNull(),
+		PowerState:           types.BoolNull(),
 		Type:                 types.StringNull(),
 		VLAN_TAG:             types.Int32Null(),
 		MTU:                  types.Int32Null(),

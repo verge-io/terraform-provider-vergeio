@@ -141,13 +141,19 @@ func TestNetworkUpdateRequestKeepsFalseZeroAndEmpty(t *testing.T) {
 	requireAbsent(t, obj, "name")
 }
 
-func TestNetworkPowerStateString(t *testing.T) {
-	if got := networkPowerStateString(false); got != "false" {
-		t.Fatalf("networkPowerStateString(false) = %q, want false", got)
+func TestNetworkCreateRequestAcceptsBoolPowerState(t *testing.T) {
+	data := &NetworkResourceModel{
+		Name:       types.StringValue("tf-acc-net"),
+		PowerState: types.BoolValue(false),
 	}
-	if got := networkPowerStateString(true); got != "true" {
-		t.Fatalf("networkPowerStateString(true) = %q, want true", got)
+
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
 	}
+	// The SDK create body has no powerstate field, so a bool does not
+	// become the string "false" on the wire.
+	requireAbsent(t, decodeJSON(t, marshalRequest(t, req)), "powerstate")
 }
 
 func marshalRequest(t *testing.T, req any) string {

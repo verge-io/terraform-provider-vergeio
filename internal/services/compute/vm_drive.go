@@ -32,7 +32,7 @@ type diskResourceModel struct {
 	Media               types.String  `tfsdk:"media"`
 	MediaSource         types.Int32   `tfsdk:"media_source"`
 	DiskSize            types.Float64 `tfsdk:"disksize"`
-	PreferredTier       types.String  `tfsdk:"preferred_tier"`
+	PreferredTier       types.Int32   `tfsdk:"preferred_tier"`
 	Enabled             types.Bool    `tfsdk:"enabled"`
 	ReadOnly            types.Bool    `tfsdk:"readonly"`
 	Serial              types.String  `tfsdk:"serial"`
@@ -138,6 +138,39 @@ func (da *DiskApi) Name() string {
 	return da.name
 }
 
+// tierString is the API preferred_tier. VergeOS stores the tier as a
+// string of digits. Terraform stores it as a number.
+func tierString(v types.Int32) *string {
+	n := vergeio.KnownInt32(v)
+	if n == nil {
+		return nil
+	}
+	s := strconv.Itoa(int(*n))
+	return &s
+}
+
+// changedTierString returns preferred_tier when the planned tier differs.
+func changedTierString(plan, state types.Int32) *string {
+	if vergeio.ChangedInt32(plan, state) == nil {
+		return nil
+	}
+	return tierString(plan)
+}
+
+// preferredTierFromAPI converts the API string into the Terraform number.
+// A missing or blank value is null. Anything that is not an integer is an error.
+func preferredTierFromAPI(raw string) (types.Int32, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return types.Int32Null(), nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil {
+		return types.Int32Null(), fmt.Errorf("preferred_tier %q is not an integer", raw)
+	}
+	return types.Int32Value(int32(n)), nil
+}
+
 // diskSizeBytes is the API disksize for a configured size in GB.
 // A known 0 is returned as a non-nil pointer. Null and unknown are omitted.
 func diskSizeBytes(size types.Float64) *int64 {
@@ -183,7 +216,7 @@ func diskCreatePayload(data *diskResourceModel) diskAPIResourceModel {
 		Media:               vergeio.KnownString(data.Media),
 		MediaSource:         vergeio.KnownInt32(data.MediaSource),
 		DiskSize:            diskSizeBytes(data.DiskSize),
-		PreferredTier:       vergeio.KnownString(data.PreferredTier),
+		PreferredTier:       tierString(data.PreferredTier),
 		Enabled:             vergeio.KnownBool(data.Enabled),
 		ReadOnly:            vergeio.KnownBool(data.ReadOnly),
 		Serial:              vergeio.KnownString(data.Serial),
@@ -202,7 +235,7 @@ func diskUpdatePayload(planData *diskResourceModel, stateData *diskResourceModel
 		Description:         vergeio.ChangedString(planData.Description, stateData.Description),
 		Interface:           vergeio.ChangedString(planData.Interface, stateData.Interface),
 		DiskSize:            changedDiskSizeBytes(planData.DiskSize, stateData.DiskSize),
-		PreferredTier:       vergeio.ChangedString(planData.PreferredTier, stateData.PreferredTier),
+		PreferredTier:       changedTierString(planData.PreferredTier, stateData.PreferredTier),
 		Enabled:             vergeio.ChangedBool(planData.Enabled, stateData.Enabled),
 		ReadOnly:            vergeio.ChangedBool(planData.ReadOnly, stateData.ReadOnly),
 		Serial:              vergeio.ChangedString(planData.Serial, stateData.Serial),
@@ -367,7 +400,11 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 	data.Description = types.StringValue(vergeio.StringOr(diskAPIResp.Description, ""))
 	data.Interface = types.StringValue(vergeio.StringOr(diskAPIResp.Interface, ""))
 	data.DiskSize = types.Float64Value(math.Round(float64(vergeio.Int64Or(diskAPIResp.DiskSize, 0))/(1024*1024*1024)*100) / 100)
-	data.PreferredTier = types.StringValue(vergeio.StringOr(diskAPIResp.PreferredTier, ""))
+	tier, err := preferredTierFromAPI(vergeio.StringOr(diskAPIResp.PreferredTier, ""))
+	if err != nil {
+		return err
+	}
+	data.PreferredTier = tier
 	data.Enabled = types.BoolValue(vergeio.BoolOr(diskAPIResp.Enabled, false))
 	data.ReadOnly = types.BoolValue(vergeio.BoolOr(diskAPIResp.ReadOnly, false))
 	data.Serial = types.StringValue(vergeio.StringOr(diskAPIResp.Serial, ""))
@@ -534,7 +571,7 @@ func diskNeedsUpdate(plan, state *diskResourceModel) bool {
 		vergeio.ChangedString(plan.Description, state.Description) != nil ||
 		vergeio.ChangedString(plan.Interface, state.Interface) != nil ||
 		diskSizeChanged(plan.DiskSize, state.DiskSize) ||
-		vergeio.ChangedString(plan.PreferredTier, state.PreferredTier) != nil ||
+		vergeio.ChangedInt32(plan.PreferredTier, state.PreferredTier) != nil ||
 		vergeio.ChangedBool(plan.Enabled, state.Enabled) != nil ||
 		vergeio.ChangedBool(plan.ReadOnly, state.ReadOnly) != nil ||
 		vergeio.ChangedString(plan.Serial, state.Serial) != nil ||

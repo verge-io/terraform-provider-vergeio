@@ -70,7 +70,7 @@ VergeOS stages some updates on a running network, including DHCP range and addre
 	- `last_state` (**Default/Off**)
 	- `power_on`   **Automatically powers the resource on**
 	- `leave_off`  Leaves the resource in an off state
-- `powerstate` (String) - `"true"` or `"false"`. Default = `"false"`. Read back from the API after create and import. Sets whether the vNET should be powered on after creation.
+- `powerstate` (Boolean) - Whether the vNET is powered on. Read back from the API after create and import.
 - `restart_on_change` (Boolean) - Restart a running network after an update that VergeOS stages with `need_restart`, such as a DHCP range or address change. Default = True. Set to false to keep the network up until a maintenance window.
 - `type` (String) - Default = Internal, Type of vNET to create (Internal/External)
 - `interface_vnet` (Number) - Physical vNET ID to attach an external vNET to, Depends on `type=external`

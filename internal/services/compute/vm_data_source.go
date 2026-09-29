@@ -47,7 +47,7 @@ type VMDriveModel struct {
 	Interface     types.String             `tfsdk:"interface"`
 	Media         types.String             `tfsdk:"media"`
 	Description   types.String             `tfsdk:"description"`
-	PreferredTier types.String             `tfsdk:"preferred_tier"`
+	PreferredTier types.Int32              `tfsdk:"preferred_tier"`
 	MediaSource   *VMDriveMediasourceModel `tfsdk:"media_source"`
 }
 
@@ -62,7 +62,7 @@ type VMNicModel struct {
 	Key        types.Int32  `tfsdk:"key"`
 	Name       types.String `tfsdk:"name"`
 	Interface  types.String `tfsdk:"interface"`
-	Vnet       types.String `tfsdk:"vnet"`
+	Vnet       types.Int32  `tfsdk:"vnet"`
 	Status     types.String `tfsdk:"status"`
 	Ipaddress  types.String `tfsdk:"ipaddress"`
 	MacAddress types.String `tfsdk:"macaddress"`
@@ -154,8 +154,8 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 										MarkdownDescription: "Description",
 										Computed:            true,
 									},
-									"preferred_tier": schema.StringAttribute{
-										MarkdownDescription: "Preferred tier",
+									"preferred_tier": schema.Int32Attribute{
+										MarkdownDescription: "Storage tier (1-5)",
 										Computed:            true,
 									},
 									"media_source": schema.SingleNestedAttribute{
@@ -201,8 +201,8 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 										MarkdownDescription: "Interface",
 										Computed:            true,
 									},
-									"vnet": schema.StringAttribute{
-										MarkdownDescription: "Vnet",
+									"vnet": schema.Int32Attribute{
+										MarkdownDescription: "vNET ID the NIC is attached to",
 										Computed:            true,
 									},
 									"status": schema.StringAttribute{
