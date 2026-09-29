@@ -488,8 +488,17 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 		return nil
 	}
 
-	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; powering off")
-	if err := va.killVM(ctx, planData); err != nil {
+	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; requesting a graceful poweroff")
+	timeout, err := shutdownTimeoutFromPlan(planData)
+	if err != nil {
+		return err
+	}
+	force := false
+	if !planData.ForcePowerOff.IsNull() && !planData.ForcePowerOff.IsUnknown() {
+		force = planData.ForcePowerOff.ValueBool()
+	}
+	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
+	if err := va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force); err != nil {
 		return err
 	}
 	stateData.PowerState = types.BoolValue(false)
@@ -880,6 +889,18 @@ func usePlannedConsolePass(state, plan *VMResourceModel) {
 	state.ConsolePass = plan.ConsolePass
 }
 
+// usePlannedShutdownSettings copies provider-only power settings onto the
+// model readVM refreshes. The API does not return them.
+func usePlannedShutdownSettings(state, plan *VMResourceModel) {
+	state.ForcePowerOff = plan.ForcePowerOff
+	if plan.Timeouts == nil {
+		state.Timeouts = nil
+		return
+	}
+	copied := *plan.Timeouts
+	state.Timeouts = &copied
+}
+
 // applyVM copies an API VM onto the resource model.
 // console_pass is a hidden password and is absent from the response. A known
 // value already on data is kept: the planned value during apply, or prior
@@ -930,6 +951,11 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 	data.NestedVirtualization = types.BoolValue(vm.NestedVirtualization)
 	data.DisableHypervisor = types.BoolValue(vm.DisableHypervisor)
 	data.PowerState = types.BoolValue(vm.PowerState)
+	// force_power_off is not a VergeOS field. Keep an explicit setting and
+	// fill the default when state has never stored one, such as after import.
+	if data.ForcePowerOff.IsNull() || data.ForcePowerOff.IsUnknown() {
+		data.ForcePowerOff = types.BoolValue(false)
+	}
 
 	if vm.CloudInitFiles != nil {
 		for _, file := range vm.CloudInitFiles {

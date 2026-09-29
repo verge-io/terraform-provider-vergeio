@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
@@ -54,43 +55,45 @@ type CloudInitFile struct {
 
 // VMResourceModel describes the resource data model.
 type VMResourceModel struct {
-	Id                    types.String    `tfsdk:"id"`
-	Machine               types.Int32     `tfsdk:"machine"`
-	Name                  types.String    `tfsdk:"name"`
-	Cluster               types.Int32     `tfsdk:"cluster"`
-	Description           types.String    `tfsdk:"description"`
-	Enabled               types.Bool      `tfsdk:"enabled"`
-	MachineType           types.String    `tfsdk:"machine_type"`
-	AllowHotplug          types.Bool      `tfsdk:"allow_hotplug"`
-	DisablePowercycle     types.Bool      `tfsdk:"disable_powercycle"`
-	OnPowerLoss           types.String    `tfsdk:"on_power_loss"`
-	CPUCores              types.Int32     `tfsdk:"cpu_cores"`
-	CPUType               types.String    `tfsdk:"cpu_type"`
-	RAM                   types.Int32     `tfsdk:"ram"`
-	Console               types.String    `tfsdk:"console"`
-	Display               types.String    `tfsdk:"display"`
-	Video                 types.String    `tfsdk:"video"`
-	Sound                 types.String    `tfsdk:"sound"`
-	OSFamily              types.String    `tfsdk:"os_family"`
-	OSDescription         types.String    `tfsdk:"os_description"`
-	RTCBase               types.String    `tfsdk:"rtc_base"`
-	BootOrder             types.String    `tfsdk:"boot_order"`
-	ConsolePassEnabled    types.Bool      `tfsdk:"console_pass_enabled"`
-	ConsolePass           types.String    `tfsdk:"console_pass"`
-	USBTablet             types.Bool      `tfsdk:"usb_tablet"`
-	UEFI                  types.Bool      `tfsdk:"uefi"`
-	SecureBoot            types.Bool      `tfsdk:"secure_boot"`
-	SerialPort            types.Bool      `tfsdk:"serial_port"`
-	BootDelay             types.Int32     `tfsdk:"boot_delay"`
-	PreferredNode         types.Int32     `tfsdk:"preferred_node"`
-	SnapshotProfile       types.Int32     `tfsdk:"snapshot_profile"`
-	CloudInitDataSource   types.String    `tfsdk:"cloudinit_datasource"`
-	HAGroup               types.String    `tfsdk:"ha_group"`
-	CloudInitFiles        []CloudInitFile `tfsdk:"cloudinit_files"`
-	PowerState            types.Bool      `tfsdk:"powerstate"`
-	GuestAgent            types.Bool      `tfsdk:"guest_agent"`
-	Advanced              types.String    `tfsdk:"advanced"`
-	WaitForGuestAgentInfo types.Int32     `tfsdk:"wait_for_guest_agent_info"`
+	Id                    types.String     `tfsdk:"id"`
+	Machine               types.Int32      `tfsdk:"machine"`
+	Name                  types.String     `tfsdk:"name"`
+	Cluster               types.Int32      `tfsdk:"cluster"`
+	Description           types.String     `tfsdk:"description"`
+	Enabled               types.Bool       `tfsdk:"enabled"`
+	MachineType           types.String     `tfsdk:"machine_type"`
+	AllowHotplug          types.Bool       `tfsdk:"allow_hotplug"`
+	DisablePowercycle     types.Bool       `tfsdk:"disable_powercycle"`
+	OnPowerLoss           types.String     `tfsdk:"on_power_loss"`
+	CPUCores              types.Int32      `tfsdk:"cpu_cores"`
+	CPUType               types.String     `tfsdk:"cpu_type"`
+	RAM                   types.Int32      `tfsdk:"ram"`
+	Console               types.String     `tfsdk:"console"`
+	Display               types.String     `tfsdk:"display"`
+	Video                 types.String     `tfsdk:"video"`
+	Sound                 types.String     `tfsdk:"sound"`
+	OSFamily              types.String     `tfsdk:"os_family"`
+	OSDescription         types.String     `tfsdk:"os_description"`
+	RTCBase               types.String     `tfsdk:"rtc_base"`
+	BootOrder             types.String     `tfsdk:"boot_order"`
+	ConsolePassEnabled    types.Bool       `tfsdk:"console_pass_enabled"`
+	ConsolePass           types.String     `tfsdk:"console_pass"`
+	USBTablet             types.Bool       `tfsdk:"usb_tablet"`
+	UEFI                  types.Bool       `tfsdk:"uefi"`
+	SecureBoot            types.Bool       `tfsdk:"secure_boot"`
+	SerialPort            types.Bool       `tfsdk:"serial_port"`
+	BootDelay             types.Int32      `tfsdk:"boot_delay"`
+	PreferredNode         types.Int32      `tfsdk:"preferred_node"`
+	SnapshotProfile       types.Int32      `tfsdk:"snapshot_profile"`
+	CloudInitDataSource   types.String     `tfsdk:"cloudinit_datasource"`
+	HAGroup               types.String     `tfsdk:"ha_group"`
+	CloudInitFiles        []CloudInitFile  `tfsdk:"cloudinit_files"`
+	PowerState            types.Bool       `tfsdk:"powerstate"`
+	ForcePowerOff         types.Bool       `tfsdk:"force_power_off"`
+	Timeouts              *vmTimeoutsModel `tfsdk:"timeouts"`
+	GuestAgent            types.Bool       `tfsdk:"guest_agent"`
+	Advanced              types.String     `tfsdk:"advanced"`
+	WaitForGuestAgentInfo types.Int32      `tfsdk:"wait_for_guest_agent_info"`
 	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
 	Disks                 []*diskResourceModel   `tfsdk:"vergeio_drive"`
 	NICs                  []*nicResourceModel    `tfsdk:"vergeio_nic"`
@@ -313,7 +316,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Power state of the vm",
+				MarkdownDescription: "Whether the VM is powered on. On update, false sends one ACPI poweroff and waits until the guest stops. It does not hard-kill the VM. If the guest is still running when timeouts.update elapses (default 2 minutes), apply fails unless force_power_off is true. Omit this attribute to leave the current power unchanged.",
 				Optional:            true,
 				Computed:            true,
 				// Keep the prior value when configuration omits powerstate.
@@ -321,6 +324,12 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.UseStateForUnknown(),
 				},
+			},
+			"force_power_off": schema.BoolAttribute{
+				MarkdownDescription: "Kill the VM if a graceful ACPI poweroff does not stop it before the update timeout. Defaults to false. Guests without ACPI support need this set to true.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
 			},
 			"advanced": schema.StringAttribute{
 				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
@@ -358,6 +367,25 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 		},
 		// Nested blocks for NICs
 		Blocks: map[string]schema.Block{
+			"timeouts": schema.SingleNestedBlock{
+				MarkdownDescription: "How long to wait for a VM power change.",
+				Attributes: map[string]schema.Attribute{
+					"update": schema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "How long to wait for a graceful ACPI poweroff when powerstate changes to false. A duration such as \"90s\" or \"2m\". Defaults to 2m when unset.",
+						Validators: []validator.String{
+							durationValidator{},
+						},
+					},
+					"delete": schema.StringAttribute{
+						Optional:            true,
+						MarkdownDescription: "How long destroy waits for a graceful shutdown. Destroy still sends kill and does not use this value yet.",
+						Validators: []validator.String{
+							durationValidator{},
+						},
+					},
+				},
+			},
 			"vergeio_nic": schema.ListNestedBlock{
 				MarkdownDescription: "NICs for the VM. A NIC added while the VM is running is hotplugged and brought up. A NIC added in the same apply that powers the VM on is created before power-on. If hotplug is refused, apply fails and the VM must be power cycled before the guest sees the NIC.",
 				NestedObject: schema.NestedBlockObject{
@@ -1264,6 +1292,9 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// the previous password in place would fail the apply consistency check
 	// whenever the configuration changes it.
 	usePlannedConsolePass(&stateData, &planData)
+	// force_power_off and timeouts are provider settings. The API read does
+	// not return them, so the planned values have to be copied onto state.
+	usePlannedShutdownSettings(&stateData, &planData)
 
 	// Read the VM from the API to get all the data.
 	if readError := r.vmApi.readVM(ctx, &stateData); readError != nil {
