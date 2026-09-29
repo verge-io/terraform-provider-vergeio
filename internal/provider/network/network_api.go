@@ -303,7 +303,7 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 	}
 
 	// Note: Using legacy HTTP client for actions until SDK adds network actions support
-	req, err := nc.client.Post("api/v4/vnet_actions", bytes.NewBuffer(bytedata))
+	req, err := nc.client.Post(ctx, "api/v4/vnet_actions", bytes.NewBuffer(bytedata))
 	if err != nil {
 		return err
 	}

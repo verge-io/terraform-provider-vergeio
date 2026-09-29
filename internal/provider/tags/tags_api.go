@@ -183,7 +183,7 @@ func (ta *TagsApi) checkEndpointAvailability(ctx context.Context, endpoint strin
 		Limit: "1", // Minimal response
 	}
 
-	apiResp, err := ta.client.Get(endpoint, options)
+	apiResp, err := ta.client.Get(ctx, endpoint, options)
 
 	// If we get an error from the client, check if it's endpoint-related
 	if err != nil {

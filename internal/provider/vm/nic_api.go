@@ -120,7 +120,7 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 	}
 
 	// Call the API and check the response
-	apiResp, err := nc.client.Post(NICEndpoint, encodedBuffer)
+	apiResp, err := nc.client.Post(ctx, NICEndpoint, encodedBuffer)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 
 	// After creating the nic, assign an IP to it.
 	if data.AssignIPAddress.ValueBool() {
-		if ipError := nc.assignIP(data); ipError != nil {
+		if ipError := nc.assignIP(ctx, data); ipError != nil {
 			return errors.New("Error assigning an IP to the nic: " + ipError.Error())
 		}
 	} else {
@@ -159,10 +159,10 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 }
 
 // Assign an IP to the NIC in the API.
-func (nc *NICApi) assignIP(data *nicResourceModel) error {
+func (nc *NICApi) assignIP(ctx context.Context, data *nicResourceModel) error {
 
-	tflog.Debug(context.Background(), fmt.Sprintf("Assigning an IP to the nic %v", data.Id.ValueString()))
-	tflog.Debug(context.Background(), fmt.Sprintf("MAC of the nic %v", data.MAC.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("Assigning an IP to the nic %v", data.Id.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("MAC of the nic %v", data.MAC.ValueString()))
 
 	apiData := nicIPAPIResourceModel{
 		VNET: data.VNET.ValueInt32(),
@@ -177,7 +177,7 @@ func (nc *NICApi) assignIP(data *nicResourceModel) error {
 	}
 
 	// Call the API and check the response
-	apiResp, err := nc.client.Post(IPEndpoint, encodedBuffer)
+	apiResp, err := nc.client.Post(ctx, IPEndpoint, encodedBuffer)
 	if err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func (nc *NICApi) updateNIC(ctx context.Context, planData *nicResourceModel, sta
 	}
 
 	// Call the API and check the response
-	apiResp, err := nc.client.Put(fmt.Sprintf("%s/%s",
+	apiResp, err := nc.client.Put(ctx, fmt.Sprintf("%s/%s",
 		NICEndpoint,
 		url.PathEscape(stateData.Id.ValueString()),
 	), encodedBuffer)
@@ -245,7 +245,7 @@ func (nc *NICApi) readNIC(ctx context.Context, data *nicResourceModel) error {
 
 	// Call the Get API with the nic id and get the fields we need
 	// most fields are not returned by default
-	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := nc.client.Get(ctx, fmt.Sprintf("%s/%s",
 		NICEndpoint,
 		url.PathEscape(data.Id.ValueString()),
 	), &vergeio.Options{Fields: "machine,name,description,interface,driver,model,vendor,port,enabled,vnet,macaddress,asset"})
@@ -401,7 +401,7 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 	}
 
 	// Call the API
-	_, apiErr := na.client.Delete(NICEndpoint + "/" + data.Id.ValueString())
+	_, apiErr := na.client.Delete(ctx, NICEndpoint+"/"+data.Id.ValueString())
 
 	if apiErr != nil {
 		return errors.New("Error deleting the NIC: " + apiErr.Error())
@@ -512,7 +512,7 @@ func (na *NICApi) checkNICPowerState(ctx context.Context, key string, powerState
 	tflog.Debug(ctx, fmt.Sprintf("Checking the power state of the NIC %v", key))
 
 	// Call the API to get the NIC status
-	apiResp, err := na.client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := na.client.Get(ctx, fmt.Sprintf("%s/%s",
 		NICEndpoint,
 		url.PathEscape(key)),
 		&vergeio.Options{
@@ -672,7 +672,7 @@ func (va *VMApi) hotplugNIC(ctx context.Context, nicId string, vmId types.String
 	}
 
 	// Send the kill action request to the vnet_actions endpoint
-	req, err := va.client.Post(VMActionEndpoint, bytes.NewBuffer(bytedata))
+	req, err := va.client.Post(ctx, VMActionEndpoint, bytes.NewBuffer(bytedata))
 	if err != nil {
 		return err
 	}

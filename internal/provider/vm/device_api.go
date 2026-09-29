@@ -176,7 +176,7 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Post(DeviceEndpoint, encodedBuffer)
+	apiResp, err := da.client.Post(ctx, DeviceEndpoint, encodedBuffer)
 	if err != nil {
 		return err
 	}
@@ -285,7 +285,7 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Put(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Put(ctx, fmt.Sprintf("%s/%s",
 		DeviceEndpoint,
 		url.PathEscape(stateData.Key.ValueString()),
 	), encodedBuffer)
@@ -355,7 +355,7 @@ func (da *DeviceApi) readDevice(ctx context.Context, data *deviceResourceModel) 
 
 	// Call the Get API with the device id and get the fields we need
 	// most fields are not returned by default
-	apiResp, err := da.client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Get(ctx, fmt.Sprintf("%s/%s",
 		DeviceEndpoint,
 		url.PathEscape(data.Key.ValueString()),
 	), &vergeio.Options{Fields: "machine,type,machine_type,name,description,enabled,resource_group,status"})
@@ -400,7 +400,7 @@ func (da *DeviceApi) deleteDevice(ctx context.Context, data *deviceResourceModel
 	tflog.Debug(ctx, "Deleting the device")
 
 	// Call the Get API with the user id and Proceed with user deletion
-	_, err := da.client.Delete(fmt.Sprintf("%s/%s",
+	_, err := da.client.Delete(ctx, fmt.Sprintf("%s/%s",
 		DeviceEndpoint,
 		url.PathEscape(data.Key.ValueString())))
 
@@ -544,7 +544,7 @@ func (da *DeviceApi) updateUSBSettings(ctx context.Context, data *deviceResource
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Put(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Put(ctx, fmt.Sprintf("%s/%s",
 		DeviceUSBSettingsEndpoint,
 		url.PathEscape(fmt.Sprintf("%d", key.ValueInt32())),
 	), encodedBuffer)
@@ -567,7 +567,7 @@ func (da *DeviceApi) readUSBSettings(ctx context.Context, data *deviceResourceMo
 	tflog.Debug(ctx, "Reading USB settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
-	apiResp, err := da.client.Get(DeviceUSBSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
+	apiResp, err := da.client.Get(ctx, DeviceUSBSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
 	if err != nil {
 		return err
 	}
@@ -615,7 +615,7 @@ func (da *DeviceApi) updateTPMSettings(ctx context.Context, data *deviceResource
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Put(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Put(ctx, fmt.Sprintf("%s/%s",
 		DeviceTPMSettingsEndpoint,
 		url.PathEscape(fmt.Sprintf("%d", key.ValueInt32())),
 	), encodedBuffer)
@@ -638,7 +638,7 @@ func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceMo
 	tflog.Debug(ctx, "Reading TPM settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
-	apiResp, err := da.client.Get(DeviceTPMSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
+	apiResp, err := da.client.Get(ctx, DeviceTPMSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
 	if err != nil {
 		return err
 	}
@@ -691,7 +691,7 @@ func (da *DeviceApi) updateNvidiaVGPUSettings(ctx context.Context, data *deviceR
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Put(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Put(ctx, fmt.Sprintf("%s/%s",
 		DeviceNvidiaVGPUSettingsEndpoint,
 		url.PathEscape(fmt.Sprintf("%d", key.ValueInt32())),
 	), encodedBuffer)
@@ -714,7 +714,7 @@ func (da *DeviceApi) readNvidiaVGPUSettings(ctx context.Context, data *deviceRes
 	tflog.Debug(ctx, "Reading Nvidia VGPU settings for device: "+data.Name.ValueString())
 
 	// Call the API and check the response
-	apiResp, err := da.client.Get(DeviceNvidiaVGPUSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
+	apiResp, err := da.client.Get(ctx, DeviceNvidiaVGPUSettingsEndpoint, &vergeio.Options{Fields: "most", Filter: fmt.Sprintf("machine_device eq %s", data.Key.ValueString())})
 	if err != nil {
 		return err
 	}

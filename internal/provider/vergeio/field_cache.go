@@ -74,7 +74,7 @@ func (fc *FieldCache) GetFieldValues(ctx context.Context, endpoint, fieldName st
 func (fc *FieldCache) fetchFromAPI(ctx context.Context, endpoint, fieldName string) ([]string, error) {
 	// Call the $table endpoint to get schema
 	tableEndpoint := endpoint + "/$table"
-	apiResp, err := fc.client.Get(tableEndpoint, nil)
+	apiResp, err := fc.client.Get(ctx, tableEndpoint, nil)
 	if err != nil {
 		tflog.Error(ctx, fmt.Sprintf("Failed to fetch %s values from %s: %v", fieldName, tableEndpoint, err))
 		return nil, fmt.Errorf("failed to fetch %s values from API: %w", fieldName, err)

@@ -89,13 +89,14 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Configuration values are now available.
 	// if data.Endpoint.IsNull() { /* ... */ }
 
-	// Example client configuration for data sources and resources
-	client := &vergeio.Client{
-		Username: data.Username.ValueString(),
-		Password: data.Password.ValueString(),
-		Host:     data.Host.ValueString(),
-		Insecure: data.Insecure.ValueBool(),
-	}
+	// Build the HTTP client once here. NewClient applies the timeout and
+	// connection settings. Do does not create a client on first use.
+	client := vergeio.NewClient(
+		data.Host.ValueString(),
+		data.Username.ValueString(),
+		data.Password.ValueString(),
+		data.Insecure.ValueBool(),
+	)
 
 	// Initialize field cache for session-based caching
 	client.FieldCache = vergeio.NewFieldCache(client)
