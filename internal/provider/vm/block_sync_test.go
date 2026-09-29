@@ -174,6 +174,165 @@ func TestPairNICsNameFallbackWhenIDMissing(t *testing.T) {
 	}
 }
 
+func TestDiskNeedsUpdateTreatsUnknownAndNullAsUnchanged(t *testing.T) {
+	state := &diskResourceModel{
+		Key:                 types.StringValue("48"),
+		Machine:             types.Int32Value(68),
+		Name:                types.StringValue("data2"),
+		Description:         types.StringValue("data"),
+		Interface:           types.StringValue("ide"),
+		DiskSize:            types.Float64Value(1),
+		PreferredTier:       types.StringValue("4"),
+		Enabled:             types.BoolValue(true),
+		ReadOnly:            types.BoolValue(false),
+		Serial:              types.StringValue("abc"),
+		Asset:               types.StringValue("48"),
+		OrderId:             types.Int32Value(1),
+		PreserveDriveFormat: types.BoolValue(true),
+	}
+	// An unrelated VM update leaves Optional+Computed drive fields unknown.
+	// ValueString/ValueBool/ValueInt32 would read those as "", false, or 0.
+	unknown := &diskResourceModel{
+		Key:                 state.Key,
+		Name:                state.Name,
+		Interface:           state.Interface,
+		DiskSize:            state.DiskSize,
+		Description:         types.StringUnknown(),
+		PreferredTier:       types.StringUnknown(),
+		Enabled:             types.BoolUnknown(),
+		ReadOnly:            types.BoolUnknown(),
+		Serial:              types.StringUnknown(),
+		Asset:               types.StringUnknown(),
+		OrderId:             types.Int32Unknown(),
+		PreserveDriveFormat: types.BoolUnknown(),
+		Machine:             types.Int32Unknown(),
+	}
+	if diskNeedsUpdate(unknown, state) {
+		t.Fatal("unknown plan fields were treated as a drive change")
+	}
+
+	allUnknown := &diskResourceModel{
+		Key:                 state.Key,
+		Name:                types.StringUnknown(),
+		Description:         types.StringUnknown(),
+		Interface:           types.StringUnknown(),
+		DiskSize:            types.Float64Unknown(),
+		PreferredTier:       types.StringUnknown(),
+		Enabled:             types.BoolUnknown(),
+		ReadOnly:            types.BoolUnknown(),
+		Serial:              types.StringUnknown(),
+		Asset:               types.StringUnknown(),
+		OrderId:             types.Int32Unknown(),
+		PreserveDriveFormat: types.BoolUnknown(),
+	}
+	if diskNeedsUpdate(allUnknown, state) {
+		t.Fatal("a plan with only unknown attributes was treated as a drive change")
+	}
+
+	nulls := &diskResourceModel{
+		Key:                 state.Key,
+		Name:                state.Name,
+		Description:         types.StringNull(),
+		Interface:           types.StringNull(),
+		DiskSize:            types.Float64Null(),
+		PreferredTier:       types.StringNull(),
+		Enabled:             types.BoolNull(),
+		ReadOnly:            types.BoolNull(),
+		Serial:              types.StringNull(),
+		Asset:               types.StringNull(),
+		OrderId:             types.Int32Null(),
+		PreserveDriveFormat: types.BoolNull(),
+	}
+	if diskNeedsUpdate(nulls, state) {
+		t.Fatal("null plan fields were treated as a drive change")
+	}
+
+	cleared := &diskResourceModel{
+		Key:         state.Key,
+		Name:        state.Name,
+		Interface:   state.Interface,
+		DiskSize:    state.DiskSize,
+		Description: types.StringValue(""),
+		Enabled:     types.BoolValue(false),
+		OrderId:     types.Int32Value(0),
+	}
+	if !diskNeedsUpdate(cleared, state) {
+		t.Fatal("explicit empty, false, and zero were not treated as a drive change")
+	}
+
+	if diskSizeChanged(types.Float64Value(1), types.Float64Value(1)) {
+		t.Fatal("equal disksize was treated as a resize")
+	}
+	if diskSizeChanged(types.Float64Unknown(), types.Float64Value(1)) || diskSizeChanged(types.Float64Null(), types.Float64Value(1)) {
+		t.Fatal("unset disksize was treated as a resize")
+	}
+	if !diskSizeChanged(types.Float64Value(2), types.Float64Value(1)) {
+		t.Fatal("a real disksize change was ignored")
+	}
+}
+
+func TestNICNeedsUpdateTreatsUnknownAndNullAsUnchanged(t *testing.T) {
+	state := &nicResourceModel{
+		Id:          types.StringValue("98"),
+		Name:        types.StringValue("nic0"),
+		Description: types.StringValue("lan"),
+		Interface:   types.StringValue("virtio"),
+		Driver:      types.StringValue("virtio"),
+		Model:       types.StringValue("virtio"),
+		Vendor:      types.StringValue("redhat"),
+		Port:        types.Int32Value(1),
+		Enabled:     types.BoolValue(true),
+		VNET:        types.Int32Value(6),
+		MAC:         types.StringValue("52:54:00:11:22:33"),
+		Asset:       types.StringValue("nic-asset"),
+	}
+	unknown := &nicResourceModel{
+		Id:          state.Id,
+		Name:        types.StringUnknown(),
+		Description: types.StringUnknown(),
+		Interface:   types.StringUnknown(),
+		Driver:      types.StringUnknown(),
+		Model:       types.StringUnknown(),
+		Vendor:      types.StringUnknown(),
+		Port:        types.Int32Unknown(),
+		Enabled:     types.BoolUnknown(),
+		VNET:        types.Int32Unknown(),
+		MAC:         types.StringUnknown(),
+		Asset:       types.StringUnknown(),
+	}
+	if nicNeedsUpdate(unknown, state) {
+		t.Fatal("unknown plan fields were treated as a NIC change")
+	}
+
+	nulls := &nicResourceModel{
+		Id:          state.Id,
+		Name:        types.StringNull(),
+		Description: types.StringNull(),
+		Interface:   types.StringNull(),
+		Enabled:     types.BoolNull(),
+		VNET:        types.Int32Null(),
+		MAC:         types.StringNull(),
+		Port:        types.Int32Null(),
+	}
+	if nicNeedsUpdate(nulls, state) {
+		t.Fatal("null plan fields were treated as a NIC change")
+	}
+
+	cleared := &nicResourceModel{
+		Id:          state.Id,
+		Name:        state.Name,
+		Interface:   state.Interface,
+		VNET:        state.VNET,
+		MAC:         state.MAC,
+		Description: types.StringValue(""),
+		Enabled:     types.BoolValue(false),
+		Port:        types.Int32Value(0),
+	}
+	if !nicNeedsUpdate(cleared, state) {
+		t.Fatal("explicit empty, false, and zero were not treated as a NIC change")
+	}
+}
+
 func TestDiskUpdatePayloadRename(t *testing.T) {
 	plan := &diskResourceModel{Name: types.StringValue("data2")}
 	state := &diskResourceModel{Name: types.StringValue("data"), Key: types.StringValue("46")}

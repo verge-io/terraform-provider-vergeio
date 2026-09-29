@@ -153,12 +153,26 @@ func diskSizeBytes(size types.Float64) *int64 {
 	return &sizeBytes
 }
 
+// diskSizeEpsilonGB is the smallest size difference, in GB, treated as a resize.
+// Reads round to 0.01 GB, so a smaller gap is float noise, not a new size.
+const diskSizeEpsilonGB = 0.001
+
+// diskSizeChanged reports a planned size the update API should apply.
+// A null or unknown plan size is unchanged. The platform rejects any
+// disksize on an online IDE drive, including the size the drive already has.
+func diskSizeChanged(plan, state types.Float64) bool {
+	if plan.IsNull() || plan.IsUnknown() {
+		return false
+	}
+	if state.IsNull() || state.IsUnknown() {
+		return true
+	}
+	return math.Abs(plan.ValueFloat64()-state.ValueFloat64()) > diskSizeEpsilonGB
+}
+
 // changedDiskSizeBytes returns disksize when the planned size differs.
 func changedDiskSizeBytes(plan, state types.Float64) *int64 {
-	if plan.IsNull() || plan.IsUnknown() {
-		return nil
-	}
-	if !state.IsNull() && !state.IsUnknown() && plan.ValueFloat64() == state.ValueFloat64() {
+	if !diskSizeChanged(plan, state) {
 		return nil
 	}
 	return diskSizeBytes(plan)
@@ -532,18 +546,22 @@ func diskNeedsRecreate(plan, state *diskResourceModel) bool {
 
 // diskNeedsUpdate reports a difference the drive update API can PUT.
 // Name is included so a rename is an update of the existing key.
+// A null or unknown plan value is not a change. Optional+Computed attributes
+// are unknown on an update that does not set them, and ValueString, ValueBool,
+// and ValueInt32 read those as "", false, or 0. Comparing the zero values
+// would PUT every drive on any VM change.
 func diskNeedsUpdate(plan, state *diskResourceModel) bool {
-	return plan.Name.ValueString() != state.Name.ValueString() ||
-		plan.Description.ValueString() != state.Description.ValueString() ||
-		plan.Interface.ValueString() != state.Interface.ValueString() ||
-		math.Abs(plan.DiskSize.ValueFloat64()-state.DiskSize.ValueFloat64()) > 0.001 ||
-		plan.PreferredTier.ValueString() != state.PreferredTier.ValueString() ||
-		plan.Enabled.ValueBool() != state.Enabled.ValueBool() ||
-		plan.ReadOnly.ValueBool() != state.ReadOnly.ValueBool() ||
-		plan.Serial.ValueString() != state.Serial.ValueString() ||
-		plan.Asset.ValueString() != state.Asset.ValueString() ||
-		plan.OrderId.ValueInt32() != state.OrderId.ValueInt32() ||
-		plan.PreserveDriveFormat.ValueBool() != state.PreserveDriveFormat.ValueBool()
+	return vergeio.ChangedString(plan.Name, state.Name) != nil ||
+		vergeio.ChangedString(plan.Description, state.Description) != nil ||
+		vergeio.ChangedString(plan.Interface, state.Interface) != nil ||
+		diskSizeChanged(plan.DiskSize, state.DiskSize) ||
+		vergeio.ChangedString(plan.PreferredTier, state.PreferredTier) != nil ||
+		vergeio.ChangedBool(plan.Enabled, state.Enabled) != nil ||
+		vergeio.ChangedBool(plan.ReadOnly, state.ReadOnly) != nil ||
+		vergeio.ChangedString(plan.Serial, state.Serial) != nil ||
+		vergeio.ChangedString(plan.Asset, state.Asset) != nil ||
+		vergeio.ChangedInt32(plan.OrderId, state.OrderId) != nil ||
+		vergeio.ChangedBool(plan.PreserveDriveFormat, state.PreserveDriveFormat) != nil
 }
 
 // Update, Create, Delete the Disk in the API.
