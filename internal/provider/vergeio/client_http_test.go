@@ -82,11 +82,27 @@ func TestDoHonorsContextCancel(t *testing.T) {
 }
 
 func TestDoRequiresContext(t *testing.T) {
-	client := NewClient("https://example.invalid", "user", "pass", true)
-	_, err := client.Get(nil, "api/v4/version", nil)
-	if err == nil || !strings.Contains(err.Error(), "missing request context") {
-		t.Fatalf("error = %v, want a missing context error", err)
-	}
+	t.Run("canceled", func(t *testing.T) {
+		client := NewClient("https://example.invalid", "user", "pass", true)
+		client.httpClient.Timeout = 200 * time.Millisecond
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err := client.Get(ctx, "api/v4/version", nil)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("nil", func(t *testing.T) {
+		client := NewClient("https://example.invalid", "user", "pass", true)
+		// Not a nil literal: staticcheck SA1012 forbids passing nil as a Context.
+		var ctx context.Context
+		_, err := client.Get(ctx, "api/v4/version", nil)
+		if err == nil || !strings.Contains(err.Error(), "missing request context") {
+			t.Fatalf("error = %v, want a missing context error", err)
+		}
+	})
 }
 
 func TestDoDoesNotLazilyCreateHTTPClient(t *testing.T) {
@@ -104,7 +120,7 @@ func TestDoDoesNotLazilyCreateHTTPClient(t *testing.T) {
 	for i := 0; i < workers; i++ {
 		go func() {
 			defer wg.Done()
-			_, err := client.Get(context.Background(), "api/v4/version", nil)
+			_, err := client.Get(context.TODO(), "api/v4/version", nil)
 			errCh <- err
 		}()
 	}
