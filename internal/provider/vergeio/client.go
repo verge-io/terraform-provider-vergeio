@@ -5,8 +5,10 @@ package vergeio
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +19,12 @@ import (
 // All the Verge.IO endpoints.
 const (
 	APIEndpoint = "api/v4"
+
+	// DefaultTimeout is the overall limit for one HTTP request, including
+	// connection, redirects, and reading the body. Five seconds is too short
+	// for clones and imports. A stalled response still has to give up so
+	// Terraform does not wait forever.
+	DefaultTimeout = 60 * time.Second
 )
 
 // IClient interface.
@@ -64,9 +72,18 @@ func NewClient(host string,
 				IdleConnTimeout:     90 * time.Second,
 				TLSClientConfig:     &tls.Config{InsecureSkipVerify: insecure},
 			},
-			Timeout: time.Duration(5) * time.Second,
+			Timeout: DefaultTimeout,
 		},
 	}
+}
+
+// Timeout reports the overall HTTP client timeout. It is zero when the
+// client was not built with NewClient.
+func (c *Client) Timeout() time.Duration {
+	if c == nil || c.httpClient == nil {
+		return 0
+	}
+	return c.httpClient.Timeout
 }
 
 // Options represents an option from the Verge.IO api.
@@ -96,8 +113,17 @@ func (e Error) Error() string {
 	return fmt.Sprintf("[ API Error %d ] @ %s - %s", e.StatusCode, e.Endpoint, e.VergeError)
 }
 
-// Do Will just call the Verge.IO api but also add auth to it and some extra headers.
-func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, params *Options) (*http.Response, error) {
+// Do calls the Verge.IO API, adding auth and extra headers.
+// ctx is the Terraform request context. Canceling it (Ctrl+C / SIGINT)
+// cancels the HTTP request. The client itself is created in NewClient;
+// Do does not build one.
+func (c *Client) Do(ctx context.Context, method string, endpoint string, payload *bytes.Buffer, params *Options) (*http.Response, error) {
+	if c == nil || c.httpClient == nil {
+		return nil, errors.New("HTTP client is not initialized")
+	}
+	if ctx == nil {
+		return nil, errors.New("missing request context")
+	}
 
 	absoluteendpoint := c.serverURL(endpoint)
 	log.Printf("[DEBUG] Sending %s request to %s", method, absoluteendpoint)
@@ -110,7 +136,7 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 		bodyreader = payload
 	}
 
-	req, err := http.NewRequest(method, absoluteendpoint, bodyreader)
+	req, err := http.NewRequestWithContext(ctx, method, absoluteendpoint, bodyreader)
 	if err != nil {
 		return nil, err
 	}
@@ -143,14 +169,6 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 		req.Header.Add("Content-Type", "application/json")
 	}
 	req.Close = true
-
-	// Create a custom HTTP client with the insecure option if needed
-	if c.httpClient == nil {
-		tr := &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: c.Insecure},
-		}
-		c.httpClient = &http.Client{Transport: tr}
-	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -187,22 +205,21 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 }
 
 // Get is just a helper method to do but with a GET verb.
-func (c *Client) Get(endpoint string, params *Options) (*http.Response, error) {
-
-	return c.Do("GET", endpoint, nil, params)
+func (c *Client) Get(ctx context.Context, endpoint string, params *Options) (*http.Response, error) {
+	return c.Do(ctx, "GET", endpoint, nil, params)
 }
 
 // Post is just a helper method to do but with a POST verb.
-func (c *Client) Post(endpoint string, jsonpayload *bytes.Buffer) (*http.Response, error) {
-	return c.Do("POST", endpoint, jsonpayload, nil)
+func (c *Client) Post(ctx context.Context, endpoint string, jsonpayload *bytes.Buffer) (*http.Response, error) {
+	return c.Do(ctx, "POST", endpoint, jsonpayload, nil)
 }
 
 // Put is just a helper method to do but with a PUT verb.
-func (c *Client) Put(endpoint string, jsonpayload *bytes.Buffer) (*http.Response, error) {
-	return c.Do("PUT", endpoint, jsonpayload, nil)
+func (c *Client) Put(ctx context.Context, endpoint string, jsonpayload *bytes.Buffer) (*http.Response, error) {
+	return c.Do(ctx, "PUT", endpoint, jsonpayload, nil)
 }
 
 // Delete is just a helper to Do but with a DELETE verb.
-func (c *Client) Delete(endpoint string) (*http.Response, error) {
-	return c.Do("DELETE", endpoint, nil, nil)
+func (c *Client) Delete(ctx context.Context, endpoint string) (*http.Response, error) {
+	return c.Do(ctx, "DELETE", endpoint, nil, nil)
 }

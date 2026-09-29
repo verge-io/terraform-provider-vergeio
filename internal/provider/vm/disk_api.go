@@ -232,7 +232,7 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Post(DiskEndpoint, encodedBuffer)
+	apiResp, err := da.client.Post(ctx, DiskEndpoint, encodedBuffer)
 	if err != nil {
 		return err
 	}
@@ -313,7 +313,7 @@ func (da *DiskApi) updateDisk(ctx context.Context, planData *diskResourceModel, 
 	}
 
 	// Call the API and check the response
-	apiResp, err := da.client.Put(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Put(ctx, fmt.Sprintf("%s/%s",
 		DiskEndpoint,
 		url.PathEscape(stateData.Key.ValueString()),
 	), encodedBuffer)
@@ -348,7 +348,7 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 
 	// Call the Get API with the disk id and get the fields we need
 	// most fields are not returned by default
-	apiResp, err := da.client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Get(ctx, fmt.Sprintf("%s/%s",
 		DiskEndpoint,
 		url.PathEscape(data.Key.ValueString()),
 	), &vergeio.Options{Fields: "machine,name,disksize,interface,media,description,enabled,serial,media_source,preferred_tier,readonly,preserve_drive_format,asset,orderid"})
@@ -496,7 +496,7 @@ func (da *DiskApi) deleteDisk(ctx context.Context, data *diskResourceModel, vmId
 	}
 
 	// Call the Get API with the user id and Proceed with user deletion
-	_, err := da.client.Delete(fmt.Sprintf("%s/%s",
+	_, err := da.client.Delete(ctx, fmt.Sprintf("%s/%s",
 		DiskEndpoint,
 		url.PathEscape(data.Key.ValueString())))
 
@@ -632,7 +632,7 @@ func (da *DiskApi) checkDiskPowerState(ctx context.Context, key string, powerSta
 	tflog.Debug(ctx, fmt.Sprintf("Checking the power state of the disk %v", key))
 
 	// Send the kill action request to the vnet_actions endpoint
-	apiResp, err := da.client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := da.client.Get(ctx, fmt.Sprintf("%s/%s",
 		DiskEndpoint,
 		url.PathEscape(key)),
 		&vergeio.Options{
@@ -728,7 +728,7 @@ func (va *VMApi) hotplugDrive(ctx context.Context, driveId string, vmId types.St
 	}
 
 	// Send the kill action request to the vnet_actions endpoint
-	req, err := va.client.Post(VMActionEndpoint, bytes.NewBuffer(bytedata))
+	req, err := va.client.Post(ctx, VMActionEndpoint, bytes.NewBuffer(bytedata))
 	if err != nil {
 		return err
 	}

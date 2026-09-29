@@ -5,6 +5,7 @@ package vergeio
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log"
 	"net/http"
@@ -63,7 +64,7 @@ func TestPostCreateMasksSecretsInDebugLog(t *testing.T) {
 
 	logs := captureStdLog(t)
 	client := NewClient(server.URL, "api-user", providerPass, true)
-	resp, err := client.Post("api/v4/users", bytes.NewBufferString(payload))
+	resp, err := client.Post(context.Background(), "api/v4/users", bytes.NewBufferString(payload))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestPostCreateMasksSecretsInErrorBody(t *testing.T) {
 
 	logs := captureStdLog(t)
 	client := NewClient(server.URL, "api-user", "provider-login", true)
-	_, err := client.Post("api/v4/users", bytes.NewBufferString(`{"name":"ada","password":"`+userPassword+`"}`))
+	_, err := client.Post(context.Background(), "api/v4/users", bytes.NewBufferString(`{"name":"ada","password":"`+userPassword+`"}`))
 	if err == nil {
 		t.Fatal("expected API error")
 	}

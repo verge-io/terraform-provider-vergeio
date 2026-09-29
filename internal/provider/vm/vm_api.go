@@ -525,7 +525,7 @@ func readVMPowerState(ctx context.Context, client *vergeio.Client, vmId types.St
 		return false, errors.New("missing VM id")
 	}
 
-	apiResp, err := client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := client.Get(ctx, fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(vmId.ValueString()),
 	), &vergeio.Options{Fields: "machine#status#running as powerstate"})
@@ -857,7 +857,7 @@ func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel, 
 	tflog.Debug(ctx, "Reading the guest agent data")
 
 	// Now read the guest agent info
-	apiResp, err := va.client.Get(fmt.Sprintf("%s/%s",
+	apiResp, err := va.client.Get(ctx, fmt.Sprintf("%s/%s",
 		VMEndpoint,
 		url.PathEscape(data.Id.ValueString()),
 	), &vergeio.Options{Fields: "dashboard"})
