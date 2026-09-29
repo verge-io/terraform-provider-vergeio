@@ -47,7 +47,7 @@ resource "vergeio_vm" "web-server" {
     description    = "CD ROM"
     media          = "cdrom"
     media_source   = 33
-    interface      = "sata"
+    interface      = "ahci"
   }
   # Cloned Drive
     vergeio_drive {
