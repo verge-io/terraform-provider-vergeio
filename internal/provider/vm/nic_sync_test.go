@@ -121,3 +121,53 @@ func TestSyncNICsUnrelatedVMUpdateDoesNotRewrite(t *testing.T) {
 		t.Fatalf("untouched NIC state changed: id %q mac %q enabled %v", state[0].Id.ValueString(), state[0].MAC.ValueString(), state[0].Enabled.ValueBool())
 	}
 }
+
+func TestSyncNICsCreatesFirstWhenStateIsEmpty(t *testing.T) {
+	const mac = "52:54:00:aa:bb:cc"
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_nics":
+			if !strings.Contains(string(body), `"name":"lan"`) {
+				t.Errorf("POST body = %s, want name lan", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":"98"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"machine":1,"name":"lan","interface":"virtio","enabled":true,"vnet":6,"macaddress":"` + mac + `"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.Path, body)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &NICApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	plan := []*nicResourceModel{{
+		Name:      types.StringValue("lan"),
+		Interface: types.StringValue("virtio"),
+		Enabled:   types.BoolValue(true),
+		VNET:      types.Int32Value(6),
+	}}
+	var state []*nicResourceModel
+
+	if err := api.syncNICs(t.Context(), &plan, &state, types.Int32Value(1), types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 1 || state[0].Id.ValueString() != "98" || state[0].Name.ValueString() != "lan" {
+		t.Fatalf("state after first NIC = %#v", state)
+	}
+	if len(calls) < 2 || calls[0] != "POST /api/v4/machine_nics" || calls[1] != "GET /api/v4/machine_nics/98" {
+		t.Fatalf("calls = %#v, want POST then GET of the new NIC", calls)
+	}
+}

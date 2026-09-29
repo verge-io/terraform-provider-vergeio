@@ -282,3 +282,56 @@ func TestSyncDisksNameFallbackUpdatesExistingKey(t *testing.T) {
 		t.Fatalf("key = %q, want 11", state[0].Key.ValueString())
 	}
 }
+
+func TestSyncDisksDeletesLastWhenPlanIsEmpty(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"version":"26.0.0"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/46":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"powerstate":"offline"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/machine_drives/46":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &DiskApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	var plan []*diskResourceModel
+	state := []*diskResourceModel{{
+		Key:       types.StringValue("46"),
+		Name:      types.StringValue("os"),
+		Interface: types.StringValue("virtio"),
+		Media:     types.StringValue("disk"),
+	}}
+
+	if err := api.syncDisks(t.Context(), &plan, &state, types.Int32Value(1), types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 0 {
+		t.Fatalf("state after removing the last drive = %d disks, want 0", len(state))
+	}
+	var driveCalls []string
+	for _, call := range calls {
+		if call != "GET /version.json" {
+			driveCalls = append(driveCalls, call)
+		}
+	}
+	if len(driveCalls) != 2 || driveCalls[0] != "GET /api/v4/machine_drives/46" || driveCalls[1] != "DELETE /api/v4/machine_drives/46" {
+		t.Fatalf("calls = %#v, want power-state GET then DELETE of drive 46", driveCalls)
+	}
+}
