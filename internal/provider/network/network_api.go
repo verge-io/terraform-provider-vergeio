@@ -47,28 +47,29 @@ func (nc *NetworkApi) Name() string {
 	return nc.name
 }
 
-// NetworkAPIResourceModel describes the data model received from the Verge API.
+// NetworkAPIResourceModel is the network create/update body.
+// Pointer fields keep false, 0, and "" in the JSON. A nil pointer is omitted.
 type NetworkAPIResourceModel struct {
-	Id                   string  `json:"id,omitempty"`
-	Name                 string  `json:"name,omitempty"`
-	Enabled              bool    `json:"enabled,omitempty"`
-	Default_Gateway      int32   `json:"vnet_default_gateway,omitempty"`
-	IPaddress            string  `json:"ipaddress,omitempty"`
-	Network              string  `json:"network,omitempty"`
-	DHCP                 bool    `json:"dhcp_enabled,omitempty"`
-	Dynamic_DHCP         bool    `json:"dhcp_dynamic,omitempty"`
-	DHCP_Sequential      bool    `json:"dhcp_sequential,omitempty"`
-	DynamicIP_Start      string  `json:"dhcp_start,omitempty"`
-	DynamicIP_Stop       string  `json:"dhcp_stop,omitempty"`
-	On_Power_Loss        string  `json:"on_power_loss,omitempty"`
-	PowerState           string  `json:"powerstate,omitempty"`
-	Type                 string  `json:"type,omitempty"`
-	VLAN_TAG             int32   `json:"layer2_id,omitempty"`
-	MTU                  int32   `json:"mtu,omitempty"`
-	Interface_Vnet       int32   `json:"interface_vnet,omitempty"`
-	IPaddress_Type       string  `json:"ipaddress_type,omitempty"`
-	Layer2_Type          string  `json:"layer2_type,omitempty"`
-	Enable_Bonding       bool    `json:"enable_bonding,omitempty"`
+	Id                   *string `json:"id,omitempty"`
+	Name                 *string `json:"name,omitempty"`
+	Enabled              *bool   `json:"enabled,omitempty"`
+	Default_Gateway      *int32  `json:"vnet_default_gateway,omitempty"`
+	IPaddress            *string `json:"ipaddress,omitempty"`
+	Network              *string `json:"network,omitempty"`
+	DHCP                 *bool   `json:"dhcp_enabled,omitempty"`
+	Dynamic_DHCP         *bool   `json:"dhcp_dynamic,omitempty"`
+	DHCP_Sequential      *bool   `json:"dhcp_sequential,omitempty"`
+	DynamicIP_Start      *string `json:"dhcp_start,omitempty"`
+	DynamicIP_Stop       *string `json:"dhcp_stop,omitempty"`
+	On_Power_Loss        *string `json:"on_power_loss,omitempty"`
+	PowerState           *string `json:"powerstate,omitempty"`
+	Type                 *string `json:"type,omitempty"`
+	VLAN_TAG             *int32  `json:"layer2_id,omitempty"`
+	MTU                  *int32  `json:"mtu,omitempty"`
+	Interface_Vnet       *int32  `json:"interface_vnet,omitempty"`
+	IPaddress_Type       *string `json:"ipaddress_type,omitempty"`
+	Layer2_Type          *string `json:"layer2_type,omitempty"`
+	Enable_Bonding       *bool   `json:"enable_bonding,omitempty"`
 	Bond_Interfaces_Args []int32 `json:"bond_interfaces_args,omitempty"`
 }
 
@@ -121,80 +122,74 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 }
 
 // networkCreateRequest builds the SDK create body.
-// A bool that is null or unknown is left unset. An explicit false is sent,
-// because encoding it as a plain bool with omitempty drops the field and the
-// API keeps its default.
+// A value that is null or unknown is left unset. An explicit false, 0, or ""
+// is sent.
 func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateRequest, error) {
 	apiData := NetworkAPIResourceModel{
-		Name:            data.Name.ValueString(),
-		Default_Gateway: data.Default_Gateway.ValueInt32(),
-		IPaddress:       data.IPaddress.ValueString(),
-		Network:         data.Network.ValueString(),
-		DynamicIP_Start: data.DynamicIP_Start.ValueString(),
-		DynamicIP_Stop:  data.DynamicIP_Stop.ValueString(),
-		On_Power_Loss:   data.On_Power_Loss.ValueString(),
-		PowerState:      data.PowerState.ValueString(),
-		Type:            data.Type.ValueString(),
-		VLAN_TAG:        data.VLAN_TAG.ValueInt32(),
-		MTU:             data.MTU.ValueInt32(),
-		Interface_Vnet:  data.Interface_Vnet.ValueInt32(),
-		IPaddress_Type:  data.IPaddress_Type.ValueString(),
-		Layer2_Type:     data.Layer2_Type.ValueString(),
+		Name:            vergeio.KnownString(data.Name),
+		Enabled:         vergeio.KnownBool(data.Enabled),
+		Default_Gateway: vergeio.KnownInt32(data.Default_Gateway),
+		IPaddress:       vergeio.KnownString(data.IPaddress),
+		Network:         vergeio.KnownString(data.Network),
+		DHCP:            vergeio.KnownBool(data.DHCP),
+		Dynamic_DHCP:    vergeio.KnownBool(data.Dynamic_DHCP),
+		DHCP_Sequential: vergeio.KnownBool(data.DHCP_Sequential),
+		DynamicIP_Start: vergeio.KnownString(data.DynamicIP_Start),
+		DynamicIP_Stop:  vergeio.KnownString(data.DynamicIP_Stop),
+		On_Power_Loss:   vergeio.KnownString(data.On_Power_Loss),
+		PowerState:      vergeio.KnownString(data.PowerState),
+		Type:            vergeio.KnownString(data.Type),
+		VLAN_TAG:        vergeio.KnownInt32(data.VLAN_TAG),
+		MTU:             vergeio.KnownInt32(data.MTU),
+		Interface_Vnet:  vergeio.KnownInt32(data.Interface_Vnet),
+		IPaddress_Type:  vergeio.KnownString(data.IPaddress_Type),
+		Layer2_Type:     vergeio.KnownString(data.Layer2_Type),
+		Enable_Bonding:  vergeio.KnownBool(data.Enable_Bonding),
 	}
 
-	for _, arg := range data.Bond_Interfaces_Args.Elements() {
-		apiData.Bond_Interfaces_Args = append(apiData.Bond_Interfaces_Args, arg.(types.Int32).ValueInt32())
+	if !data.Bond_Interfaces_Args.IsNull() && !data.Bond_Interfaces_Args.IsUnknown() {
+		for _, arg := range data.Bond_Interfaces_Args.Elements() {
+			apiData.Bond_Interfaces_Args = append(apiData.Bond_Interfaces_Args, arg.(types.Int32).ValueInt32())
+		}
 	}
 
-	req, err := decodeNetworkRequest[vergeos.NetworkCreateRequest](apiData)
-	if err != nil {
-		return nil, err
-	}
-	assignKnownBool(&req.Enabled, data.Enabled)
-	assignKnownBool(&req.DHCPEnabled, data.DHCP)
-	assignKnownBool(&req.DHCPDynamic, data.Dynamic_DHCP)
-	assignKnownBool(&req.DHCPSequential, data.DHCP_Sequential)
-	assignKnownBool(&req.EnableBonding, data.Enable_Bonding)
-	return req, nil
+	return decodeNetworkRequest[vergeos.NetworkCreateRequest](apiData)
 }
 
-// networkUpdateRequest builds the SDK update body.
+// networkUpdateRequest builds the SDK update body from attributes that differ
+// from state. Type is readonly and is not sent.
 func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkResourceModel) (*vergeos.NetworkUpdateRequest, int, error) {
-	var defaultGateway int32
-	if !planData.Default_Gateway.IsNull() {
-		defaultGateway = planData.Default_Gateway.ValueInt32()
-	}
 	apiData := NetworkAPIResourceModel{
-		Id:              vergeio.StringToNil(planData.Id, stateData.Id, ""),
-		Name:            vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Default_Gateway: defaultGateway,
-		IPaddress:       vergeio.StringToNil(planData.IPaddress, stateData.IPaddress, ""),
-		Network:         vergeio.StringToNil(planData.Network, stateData.Network, ""),
-		DynamicIP_Start: vergeio.StringToNil(planData.DynamicIP_Start, stateData.DynamicIP_Start, ""),
-		DynamicIP_Stop:  vergeio.StringToNil(planData.DynamicIP_Stop, stateData.DynamicIP_Stop, ""),
-		On_Power_Loss:   vergeio.StringToNil(planData.On_Power_Loss, stateData.On_Power_Loss, ""),
-		PowerState:      vergeio.StringToNil(planData.PowerState, stateData.PowerState, ""),
-		// Type is readonly and cannot be updated.
-		VLAN_TAG:       vergeio.Int32ToNil(planData.VLAN_TAG, stateData.VLAN_TAG, 0),
-		MTU:            vergeio.Int32ToNil(planData.MTU, stateData.MTU, 0),
-		Interface_Vnet: vergeio.Int32ToNil(planData.Interface_Vnet, stateData.Interface_Vnet, 0),
-		IPaddress_Type: vergeio.StringToNil(planData.IPaddress_Type, stateData.IPaddress_Type, ""),
-		Layer2_Type:    vergeio.StringToNil(planData.Layer2_Type, stateData.Layer2_Type, ""),
+		Name:            vergeio.ChangedString(planData.Name, stateData.Name),
+		Enabled:         vergeio.ChangedBool(planData.Enabled, stateData.Enabled),
+		Default_Gateway: vergeio.ChangedInt32(planData.Default_Gateway, stateData.Default_Gateway),
+		IPaddress:       vergeio.ChangedString(planData.IPaddress, stateData.IPaddress),
+		Network:         vergeio.ChangedString(planData.Network, stateData.Network),
+		DHCP:            vergeio.ChangedBool(planData.DHCP, stateData.DHCP),
+		Dynamic_DHCP:    vergeio.ChangedBool(planData.Dynamic_DHCP, stateData.Dynamic_DHCP),
+		DHCP_Sequential: vergeio.ChangedBool(planData.DHCP_Sequential, stateData.DHCP_Sequential),
+		DynamicIP_Start: vergeio.ChangedString(planData.DynamicIP_Start, stateData.DynamicIP_Start),
+		DynamicIP_Stop:  vergeio.ChangedString(planData.DynamicIP_Stop, stateData.DynamicIP_Stop),
+		On_Power_Loss:   vergeio.ChangedString(planData.On_Power_Loss, stateData.On_Power_Loss),
+		PowerState:      vergeio.ChangedString(planData.PowerState, stateData.PowerState),
+		VLAN_TAG:        vergeio.ChangedInt32(planData.VLAN_TAG, stateData.VLAN_TAG),
+		MTU:             vergeio.ChangedInt32(planData.MTU, stateData.MTU),
+		Interface_Vnet:  vergeio.ChangedInt32(planData.Interface_Vnet, stateData.Interface_Vnet),
+		IPaddress_Type:  vergeio.ChangedString(planData.IPaddress_Type, stateData.IPaddress_Type),
+		Layer2_Type:     vergeio.ChangedString(planData.Layer2_Type, stateData.Layer2_Type),
+		Enable_Bonding:  vergeio.ChangedBool(planData.Enable_Bonding, stateData.Enable_Bonding),
 	}
 
 	req, err := decodeNetworkRequest[vergeos.NetworkUpdateRequest](apiData)
 	if err != nil {
 		return nil, 0, err
 	}
-	// Known false must be a non-nil pointer. The intermediate model uses bool
-	// with omitempty, which would otherwise delete the field.
-	assignKnownBool(&req.Enabled, planData.Enabled)
-	assignKnownBool(&req.DHCPEnabled, planData.DHCP)
-	assignKnownBool(&req.DHCPDynamic, planData.Dynamic_DHCP)
-	assignKnownBool(&req.DHCPSequential, planData.DHCP_Sequential)
-	assignKnownBool(&req.EnableBonding, planData.Enable_Bonding)
 
-	networkIDInt, err := strconv.Atoi(apiData.Id)
+	id := planData.Id
+	if id.IsNull() || id.IsUnknown() || id.ValueString() == "" {
+		id = stateData.Id
+	}
+	networkIDInt, err := strconv.Atoi(id.ValueString())
 	if err != nil {
 		return nil, 0, fmt.Errorf("invalid network ID format: %v", err)
 	}
@@ -211,16 +206,6 @@ func decodeNetworkRequest[T any](apiData NetworkAPIResourceModel) (*T, error) {
 		return nil, fmt.Errorf("failed to convert API data: %v", err)
 	}
 	return &req, nil
-}
-
-// assignKnownBool sets dst when v is set in the plan, including false.
-// Null and unknown values are left alone.
-func assignKnownBool(dst **bool, v types.Bool) {
-	if v.IsNull() || v.IsUnknown() {
-		return
-	}
-	b := v.ValueBool()
-	*dst = &b
 }
 
 // deleteNetwork deletes a network.
@@ -286,12 +271,7 @@ func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkR
 		powerState = "stopped"
 	}
 
-	networkAPIResp := NetworkAPIResourceModel{
-		PowerState: powerState,
-	}
-
-	// save into the resource model
-	data.PowerState = types.StringValue(networkAPIResp.PowerState)
+	data.PowerState = types.StringValue(powerState)
 
 	tflog.Debug(ctx, "Network status read from API is: "+data.PowerState.ValueString())
 
@@ -353,50 +333,25 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
 
-	// Convert SDK response to API model for field mapping consistency
-	// Note: Some fields may not be available in SDK yet, using defaults where needed
-	networkAPIResp := NetworkAPIResourceModel{
-		Name:            network.Name,
-		Enabled:         network.Enabled,
-		IPaddress:       network.IPAddress,
-		Network:         network.Network,
-		DHCP:            network.DHCPEnabled,
-		Dynamic_DHCP:    network.DHCPDynamic,
-		DHCP_Sequential: network.DHCPSequential,
-		DynamicIP_Start: network.DHCPStart,
-		DynamicIP_Stop:  network.DHCPStop,
-		On_Power_Loss:   network.OnPowerLoss,
-		Type:            network.Type,
-		// Fields not yet available in SDK - using defaults
-		VLAN_TAG:       0,    // TODO: Update when SDK exposes Layer2ID/VLANID
-		MTU:            1500, // Default MTU
-		Interface_Vnet: 0,
-		IPaddress_Type: "static", // Default
-		Layer2_Type:    "vlan",   // Default
-		Enable_Bonding: false,    // Default
-	}
-
-	// Bond interfaces not yet available in SDK
-	// TODO: Update when SDK exposes BondInterfacesArgs
-
-	// save into the resource model
-	data.Name = types.StringValue(networkAPIResp.Name)
-	data.Enabled = types.BoolValue(networkAPIResp.Enabled)
-	data.IPaddress = types.StringValue(networkAPIResp.IPaddress)
-	data.Network = types.StringValue(networkAPIResp.Network)
-	data.DHCP = types.BoolValue(networkAPIResp.DHCP)
-	data.Dynamic_DHCP = types.BoolValue(networkAPIResp.Dynamic_DHCP)
-	data.DHCP_Sequential = types.BoolValue(networkAPIResp.DHCP_Sequential)
-	data.DynamicIP_Start = types.StringValue(networkAPIResp.DynamicIP_Start)
-	data.DynamicIP_Stop = types.StringValue(networkAPIResp.DynamicIP_Stop)
-	data.On_Power_Loss = types.StringValue(networkAPIResp.On_Power_Loss)
-	data.Type = types.StringValue(networkAPIResp.Type)
-	data.VLAN_TAG = types.Int32Value(networkAPIResp.VLAN_TAG)
-	data.MTU = types.Int32Value(networkAPIResp.MTU)
-	data.Interface_Vnet = types.Int32Value(networkAPIResp.Interface_Vnet)
-	data.IPaddress_Type = types.StringValue(networkAPIResp.IPaddress_Type)
-	data.Layer2_Type = types.StringValue(networkAPIResp.Layer2_Type)
-	data.Enable_Bonding = types.BoolValue(networkAPIResp.Enable_Bonding)
+	// Some fields are still stored as the historical defaults. Mapping them
+	// from the SDK response is separate from sending explicit zero values.
+	data.Name = types.StringValue(network.Name)
+	data.Enabled = types.BoolValue(network.Enabled)
+	data.IPaddress = types.StringValue(network.IPAddress)
+	data.Network = types.StringValue(network.Network)
+	data.DHCP = types.BoolValue(network.DHCPEnabled)
+	data.Dynamic_DHCP = types.BoolValue(network.DHCPDynamic)
+	data.DHCP_Sequential = types.BoolValue(network.DHCPSequential)
+	data.DynamicIP_Start = types.StringValue(network.DHCPStart)
+	data.DynamicIP_Stop = types.StringValue(network.DHCPStop)
+	data.On_Power_Loss = types.StringValue(network.OnPowerLoss)
+	data.Type = types.StringValue(network.Type)
+	data.VLAN_TAG = types.Int32Value(0)
+	data.MTU = types.Int32Value(1500)
+	data.Interface_Vnet = types.Int32Value(0)
+	data.IPaddress_Type = types.StringValue("static")
+	data.Layer2_Type = types.StringValue("vlan")
+	data.Enable_Bonding = types.BoolValue(false)
 	// Same source VMs use: the API powerstate bool. The network schema stores
 	// it as the strings "true" and "false", which is what configurations set.
 	data.PowerState = types.StringValue(networkPowerStateString(network.PowerState))

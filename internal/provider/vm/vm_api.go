@@ -216,46 +216,49 @@ type VMAPIGuestAgentIPAddresses struct {
 	IPAddress     string `json:"ip-address,omitempty"`
 }
 
-// VMAPIResourceModel describes the data model received from the Verge API.
+// VMAPIResourceModel is the VM create/update body.
+// Scalar fields are pointers so false, 0, and "" are encoded. A nil pointer
+// is omitted. Power state is left unset here; CreateVM and UpdateVM apply
+// it with the power actions so an omitted powerstate does not stop a VM.
 type VMAPIResourceModel struct {
-	Id                   string             `json:"id,omitempty"`
-	Machine              int32              `json:"machine,omitempty"`
-	Name                 string             `json:"name,omitempty"`
-	Cluster              int32              `json:"cluster,omitempty"`
-	Description          string             `json:"description,omitempty"`
-	Enabled              bool               `json:"enabled,omitempty"`
-	MachineType          string             `json:"machine_type,omitempty"`
-	AllowHotplug         bool               `json:"allow_hotplug,omitempty"`
-	DisablePowercycle    bool               `json:"disable_powercycle,omitempty"`
-	OnPowerLoss          string             `json:"on_power_loss,omitempty"`
-	CPUCores             int32              `json:"cpu_cores,omitempty"`
-	CPUType              string             `json:"cpu_type,omitempty"`
-	RAM                  int32              `json:"ram,omitempty"`
-	Console              string             `json:"console,omitempty"`
-	Display              string             `json:"display,omitempty"`
-	Video                string             `json:"video,omitempty"`
-	Sound                string             `json:"sound,omitempty"`
-	OSFamily             string             `json:"os_family,omitempty"`
-	OSDescription        string             `json:"os_description,omitempty"`
-	RTCBase              string             `json:"rtc_base,omitempty"`
-	BootOrder            string             `json:"boot_order,omitempty"`
-	ConsolePassEnabled   bool               `json:"console_pass_enabled,omitempty"`
-	ConsolePass          string             `json:"console_pass,omitempty"`
-	USBTablet            bool               `json:"usb_tablet,omitempty"`
-	UEFI                 bool               `json:"uefi,omitempty"`
-	SecureBoot           bool               `json:"secure_boot,omitempty"`
-	SerialPort           bool               `json:"serial_port,omitempty"`
-	BootDelay            int32              `json:"boot_delay,omitempty"`
-	PreferredNode        int32              `json:"preferred_node,omitempty"`
-	SnapshotProfile      int32              `json:"snapshot_profile,omitempty"`
-	CloudInitDataSource  string             `json:"cloudinit_datasource,omitempty"`
+	Id                   *string            `json:"id,omitempty"`
+	Machine              *int32             `json:"machine,omitempty"`
+	Name                 *string            `json:"name,omitempty"`
+	Cluster              *int32             `json:"cluster,omitempty"`
+	Description          *string            `json:"description,omitempty"`
+	Enabled              *bool              `json:"enabled,omitempty"`
+	MachineType          *string            `json:"machine_type,omitempty"`
+	AllowHotplug         *bool              `json:"allow_hotplug,omitempty"`
+	DisablePowercycle    *bool              `json:"disable_powercycle,omitempty"`
+	OnPowerLoss          *string            `json:"on_power_loss,omitempty"`
+	CPUCores             *int32             `json:"cpu_cores,omitempty"`
+	CPUType              *string            `json:"cpu_type,omitempty"`
+	RAM                  *int32             `json:"ram,omitempty"`
+	Console              *string            `json:"console,omitempty"`
+	Display              *string            `json:"display,omitempty"`
+	Video                *string            `json:"video,omitempty"`
+	Sound                *string            `json:"sound,omitempty"`
+	OSFamily             *string            `json:"os_family,omitempty"`
+	OSDescription        *string            `json:"os_description,omitempty"`
+	RTCBase              *string            `json:"rtc_base,omitempty"`
+	BootOrder            *string            `json:"boot_order,omitempty"`
+	ConsolePassEnabled   *bool              `json:"console_pass_enabled,omitempty"`
+	ConsolePass          *string            `json:"console_pass,omitempty"`
+	USBTablet            *bool              `json:"usb_tablet,omitempty"`
+	UEFI                 *bool              `json:"uefi,omitempty"`
+	SecureBoot           *bool              `json:"secure_boot,omitempty"`
+	SerialPort           *bool              `json:"serial_port,omitempty"`
+	BootDelay            *int32             `json:"boot_delay,omitempty"`
+	PreferredNode        *int32             `json:"preferred_node,omitempty"`
+	SnapshotProfile      *int32             `json:"snapshot_profile,omitempty"`
+	CloudInitDataSource  *string            `json:"cloudinit_datasource,omitempty"`
 	CloudInitFiles       []CloudInitFileAPI `json:"cloudinit_files,omitempty"`
-	PowerState           bool               `json:"powerstate,omitempty"`
-	GuestAgent           bool               `json:"guest_agent,omitempty"`
-	HAGroup              string             `json:"ha_group,omitempty"`
-	Advanced             string             `json:"advanced,omitempty"`
-	NestedVirtualization bool               `json:"nested_virtualization"`
-	DisableHypervisor    bool               `json:"disable_hypervisor"`
+	PowerState           *bool              `json:"powerstate,omitempty"`
+	GuestAgent           *bool              `json:"guest_agent,omitempty"`
+	HAGroup              *string            `json:"ha_group,omitempty"`
+	Advanced             *string            `json:"advanced,omitempty"`
+	NestedVirtualization *bool              `json:"nested_virtualization,omitempty"`
+	DisableHypervisor    *bool              `json:"disable_hypervisor,omitempty"`
 }
 
 // VNetAction represents the structure for virtual vm action requests.
@@ -284,52 +287,46 @@ type VMPowerState struct {
 	PowerState *bool `json:"powerstate,omitempty"`
 }
 
-// Create a new VM.
-func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
-
-	// Prepare the API data packet from the plan
+// vmCreateModel is the provider create body. Nil pointers are omitted.
+// An explicit false, 0, or "" is set.
+func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 	apiData := VMAPIResourceModel{
-		Machine:             data.Machine.ValueInt32(),
-		Name:                data.Name.ValueString(),
-		Cluster:             data.Cluster.ValueInt32(),
-		Description:         data.Description.ValueString(),
-		Enabled:             data.Enabled.ValueBool(),
-		MachineType:         data.MachineType.ValueString(),
-		AllowHotplug:        data.AllowHotplug.ValueBool(),
-		DisablePowercycle:   data.DisablePowercycle.ValueBool(),
-		OnPowerLoss:         data.OnPowerLoss.ValueString(),
-		CPUCores:            data.CPUCores.ValueInt32(),
-		CPUType:             data.CPUType.ValueString(),
-		RAM:                 data.RAM.ValueInt32(),
-		Console:             data.Console.ValueString(),
-		Display:             data.Display.ValueString(),
-		Video:               data.Video.ValueString(),
-		Sound:               data.Sound.ValueString(),
-		OSFamily:            data.OSFamily.ValueString(),
-		OSDescription:       data.OSDescription.ValueString(),
-		RTCBase:             data.RTCBase.ValueString(),
-		BootOrder:           data.BootOrder.ValueString(),
-		ConsolePassEnabled:  data.ConsolePassEnabled.ValueBool(),
-		ConsolePass:         data.ConsolePass.ValueString(),
-		USBTablet:           data.USBTablet.ValueBool(),
-		UEFI:                data.UEFI.ValueBool(),
-		SecureBoot:          data.SecureBoot.ValueBool(),
-		SerialPort:          data.SerialPort.ValueBool(),
-		BootDelay:           data.BootDelay.ValueInt32(),
-		PreferredNode:       data.PreferredNode.ValueInt32(),
-		SnapshotProfile:     data.SnapshotProfile.ValueInt32(),
-		CloudInitDataSource: data.CloudInitDataSource.ValueString(),
-		// We are not sending the power state here, as it will be handled separately.
-		// When send the power state via the create API, it doesn't start the devices like drives and nics.
-		// PowerState:           false,
-		GuestAgent:           data.GuestAgent.ValueBool(),
-		HAGroup:              data.HAGroup.ValueString(),
-		Advanced:             data.Advanced.ValueString(),
-		NestedVirtualization: data.NestedVirtualization.ValueBool(),
-		DisableHypervisor:    data.DisableHypervisor.ValueBool(),
+		Name:                 vergeio.KnownString(data.Name),
+		Cluster:              vergeio.KnownInt32(data.Cluster),
+		Description:          vergeio.KnownString(data.Description),
+		Enabled:              vergeio.KnownBool(data.Enabled),
+		MachineType:          vergeio.KnownString(data.MachineType),
+		AllowHotplug:         vergeio.KnownBool(data.AllowHotplug),
+		DisablePowercycle:    vergeio.KnownBool(data.DisablePowercycle),
+		OnPowerLoss:          vergeio.KnownString(data.OnPowerLoss),
+		CPUCores:             vergeio.KnownInt32(data.CPUCores),
+		CPUType:              vergeio.KnownString(data.CPUType),
+		RAM:                  vergeio.KnownInt32(data.RAM),
+		Console:              vergeio.KnownString(data.Console),
+		Display:              vergeio.KnownString(data.Display),
+		Video:                vergeio.KnownString(data.Video),
+		Sound:                vergeio.KnownString(data.Sound),
+		OSFamily:             vergeio.KnownString(data.OSFamily),
+		OSDescription:        vergeio.KnownString(data.OSDescription),
+		RTCBase:              vergeio.KnownString(data.RTCBase),
+		BootOrder:            vergeio.KnownString(data.BootOrder),
+		ConsolePassEnabled:   vergeio.KnownBool(data.ConsolePassEnabled),
+		ConsolePass:          vergeio.KnownString(data.ConsolePass),
+		USBTablet:            vergeio.KnownBool(data.USBTablet),
+		UEFI:                 vergeio.KnownBool(data.UEFI),
+		SecureBoot:           vergeio.KnownBool(data.SecureBoot),
+		SerialPort:           vergeio.KnownBool(data.SerialPort),
+		BootDelay:            vergeio.KnownInt32(data.BootDelay),
+		PreferredNode:        vergeio.KnownInt32(data.PreferredNode),
+		SnapshotProfile:      vergeio.KnownInt32(data.SnapshotProfile),
+		CloudInitDataSource:  vergeio.KnownString(data.CloudInitDataSource),
+		GuestAgent:           vergeio.KnownBool(data.GuestAgent),
+		HAGroup:              vergeio.KnownString(data.HAGroup),
+		Advanced:             vergeio.KnownString(data.Advanced),
+		NestedVirtualization: vergeio.KnownBool(data.NestedVirtualization),
+		DisableHypervisor:    vergeio.KnownBool(data.DisableHypervisor),
 	}
 
-	// Add the cloud init files
 	if data.CloudInitFiles != nil {
 		for _, cloudInitFile := range data.CloudInitFiles {
 			apiData.CloudInitFiles = append(apiData.CloudInitFiles, CloudInitFileAPI{
@@ -338,20 +335,98 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 			})
 		}
 	}
+	return apiData
+}
 
-	// Encode the API data
+// vmCreateRequest builds the SDK create body from known plan values.
+// Null and unknown attributes are left unset. An explicit false, 0, or ""
+// is sent. Power state is not part of this body.
+func vmCreateRequest(data *VMResourceModel) (*vergeos.VMCreateRequest, error) {
+	return decodeVMRequest[vergeos.VMCreateRequest](vmCreateModel(data))
+}
+
+// vmUpdateModel is the provider update body. Only attributes that differ
+// from state are set. Power state is applied separately.
+func vmUpdateModel(planData *VMResourceModel, stateData *VMResourceModel) VMAPIResourceModel {
+	// Machine is read only and is not sent.
+	return VMAPIResourceModel{
+		Name:                 vergeio.ChangedString(planData.Name, stateData.Name),
+		Cluster:              vergeio.ChangedInt32(planData.Cluster, stateData.Cluster),
+		Description:          vergeio.ChangedString(planData.Description, stateData.Description),
+		Enabled:              vergeio.ChangedBool(planData.Enabled, stateData.Enabled),
+		MachineType:          vergeio.ChangedString(planData.MachineType, stateData.MachineType),
+		AllowHotplug:         vergeio.ChangedBool(planData.AllowHotplug, stateData.AllowHotplug),
+		DisablePowercycle:    vergeio.ChangedBool(planData.DisablePowercycle, stateData.DisablePowercycle),
+		OnPowerLoss:          vergeio.ChangedString(planData.OnPowerLoss, stateData.OnPowerLoss),
+		CPUCores:             vergeio.ChangedInt32(planData.CPUCores, stateData.CPUCores),
+		CPUType:              vergeio.ChangedString(planData.CPUType, stateData.CPUType),
+		RAM:                  vergeio.ChangedInt32(planData.RAM, stateData.RAM),
+		Console:              vergeio.ChangedString(planData.Console, stateData.Console),
+		Display:              vergeio.ChangedString(planData.Display, stateData.Display),
+		Video:                vergeio.ChangedString(planData.Video, stateData.Video),
+		Sound:                vergeio.ChangedString(planData.Sound, stateData.Sound),
+		OSFamily:             vergeio.ChangedString(planData.OSFamily, stateData.OSFamily),
+		OSDescription:        vergeio.ChangedString(planData.OSDescription, stateData.OSDescription),
+		RTCBase:              vergeio.ChangedString(planData.RTCBase, stateData.RTCBase),
+		BootOrder:            vergeio.ChangedString(planData.BootOrder, stateData.BootOrder),
+		ConsolePassEnabled:   vergeio.ChangedBool(planData.ConsolePassEnabled, stateData.ConsolePassEnabled),
+		ConsolePass:          vergeio.ChangedString(planData.ConsolePass, stateData.ConsolePass),
+		USBTablet:            vergeio.ChangedBool(planData.USBTablet, stateData.USBTablet),
+		UEFI:                 vergeio.ChangedBool(planData.UEFI, stateData.UEFI),
+		SecureBoot:           vergeio.ChangedBool(planData.SecureBoot, stateData.SecureBoot),
+		SerialPort:           vergeio.ChangedBool(planData.SerialPort, stateData.SerialPort),
+		BootDelay:            vergeio.ChangedInt32(planData.BootDelay, stateData.BootDelay),
+		PreferredNode:        vergeio.ChangedInt32(planData.PreferredNode, stateData.PreferredNode),
+		SnapshotProfile:      vergeio.ChangedInt32(planData.SnapshotProfile, stateData.SnapshotProfile),
+		CloudInitDataSource:  vergeio.ChangedString(planData.CloudInitDataSource, stateData.CloudInitDataSource),
+		GuestAgent:           vergeio.ChangedBool(planData.GuestAgent, stateData.GuestAgent),
+		HAGroup:              vergeio.ChangedString(planData.HAGroup, stateData.HAGroup),
+		Advanced:             vergeio.ChangedString(planData.Advanced, stateData.Advanced),
+		NestedVirtualization: vergeio.ChangedBool(planData.NestedVirtualization, stateData.NestedVirtualization),
+		DisableHypervisor:    vergeio.ChangedBool(planData.DisableHypervisor, stateData.DisableHypervisor),
+	}
+}
+
+// vmUpdateRequest builds the SDK update body from attributes whose planned
+// value differs from state. Power state is applied separately.
+func vmUpdateRequest(planData *VMResourceModel, stateData *VMResourceModel) (*vergeos.VMUpdateRequest, int, error) {
+	req, err := decodeVMRequest[vergeos.VMUpdateRequest](vmUpdateModel(planData, stateData))
+	if err != nil {
+		return nil, 0, err
+	}
+
+	id := planData.Id
+	if id.IsNull() || id.IsUnknown() || id.ValueString() == "" {
+		id = stateData.Id
+	}
+	vmID, err := strconv.Atoi(id.ValueString())
+	if err != nil {
+		return nil, 0, fmt.Errorf("invalid VM ID: %v", err)
+	}
+	return req, vmID, nil
+}
+
+func decodeVMRequest[T any](apiData VMAPIResourceModel) (*T, error) {
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for VM Item")
+		return nil, errors.New("invalid format received for VM Item")
 	}
-
-	// Time to call the SDK API - convert to SDK request
-	var req vergeos.VMCreateRequest
+	var req T
 	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
-		return fmt.Errorf("failed to convert API data: %v", err)
+		return nil, fmt.Errorf("failed to convert API data: %v", err)
+	}
+	return &req, nil
+}
+
+// Create a new VM.
+func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
+
+	req, err := vmCreateRequest(data)
+	if err != nil {
+		return err
 	}
 
-	vm, err := va.sdk.VMs.Create(ctx, &req)
+	vm, err := va.sdk.VMs.Create(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -423,65 +498,12 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 // Update the VM.
 func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
 
-	// Prepare the API data packet from the plan
-	apiData := VMAPIResourceModel{
-		Id: vergeio.StringToNil(planData.Id, stateData.Id, ""),
-		// Machine is read only
-		Name:                 vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Cluster:              vergeio.Int32ToNil(planData.Cluster, stateData.Cluster, 0),
-		Description:          vergeio.StringToNil(planData.Description, stateData.Description, ""),
-		Enabled:              vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
-		MachineType:          vergeio.StringToNil(planData.MachineType, stateData.MachineType, ""),
-		AllowHotplug:         vergeio.BoolToNil(planData.AllowHotplug, stateData.AllowHotplug, false),
-		DisablePowercycle:    vergeio.BoolToNil(planData.DisablePowercycle, stateData.DisablePowercycle, false),
-		OnPowerLoss:          vergeio.StringToNil(planData.OnPowerLoss, stateData.OnPowerLoss, ""),
-		CPUCores:             vergeio.Int32ToNil(planData.CPUCores, stateData.CPUCores, 0),
-		CPUType:              vergeio.StringToNil(planData.CPUType, stateData.CPUType, ""),
-		RAM:                  vergeio.Int32ToNil(planData.RAM, stateData.RAM, 0),
-		Console:              vergeio.StringToNil(planData.Console, stateData.Console, ""),
-		Display:              vergeio.StringToNil(planData.Display, stateData.Display, ""),
-		Video:                vergeio.StringToNil(planData.Video, stateData.Video, ""),
-		Sound:                vergeio.StringToNil(planData.Sound, stateData.Sound, ""),
-		OSFamily:             vergeio.StringToNil(planData.OSFamily, stateData.OSFamily, ""),
-		OSDescription:        vergeio.StringToNil(planData.OSDescription, stateData.OSDescription, ""),
-		RTCBase:              vergeio.StringToNil(planData.RTCBase, stateData.RTCBase, ""),
-		BootOrder:            vergeio.StringToNil(planData.BootOrder, stateData.BootOrder, ""),
-		ConsolePassEnabled:   vergeio.BoolToNil(planData.ConsolePassEnabled, stateData.ConsolePassEnabled, false),
-		ConsolePass:          vergeio.StringToNil(planData.ConsolePass, stateData.ConsolePass, ""),
-		USBTablet:            vergeio.BoolToNil(planData.USBTablet, stateData.USBTablet, false),
-		UEFI:                 vergeio.BoolToNil(planData.UEFI, stateData.UEFI, false),
-		SecureBoot:           vergeio.BoolToNil(planData.SecureBoot, stateData.SecureBoot, false),
-		SerialPort:           vergeio.BoolToNil(planData.SerialPort, stateData.SerialPort, false),
-		BootDelay:            vergeio.Int32ToNil(planData.BootDelay, stateData.BootDelay, 0),
-		PreferredNode:        vergeio.Int32ToNil(planData.PreferredNode, stateData.PreferredNode, 0),
-		SnapshotProfile:      vergeio.Int32ToNil(planData.SnapshotProfile, stateData.SnapshotProfile, 0),
-		CloudInitDataSource:  vergeio.StringToNil(planData.CloudInitDataSource, stateData.CloudInitDataSource, ""),
-		PowerState:           vergeio.BoolToNil(planData.PowerState, stateData.PowerState, false),
-		GuestAgent:           vergeio.BoolToNil(planData.GuestAgent, stateData.GuestAgent, false),
-		HAGroup:              vergeio.StringToNil(planData.HAGroup, stateData.HAGroup, ""),
-		Advanced:             vergeio.StringToNil(planData.Advanced, stateData.Advanced, ""),
-		NestedVirtualization: vergeio.BoolToNil(planData.NestedVirtualization, stateData.NestedVirtualization, false),
-		DisableHypervisor:    vergeio.BoolToNil(planData.DisableHypervisor, stateData.DisableHypervisor, false),
-	}
-
-	// Encode the API data
-	encodedBuffer := new(bytes.Buffer)
-	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return fmt.Errorf("invalid format received for VM Item: %v", err)
-	}
-
-	// Time to call the SDK API - convert to SDK request
-	var req vergeos.VMUpdateRequest
-	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
-		return fmt.Errorf("failed to convert API data: %v", err)
-	}
-
-	vmID, err := strconv.Atoi(apiData.Id)
+	req, vmID, err := vmUpdateRequest(planData, stateData)
 	if err != nil {
-		return fmt.Errorf("invalid VM ID: %v", err)
+		return err
 	}
 
-	_, err = va.sdk.VMs.Update(ctx, vmID, &req)
+	_, err = va.sdk.VMs.Update(ctx, vmID, req)
 	if err != nil {
 		return err
 	}
@@ -675,103 +697,53 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
 
-	// Convert SDK VM to API model for existing field mapping logic
-	vmAPIResp := VMAPIResourceModel{
-		Machine:              int32(vm.Machine),
-		Name:                 vm.Name,
-		Cluster:              int32(vm.Cluster.Int()),
-		Description:          vm.Description,
-		Enabled:              vm.Enabled,
-		MachineType:          vm.MachineType,
-		AllowHotplug:         vm.AllowHotplug,
-		DisablePowercycle:    vm.DisablePowercycle,
-		OnPowerLoss:          vm.OnPowerLoss,
-		CPUCores:             int32(vm.CPUCores),
-		CPUType:              vm.CPUType,
-		RAM:                  int32(vm.RAM),
-		Console:              vm.Console,
-		Display:              vm.Display,
-		Video:                vm.Video,
-		Sound:                vm.Sound,
-		OSFamily:             vm.OSFamily,
-		OSDescription:        vm.OSDescription,
-		RTCBase:              vm.RTCBase,
-		BootOrder:            vm.BootOrder,
-		ConsolePassEnabled:   vm.ConsolePassEnabled,
-		ConsolePass:          vm.ConsolePass,
-		USBTablet:            vm.USBTablet,
-		UEFI:                 vm.UEFI,
-		SecureBoot:           vm.SecureBoot,
-		SerialPort:           vm.SerialPort,
-		BootDelay:            int32(vm.BootDelay),
-		PreferredNode:        int32(vm.PreferredNode.Int()),
-		SnapshotProfile:      int32(vm.SnapshotProfile.Int()),
-		CloudInitDataSource:  vm.CloudInitDataSource,
-		GuestAgent:           vm.GuestAgent,
-		HAGroup:              vm.HAGroup,
-		Advanced:             vm.Advanced,
-		NestedVirtualization: vm.NestedVirtualization,
-		DisableHypervisor:    vm.DisableHypervisor,
-		PowerState:           vm.PowerState,
-	}
-
-	// Convert cloud init files
-	if vm.CloudInitFiles != nil {
-		for _, file := range vm.CloudInitFiles {
-			vmAPIResp.CloudInitFiles = append(vmAPIResp.CloudInitFiles, CloudInitFileAPI{
-				Name:     file.Name,
-				Contents: file.Contents,
-			})
-		}
-	}
-
 	// save into the resource model
-	data.Machine = types.Int32Value(vmAPIResp.Machine)
-	data.Name = types.StringValue(vmAPIResp.Name)
-	data.Cluster = types.Int32Value(vmAPIResp.Cluster)
-	data.Description = types.StringValue(vmAPIResp.Description)
-	data.Enabled = types.BoolValue(vmAPIResp.Enabled)
+	data.Machine = types.Int32Value(int32(vm.Machine))
+	data.Name = types.StringValue(vm.Name)
+	data.Cluster = types.Int32Value(int32(vm.Cluster.Int()))
+	data.Description = types.StringValue(vm.Description)
+	data.Enabled = types.BoolValue(vm.Enabled)
 	// Preserve the configured machine_type if semantically equivalent to API response.
 	// This handles API v26 expanding "q35" to "pc-q35-10.0" and "pc" to "pc-i440fx-10.0".
-	if !machineTypesAreEquivalent(data.MachineType.ValueString(), vmAPIResp.MachineType) {
-		data.MachineType = types.StringValue(vmAPIResp.MachineType)
+	if !machineTypesAreEquivalent(data.MachineType.ValueString(), vm.MachineType) {
+		data.MachineType = types.StringValue(vm.MachineType)
 	}
-	data.AllowHotplug = types.BoolValue(vmAPIResp.AllowHotplug)
-	data.DisablePowercycle = types.BoolValue(vmAPIResp.DisablePowercycle)
-	data.OnPowerLoss = types.StringValue(vmAPIResp.OnPowerLoss)
-	data.CPUCores = types.Int32Value(vmAPIResp.CPUCores)
-	data.CPUType = types.StringValue(vmAPIResp.CPUType)
-	data.RAM = types.Int32Value(vmAPIResp.RAM)
-	data.Console = types.StringValue(vmAPIResp.Console)
-	data.Display = types.StringValue(vmAPIResp.Display)
-	data.Video = types.StringValue(vmAPIResp.Video)
-	data.Sound = types.StringValue(vmAPIResp.Sound)
-	data.OSFamily = types.StringValue(vmAPIResp.OSFamily)
-	data.OSDescription = types.StringValue(vmAPIResp.OSDescription)
-	data.RTCBase = types.StringValue(vmAPIResp.RTCBase)
-	data.BootOrder = types.StringValue(vmAPIResp.BootOrder)
-	data.ConsolePassEnabled = types.BoolValue(vmAPIResp.ConsolePassEnabled)
-	data.ConsolePass = types.StringValue(vmAPIResp.ConsolePass)
-	data.USBTablet = types.BoolValue(vmAPIResp.USBTablet)
-	data.UEFI = types.BoolValue(vmAPIResp.UEFI)
-	data.SecureBoot = types.BoolValue(vmAPIResp.SecureBoot)
-	data.SerialPort = types.BoolValue(vmAPIResp.SerialPort)
-	data.BootDelay = types.Int32Value(vmAPIResp.BootDelay)
-	data.PreferredNode = types.Int32Value(vmAPIResp.PreferredNode)
-	data.SnapshotProfile = types.Int32Value(vmAPIResp.SnapshotProfile)
-	data.CloudInitDataSource = types.StringValue(vmAPIResp.CloudInitDataSource)
-	data.GuestAgent = types.BoolValue(vmAPIResp.GuestAgent)
-	data.HAGroup = types.StringValue(vmAPIResp.HAGroup)
-	data.Advanced = types.StringValue(vmAPIResp.Advanced)
-	data.NestedVirtualization = types.BoolValue(vmAPIResp.NestedVirtualization)
-	data.DisableHypervisor = types.BoolValue(vmAPIResp.DisableHypervisor)
-	data.PowerState = types.BoolValue(vmAPIResp.PowerState)
+	data.AllowHotplug = types.BoolValue(vm.AllowHotplug)
+	data.DisablePowercycle = types.BoolValue(vm.DisablePowercycle)
+	data.OnPowerLoss = types.StringValue(vm.OnPowerLoss)
+	data.CPUCores = types.Int32Value(int32(vm.CPUCores))
+	data.CPUType = types.StringValue(vm.CPUType)
+	data.RAM = types.Int32Value(int32(vm.RAM))
+	data.Console = types.StringValue(vm.Console)
+	data.Display = types.StringValue(vm.Display)
+	data.Video = types.StringValue(vm.Video)
+	data.Sound = types.StringValue(vm.Sound)
+	data.OSFamily = types.StringValue(vm.OSFamily)
+	data.OSDescription = types.StringValue(vm.OSDescription)
+	data.RTCBase = types.StringValue(vm.RTCBase)
+	data.BootOrder = types.StringValue(vm.BootOrder)
+	data.ConsolePassEnabled = types.BoolValue(vm.ConsolePassEnabled)
+	data.ConsolePass = types.StringValue(vm.ConsolePass)
+	data.USBTablet = types.BoolValue(vm.USBTablet)
+	data.UEFI = types.BoolValue(vm.UEFI)
+	data.SecureBoot = types.BoolValue(vm.SecureBoot)
+	data.SerialPort = types.BoolValue(vm.SerialPort)
+	data.BootDelay = types.Int32Value(int32(vm.BootDelay))
+	data.PreferredNode = types.Int32Value(int32(vm.PreferredNode.Int()))
+	data.SnapshotProfile = types.Int32Value(int32(vm.SnapshotProfile.Int()))
+	data.CloudInitDataSource = types.StringValue(vm.CloudInitDataSource)
+	data.GuestAgent = types.BoolValue(vm.GuestAgent)
+	data.HAGroup = types.StringValue(vm.HAGroup)
+	data.Advanced = types.StringValue(vm.Advanced)
+	data.NestedVirtualization = types.BoolValue(vm.NestedVirtualization)
+	data.DisableHypervisor = types.BoolValue(vm.DisableHypervisor)
+	data.PowerState = types.BoolValue(vm.PowerState)
 
-	if vmAPIResp.CloudInitFiles != nil {
-		for _, cloudInitFileAPI := range vmAPIResp.CloudInitFiles {
+	if vm.CloudInitFiles != nil {
+		for _, file := range vm.CloudInitFiles {
 			data.CloudInitFiles = append(data.CloudInitFiles, CloudInitFile{
-				Name:     types.StringValue(cloudInitFileAPI.Name),
-				Contents: types.StringValue(cloudInitFileAPI.Contents),
+				Name:     types.StringValue(file.Name),
+				Contents: types.StringValue(file.Contents),
 			})
 		}
 	}
