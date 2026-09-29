@@ -6,19 +6,13 @@ package provider
 import (
 	"context"
 
-	cloudinitFile "terraform-provider-vergeio/internal/provider/cloudinit_files"
-	"terraform-provider-vergeio/internal/provider/cluster"
-	"terraform-provider-vergeio/internal/provider/groups"
-	"terraform-provider-vergeio/internal/provider/mediasource"
-	"terraform-provider-vergeio/internal/provider/member"
-	"terraform-provider-vergeio/internal/provider/network"
-	"terraform-provider-vergeio/internal/provider/node"
-	resourseGroups "terraform-provider-vergeio/internal/provider/resource_groups"
-	"terraform-provider-vergeio/internal/provider/tags"
-	"terraform-provider-vergeio/internal/provider/user"
-	"terraform-provider-vergeio/internal/provider/vergeio"
-	"terraform-provider-vergeio/internal/provider/version"
-	"terraform-provider-vergeio/internal/provider/vm"
+	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/services/compute"
+	"terraform-provider-vergeio/internal/services/identity"
+	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/storage"
+	"terraform-provider-vergeio/internal/services/system"
+	"terraform-provider-vergeio/internal/services/tags"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
@@ -108,24 +102,24 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		network.NewNetworkResource,
-		vm.NewVMResource,
-		user.NewUserResource,
-		member.NewMemberResource,
+		compute.NewVMResource,
+		identity.NewUserResource,
+		identity.NewMemberResource,
 		tags.NewTagMemberResource,
 	}
 }
 
 func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		version.NewVersionDataSource,
+		system.NewVersionDataSource,
 		network.NewNetworkDataSource,
-		vm.NewVMDataSource,
-		cluster.NewClusterDataSource,
-		groups.NewGroupsDataSource,
-		mediasource.NewMediasourceDataSource,
-		node.NewNodeDataSource,
-		cloudinitFile.NewCloudinitFileDataSource,
-		resourseGroups.NewResourceGroupsDataSource,
+		compute.NewVMDataSource,
+		system.NewClusterDataSource,
+		identity.NewGroupsDataSource,
+		storage.NewMediasourceDataSource,
+		system.NewNodeDataSource,
+		compute.NewCloudinitFileDataSource,
+		system.NewResourceGroupsDataSource,
 		tags.NewTagsDataSource,
 	}
 }

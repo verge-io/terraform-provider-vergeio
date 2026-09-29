@@ -10,6 +10,12 @@ Squash-merge pull requests into `soft/dev`. Merging `soft/dev` into `main` or `V
 
 `main` is behind `Version2` and is not the integration branch. Whether to make `main` the release line, and whether to cut `release/2.x` from the last 2.x tag, is still open.
 
+## Repository layout
+
+Resources and data sources live in `internal/services/<domain>`, one file per object with its tests in the same directory. `internal/client` is the only package that imports `net/http` or builds a request URL. `internal/provider` configures the provider and registers those services. `internal/shared` holds plan modifiers and similar helpers. `internal/acctest` holds provider factories, the `tf-acc-` name prefix, preconditions, and sweepers.
+
+Examples live under `examples/resources/<type>` and `examples/data-sources/<type>`. Every resource example includes `import.sh`. `docs/` is written by `make generate` and is not edited by hand.
+
 ## Tests
 
 Unit tests do not need a VergeOS system or any lab secret:
@@ -30,7 +36,7 @@ TF_ACC_VERGEIO_PASSWORD
 
 Do not commit credentials. Every object a test creates must use `acctest.Name` so the name starts with `tf-acc-`. `make sweep` (or `TF_ACC=1 go test ./internal/acctest -run TestSweep -count=1`) deletes leftovers with that prefix and then checks that none remain. The acceptance workflow runs the sweep before and after `TestAcc`, on `workflow_dispatch`. It skips when the lab secrets are absent. A nightly schedule is commented in that workflow until the secrets exist.
 
-Network, VM, and user acceptance tests cover create, an empty plan, an update, `ImportState` with `ImportStateVerify`, and destroy. Cloud-init file, member, and tag member acceptance tests are still skipped in code. Data sources have read-only acceptance tests and are not part of the sweep. Drives, NICs, and devices are nested in the VM resource and do not have their own acceptance test yet.
+Network, VM, and user acceptance tests cover create, an empty plan, an update, `ImportState` with `ImportStateVerify`, and destroy. Member and tag member acceptance tests are still skipped in code. The unregistered cloud-init file resource was removed; the cloud-init files data source remains. Data sources have read-only acceptance tests and are not part of the sweep. Drives, NICs, and devices are nested in the VM resource and do not have their own acceptance test yet.
 
 ## Local development
 

@@ -15,8 +15,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/verge-io/govergeos"
 
+	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/provider"
-	"terraform-provider-vergeio/internal/provider/vergeio"
 )
 
 // ResourcePrefix is required on every object an acceptance test creates.
