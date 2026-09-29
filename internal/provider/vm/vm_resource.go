@@ -883,9 +883,25 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		desiredPowerState = data.PowerState.ValueBool()
 	}
 
-	// Create a new VM
+	// Create a new VM. A name collision means a previous create left the VM
+	// in VergeOS without writing state. Adopt it when it matches this plan.
 	createError := r.vmApi.CreateVM(ctx, &data)
+	if createError != nil && vmNameInUse(createError) {
+		tflog.Debug(ctx, fmt.Sprintf("VM %q is already in use; looking for an orphan to adopt", data.Name.ValueString()))
+		if err := r.adoptOrphanVM(ctx, &data); err != nil {
+			r.rememberVM(ctx, resp, &data)
+			resp.Diagnostics.AddError(
+				"Error creating VM",
+				err.Error(),
+			)
+			return
+		}
+		createError = nil
+	}
 	if createError != nil {
+		// CreateVM sets the id once the VM row exists. A later read can
+		// still fail. Keep that id so the VM is not orphaned.
+		r.rememberVM(ctx, resp, &data)
 		resp.Diagnostics.AddError(
 			"Error creating VM",
 			createError.Error(),
@@ -895,6 +911,18 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 
 	// Log the id only. The model includes console_pass.
 	tflog.Debug(ctx, fmt.Sprintf("created a vm resource %s", data.Id.ValueString()))
+
+	// Store the id before drives, NICs, and devices. Terraform keeps this
+	// state when a later step fails or the apply is interrupted, and the
+	// next apply updates the VM instead of colliding on the name.
+	r.rememberVM(ctx, resp, &data)
+	if resp.Diagnostics.HasError() {
+		resp.Diagnostics.AddError(
+			"Error saving VM state",
+			fmt.Sprintf("VM %q (id %s) exists in VergeOS but could not be stored in Terraform state. Import it with `terraform import vergeio_vm.<name> %s`, or delete it in VergeOS and apply again.", data.Name.ValueString(), data.Id.ValueString(), data.Id.ValueString()),
+		)
+		return
+	}
 
 	// Create disks
 	if data.Disks != nil {
