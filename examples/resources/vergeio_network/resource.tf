@@ -1,5 +1,4 @@
-
-# Create Network with all parameters
+# Create an internal vNET.
 
 resource "vergeio_network" "example" {
   name                 = "Example Net"
@@ -12,4 +11,5 @@ resource "vergeio_network" "example" {
   dhcp_start           = "192.168.0.2"
   dhcp_stop            = "192.168.0.200"
   on_power_loss        = "power_on"
+  restart_on_change    = true
 }

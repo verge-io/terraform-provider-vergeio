@@ -24,7 +24,7 @@ terraform {
   required_providers {
     vergeio = {
       source  = "verge-io/vergeio"
-      version = "2.X.X"
+      version = "~> 3.0"
     }
   }
 }
@@ -67,3 +67,5 @@ provider "vergeio" {}
 - `timeout` - (Number, Optional) HTTP request timeout in seconds. Defaults to `60`. Environment variable: `VERGEOS_TIMEOUT`.
 
 The provider fails during configuration, before the first API request, when `host` is missing or when neither an API key nor both a username and password are available. That error names each missing value.
+
+Configurations written for 2.x need the [v3.0 upgrade guide](guides/version-3-upgrade.html) before changing the version constraint to `~> 3.0`. Until then, pin `~> 2.7`.

@@ -9,15 +9,19 @@ description: |-
 # vergeio_vms (Data Source)
 Retrieves information on the virtual machines in the system
 
-# Example Usage
-```
+## Example Usage
+
+Guest agent addresses are on the VM resource (`vergeio_vm.web-server.guest_agent_ips`), not on this data source. Drive and NIC details are on each VM in `vms`.
+
+```terraform
+# VMs data source fetches the VMsfrom the VergeIO. 
+
 data "vergeio_vms" "all" {
 }
 output "Virtual_Machines" {
   value = data.vergeio_vms.all.vms
 }
-```
-```
+
 # Add a filter to see information on a specific virtual machine or ignore VM snapshots
 
 data "vergeio_vms" "all" {
@@ -27,26 +31,9 @@ data "vergeio_vms" "all" {
 output "Virtual_Machines" {
   value = data.vergeio_vms.all.vms
 }
-```
-```
-# View the VM IP via the guest agent on resource creation
 
-output "guest_agent_ip" {
-  value = vergeio_vm.{RESOURCE NAME HERE}.guest_agent_ips
-}
-```
+# VMs and NICs information is also available via the VMs data source
 
-```
-data "vergeio_vms" "all" {
-	filter_name = "Example VM"
-    is_snapshot = false
-}
-output "Virtual_Machines" {
-	value = data.vergeio_vms.all.vms
-}
-```
-Drive and NIC information is also available via the VMs data source
-```
 output "VM_NICs" {
   value = data.vergeio_vms.all.vms[0].nics[0]
 }

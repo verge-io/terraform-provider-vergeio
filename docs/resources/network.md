@@ -12,9 +12,11 @@ Create an Internal or External vNET resource in VergeIO
 
 ## Example Usage
 
+Create an internal vNET with all parameters.
 
-Create an Internal vNET with all parameters
-```
+```terraform
+# Create an internal vNET.
+
 resource "vergeio_network" "example" {
   name                 = "Example Net"
   enabled              = true
@@ -29,21 +31,24 @@ resource "vergeio_network" "example" {
   restart_on_change    = true
 }
 ```
-Create a Layer 2 External vNET with a VLAN Tag
-```
-resource "vergeio_network" "external_example" {
-  name = "External Example"
-  enabled = true
-  interface_vnet = 4
-  layer2_id = 1000
-  type = "external"
-  on_power_loss = "last_state"
-  ipaddress_type = "none"
-  layer2_type = "vlan" 
 
-# Add VLAN Bonding to the External vNET
-  enable_bonding = true
-  bond_interfaces_args = [4,5] 
+Create a layer 2 external vNET with a VLAN tag.
+
+```terraform
+# Create a layer 2 external vNET with a VLAN tag and bonding.
+
+resource "vergeio_network" "external_example" {
+  name           = "External Example"
+  enabled        = true
+  interface_vnet = 4
+  layer2_id      = 1000
+  type           = "external"
+  on_power_loss  = "last_state"
+  ipaddress_type = "none"
+  layer2_type    = "vlan"
+
+  enable_bonding       = true
+  bond_interfaces_args = [4, 5]
 }
 ```
 

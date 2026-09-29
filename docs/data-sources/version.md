@@ -8,8 +8,11 @@ description: |-
 
 # vergeio_version (Data Source)
 Retrieves the version of the system
-# Example Usage
-```
+## Example Usage
+
+```terraform
+# Version data source fetches the API Version from the VergeIO. 
+
 data "vergeio_version" "all" {
 }
 output "version" {

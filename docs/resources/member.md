@@ -13,7 +13,7 @@ Add users or objects to groups in VergeIO. This resource manages group membershi
 ## Example Usage
 
 ```terraform
-# Get the Administrators group
+# Get all groups
 data "vergeio_groups" "all" {
   filter_name = "Administrators (default)"
 }
@@ -36,8 +36,11 @@ resource "vergeio_member" "membership" {
 }
 ```
 
-Add a VM to a group:
+Add a VM to a group.
+
 ```terraform
+# Add a VM to a group.
+
 resource "vergeio_member" "vm_membership" {
   group  = 5
   member = "vms/123"

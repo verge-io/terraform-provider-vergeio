@@ -12,52 +12,11 @@ Retrieves information about resource groups in VergeOS. Resource groups are used
 
 ## Example Usage
 
-```terraform
-# Get all resource groups
-data "vergeio_resource_groups" "all" {
-}
+{{ tffile "examples/data-sources/vergeio_resource_groups/data-source.tf" }}
 
-output "resource_groups" {
-  value = data.vergeio_resource_groups.all.resource_groups
-}
-```
+Use the group id when attaching a device to a VM.
 
-Filter by name:
-```terraform
-data "vergeio_resource_groups" "gpu" {
-  filter_name = "GPU Pool"
-}
-
-output "gpu_groups" {
-  value = data.vergeio_resource_groups.gpu.resource_groups
-}
-```
-
-Use with VM device configuration:
-```terraform
-data "vergeio_resource_groups" "vgpu" {
-  filter_name = "vGPU Pool"
-}
-
-resource "vergeio_vm" "gpu_vm" {
-  name         = "gpu-workstation"
-  cpu_cores    = 8
-  ram          = 32768
-  machine_type = "q35"
-  os_family    = "linux"
-
-  vergeio_device {
-    name           = "vgpu-device"
-    description    = "Nvidia vGPU"
-    type           = "node_nvidia_vgpu_devices"
-    resource_group = data.vergeio_resource_groups.vgpu.resource_groups[0].id
-    nvidia_vgpu_settings = {
-      profile_type       = "grid_p40-4q"
-      frame_rate_limiter = 60
-    }
-  }
-}
-```
+{{ tffile "examples/data-sources/vergeio_resource_groups/data-source_device.tf" }}
 
 ## Example Output
 
