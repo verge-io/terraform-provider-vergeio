@@ -1,8 +1,10 @@
 package user_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -164,10 +166,14 @@ func testAccCheckUserDestroy(s *terraform.State) error {
 	})
 }
 
-// testAccCheckUserLogin checks basic-auth against the users API.
-// VergeOS returns 401 when the password is wrong. A correct password is 200
-// for an account that can list users and 403 when the password is accepted
-// but the account is not allowed to list users.
+// testAccCheckUserLogin posts {"login","password"} to /api/sys/tokens with no
+// Authorization header. 200 with a $key means that password is the stored
+// credential. 401 means it is not.
+//
+// GET /api/v4 with basic auth is not used. On the lab, that check still
+// returned 200 for the password from the previous step after a rotation,
+// while the new password also returned 200. The token call does not send
+// the candidate as basic auth, so it cannot reuse that accepted pair.
 func testAccCheckUserLogin(username, password string, wantRejected bool) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rejected, status, err := testAccUserLoginRejected(username, password)
@@ -183,18 +189,29 @@ func testAccCheckUserLogin(username, password string, wantRejected bool) resourc
 
 func testAccUserLoginRejected(username, password string) (bool, int, error) {
 	host := os.Getenv("TF_ACC_VERGEIO_HOST")
-	endpoint := strings.TrimRight(vergeio.EnsureHTTPSPrefix(host), "/") + "/api/v4/users?fields=%24key&limit=1"
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	endpoint := strings.TrimRight(vergeio.EnsureHTTPSPrefix(host), "/") + "/api/sys/tokens"
+	payload, err := json.Marshal(map[string]string{
+		"login":    username,
+		"password": password,
+	})
 	if err != nil {
 		return false, 0, err
 	}
-	req.SetBasicAuth(username, password)
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return false, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-JSON-Non-Compact", "1")
 
 	client := &http.Client{
 		Timeout: 30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // test lab uses the provider's insecure flag
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, // lab matches the provider insecure flag
 		},
 	}
 	resp, err := client.Do(req)
@@ -202,16 +219,58 @@ func testAccUserLoginRejected(username, password string) (bool, int, error) {
 		return false, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return false, resp.StatusCode, err
+	}
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized:
 		return true, resp.StatusCode, nil
-	case http.StatusOK, http.StatusForbidden:
+	case http.StatusOK:
+		var parsed struct {
+			Key any `json:"$key"`
+		}
+		if err := json.Unmarshal(respBody, &parsed); err != nil {
+			return false, resp.StatusCode, fmt.Errorf("login as %s: status 200 without a token", username)
+		}
+		token, ok := tokenKey(parsed.Key)
+		if !ok {
+			return false, resp.StatusCode, fmt.Errorf("login as %s: status 200 without a token", username)
+		}
+		testAccDeleteLoginToken(client, endpoint, token)
 		return false, resp.StatusCode, nil
 	default:
 		return false, resp.StatusCode, fmt.Errorf("login as %s: unexpected status %d", username, resp.StatusCode)
 	}
+}
+
+func tokenKey(v any) (string, bool) {
+	switch k := v.(type) {
+	case string:
+		return k, k != ""
+	case float64:
+		return fmt.Sprintf("%.0f", k), true
+	default:
+		return "", false
+	}
+}
+
+func testAccDeleteLoginToken(client *http.Client, tokensEndpoint, token string) {
+	if token == "" {
+		return
+	}
+	req, err := http.NewRequest(http.MethodDelete, tokensEndpoint+"/"+token, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("x-yottabyte-token", token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 }
 
 func testAccUserPasswordConfig(userName, password string) string {
