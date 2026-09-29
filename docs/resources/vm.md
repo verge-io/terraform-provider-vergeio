@@ -333,7 +333,7 @@ Optional:
 	- `efidisk` (Create a new EFI Disk)
 - `media_source` (Number) - ID of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom. Changing media_source replaces the VM.
 - `orderid` (Number) - Sets the ID for the disk order on the Virtual Machine
-- `preferred_tier` (String) - Tier to assign the resource to. If one is not specified the default tier in the system settings will be used.
+- `preferred_tier` (Number) - Tier to assign the resource to, from 1 to 5. If one is not specified the default tier in the system settings will be used.
 - `preserve_drive_format` (Boolean) - Default = False
 - `readonly` (Boolean) Default = False
 - `serial` (String)

@@ -6,6 +6,48 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+func TestDiskCreatePayloadSendsPreferredTierAsString(t *testing.T) {
+	body := jsonObject(t, diskCreatePayload(&diskResourceModel{
+		Name:          types.StringValue("disk0"),
+		PreferredTier: types.Int32Value(4),
+	}))
+	requireString(t, body, "preferred_tier", "4")
+
+	unset := jsonObject(t, diskCreatePayload(&diskResourceModel{
+		Name:          types.StringValue("disk0"),
+		PreferredTier: types.Int32Null(),
+	}))
+	requireAbsent(t, unset, "preferred_tier")
+}
+
+func TestDiskUpdatePayloadSendsChangedPreferredTier(t *testing.T) {
+	changed := jsonObject(t, diskUpdatePayload(
+		&diskResourceModel{PreferredTier: types.Int32Value(1)},
+		&diskResourceModel{PreferredTier: types.Int32Value(4)},
+	))
+	requireString(t, changed, "preferred_tier", "1")
+
+	same := jsonObject(t, diskUpdatePayload(
+		&diskResourceModel{PreferredTier: types.Int32Value(4)},
+		&diskResourceModel{PreferredTier: types.Int32Value(4)},
+	))
+	requireAbsent(t, same, "preferred_tier")
+}
+
+func TestPreferredTierFromAPI(t *testing.T) {
+	tier, err := preferredTierFromAPI("4")
+	if err != nil || tier.IsNull() || tier.ValueInt32() != 4 {
+		t.Fatalf("tier = %#v err %v, want 4", tier, err)
+	}
+	tier, err = preferredTierFromAPI("  ")
+	if err != nil || !tier.IsNull() {
+		t.Fatalf("blank tier = %#v err %v, want null", tier, err)
+	}
+	if _, err := preferredTierFromAPI("tier"); err == nil {
+		t.Fatal("expected error for a non-numeric preferred_tier")
+	}
+}
+
 func TestDiskCreatePayloadKeepsFalseZeroAndEmpty(t *testing.T) {
 	data := &diskResourceModel{
 		Name:        types.StringValue("disk0"),

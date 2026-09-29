@@ -515,7 +515,7 @@ resource "vergeio_network" "test" {
   name       = %q
   type       = "internal"
   enabled    = true
-  powerstate = "false"
+  powerstate = false
 }
 
 resource "vergeio_vm" "test" {

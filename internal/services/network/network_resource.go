@@ -4,7 +4,9 @@
 package network
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -21,12 +23,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &NetworkResource{}
 var _ resource.ResourceWithImportState = &NetworkResource{}
+var _ resource.ResourceWithUpgradeState = &NetworkResource{}
 
 func NewNetworkResource() resource.Resource {
 	return &NetworkResource{}
@@ -51,7 +55,7 @@ type NetworkResourceModel struct {
 	DynamicIP_Start      types.String `tfsdk:"dhcp_start"`
 	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
 	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
-	PowerState           types.String `tfsdk:"powerstate"`
+	PowerState           types.Bool   `tfsdk:"powerstate"`
 	RestartOnChange      types.Bool   `tfsdk:"restart_on_change"`
 	NeedRestart          types.Bool   `tfsdk:"need_restart"`
 	Type                 types.String `tfsdk:"type"`
@@ -73,6 +77,9 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Network or Vnet resource in VergeIO",
+		// Version 1 stores powerstate as a bool. Version 0 stored the
+		// strings "true" and "false".
+		Version: 1,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -140,8 +147,8 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Optional: true,
 				Computed: true,
 			},
-			"powerstate": schema.StringAttribute{
-				MarkdownDescription: "Power state of the network. Read from the API as \"true\" or \"false\".",
+			"powerstate": schema.BoolAttribute{
+				MarkdownDescription: "Whether the network is powered on. Read from the API powerstate boolean after create and import.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -390,7 +397,7 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Network state before deletion %v", data.PowerState.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("Network state before deletion %v", data.PowerState.ValueBool()))
 
 	// Proceed with network deletion
 	if err := r.networkApi.deleteNetwork(ctx, &data); err != nil {
@@ -406,4 +413,83 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// UpgradeState converts version 0 network state, which stored powerstate as
+// the strings "true" and "false", to the bool stored by version 1.
+// "running" and "stopped" are accepted because an earlier delete path wrote
+// those words into the same attribute. A blank string becomes null.
+func (r *NetworkResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+			tflog.Info(ctx, "Upgrading network state to v1: powerstate bool")
+
+			normalized, err := normalizeNetworkStateJSON(req.RawState.JSON)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error upgrading network state",
+					fmt.Sprintf("Failed to normalize state: %s", err),
+				)
+				return
+			}
+
+			newSchemaType := resp.State.Schema.Type().TerraformType(ctx)
+			newStateValue, err := tftypes.ValueFromJSON(normalized, newSchemaType)
+			if err != nil {
+				resp.Diagnostics.AddError(
+					"Error upgrading network state",
+					fmt.Sprintf("Failed to parse state: %s", err),
+				)
+				return
+			}
+
+			resp.State.Raw = newStateValue
+		}},
+	}
+}
+
+func normalizeNetworkStateJSON(raw []byte) ([]byte, error) {
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return nil, err
+	}
+	rawVal, ok := state["powerstate"]
+	if !ok {
+		return json.Marshal(state)
+	}
+	converted, err := networkPowerStateOrNull(rawVal)
+	if err != nil {
+		return nil, fmt.Errorf("powerstate: %w", err)
+	}
+	state["powerstate"] = converted
+	return json.Marshal(state)
+}
+
+func networkPowerStateOrNull(raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return json.RawMessage("null"), nil
+	}
+	switch string(trimmed) {
+	case "true", "false":
+		return json.RawMessage(trimmed), nil
+	}
+	if trimmed[0] != '"' {
+		return nil, fmt.Errorf("cannot convert %s to bool", trimmed)
+	}
+
+	var s string
+	if err := json.Unmarshal(trimmed, &s); err != nil {
+		return nil, err
+	}
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "running":
+		return json.RawMessage("true"), nil
+	case "false", "stopped":
+		return json.RawMessage("false"), nil
+	case "":
+		return json.RawMessage("null"), nil
+	default:
+		return nil, fmt.Errorf("cannot convert %q to bool", s)
+	}
 }

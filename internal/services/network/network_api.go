@@ -60,7 +60,7 @@ type NetworkAPIResourceModel struct {
 	DynamicIP_Start      *string `json:"dhcp_start,omitempty"`
 	DynamicIP_Stop       *string `json:"dhcp_stop,omitempty"`
 	On_Power_Loss        *string `json:"on_power_loss,omitempty"`
-	PowerState           *string `json:"powerstate,omitempty"`
+	PowerState           *bool   `json:"powerstate,omitempty"`
 	Type                 *string `json:"type,omitempty"`
 	VLAN_TAG             *int32  `json:"layer2_id,omitempty"`
 	MTU                  *int32  `json:"mtu,omitempty"`
@@ -135,7 +135,7 @@ func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateReq
 		DynamicIP_Start: vergeio.KnownString(data.DynamicIP_Start),
 		DynamicIP_Stop:  vergeio.KnownString(data.DynamicIP_Stop),
 		On_Power_Loss:   vergeio.KnownString(data.On_Power_Loss),
-		PowerState:      vergeio.KnownString(data.PowerState),
+		PowerState:      vergeio.KnownBool(data.PowerState),
 		Type:            vergeio.KnownString(data.Type),
 		VLAN_TAG:        vergeio.KnownInt32(data.VLAN_TAG),
 		MTU:             vergeio.KnownInt32(data.MTU),
@@ -169,7 +169,7 @@ func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkReso
 		DynamicIP_Start: vergeio.ChangedString(planData.DynamicIP_Start, stateData.DynamicIP_Start),
 		DynamicIP_Stop:  vergeio.ChangedString(planData.DynamicIP_Stop, stateData.DynamicIP_Stop),
 		On_Power_Loss:   vergeio.ChangedString(planData.On_Power_Loss, stateData.On_Power_Loss),
-		PowerState:      vergeio.ChangedString(planData.PowerState, stateData.PowerState),
+		PowerState:      vergeio.ChangedBool(planData.PowerState, stateData.PowerState),
 		VLAN_TAG:        vergeio.ChangedInt32(planData.VLAN_TAG, stateData.VLAN_TAG),
 		MTU:             vergeio.ChangedInt32(planData.MTU, stateData.MTU),
 		Interface_Vnet:  vergeio.ChangedInt32(planData.Interface_Vnet, stateData.Interface_Vnet),
@@ -229,14 +229,13 @@ func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceMo
 	return nil
 }
 
-// networkPowerStateString is the Terraform value for the API powerstate bool.
-// VMs store that bool directly. Network configurations set the strings
-// "true" and "false".
-func networkPowerStateString(running bool) string {
-	if running {
-		return "true"
+// describeNetworkPower is the word used in delete errors. The Terraform
+// attribute is the API bool; these words match the earlier status strings.
+func describeNetworkPower(on bool) string {
+	if on {
+		return "running"
 	}
-	return "false"
+	return "stopped"
 }
 
 // Checks the power state of the network.
@@ -261,17 +260,9 @@ func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkR
 	network := networks[0]
 	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
 
-	// Convert SDK response to API model for field mapping consistency
-	var powerState string
-	if network.PowerState {
-		powerState = "running"
-	} else {
-		powerState = "stopped"
-	}
+	data.PowerState = types.BoolValue(network.PowerState)
 
-	data.PowerState = types.StringValue(powerState)
-
-	tflog.Debug(ctx, "Network status read from API is: "+data.PowerState.ValueString())
+	tflog.Debug(ctx, fmt.Sprintf("Network status read from API is: %t", network.PowerState))
 
 	return nil
 }
@@ -293,11 +284,11 @@ func (nc *NetworkApi) stopNetworkBeforeDelete(ctx context.Context, data *Network
 	if err := nc.checkNetworkPowerState(ctx, data); err != nil {
 		return fmt.Errorf("failed to check power state before deletion: %w", err)
 	}
-	if strings.EqualFold(data.PowerState.ValueString(), "stopped") {
+	if !data.PowerState.ValueBool() {
 		return nil
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Current network power state is %s", data.PowerState.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("Current network power state is %s", describeNetworkPower(true)))
 	if err := nc.killNetwork(ctx, data); err != nil {
 		return fmt.Errorf("failed to kill network before deletion: %w", err)
 	}
@@ -310,10 +301,10 @@ func (nc *NetworkApi) stopNetworkBeforeDelete(ctx context.Context, data *Network
 		if err := nc.checkNetworkPowerState(ctx, data); err != nil {
 			return fmt.Errorf("failed to check power state before deletion: %w", err)
 		}
-		state := strings.TrimSpace(data.PowerState.ValueString())
-		if strings.EqualFold(state, "stopped") {
+		if !data.PowerState.ValueBool() {
 			return nil
 		}
+		state := describeNetworkPower(true)
 		if !time.Now().Before(deadline) {
 			return fmt.Errorf("network %s stayed %q after stop and did not reach stopped before the timeout", networkStopLabel(data), state)
 		}
@@ -427,9 +418,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.IPaddress_Type = types.StringValue("static")
 	data.Layer2_Type = types.StringValue("vlan")
 	data.Enable_Bonding = types.BoolValue(false)
-	// Same source VMs use: the API powerstate bool. The network schema stores
-	// it as the strings "true" and "false", which is what configurations set.
-	data.PowerState = types.StringValue(networkPowerStateString(network.PowerState))
+	data.PowerState = types.BoolValue(network.PowerState)
 	data.NeedRestart = types.BoolValue(network.NeedRestart)
 	// restart_on_change is not a VergeOS field. Keep an explicit setting and
 	// fill the default when state has never stored one, such as after import.
