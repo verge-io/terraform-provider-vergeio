@@ -72,6 +72,31 @@ func TestAccVMResource(t *testing.T) {
 	})
 }
 
+// TestAccVMResource_NameOnly creates a VM that leaves cpu_cores and ram unset.
+// Those attributes are created with the VergeOS defaults of 1 core and 1024 MiB.
+func TestAccVMResource_NameOnly(t *testing.T) {
+	vmName := acctest.Name("vm")
+	config := testAccVMResourceConfig(vmName, "")
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cpu_cores", "1"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "ram", "1024"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "id"),
+				),
+			},
+		},
+	})
+}
+
 func testAccCheckVMExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
