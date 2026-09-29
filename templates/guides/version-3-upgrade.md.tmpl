@@ -6,7 +6,7 @@ description: |-
 
 # Upgrade to v3.0
 
-Provider 3.0 keeps the same five resources as 2.7.8. One data source was renamed. Configurations that set the arguments below as strings, or that depend on the old power-off and membership update behavior, need edits before the first 3.0 plan. Terraform upgrades existing state on the first refresh or apply. Copy the state file first. A string that cannot be converted fails that refresh, and Terraform does not write the upgraded state.
+Provider 3.0 adds `vergeio_vm_drive` and `vergeio_vm_nic` and stops nesting drives and NICs on `vergeio_vm`. One data source was renamed. Configurations that set the arguments below as strings, that still use `vergeio_drive` or `vergeio_nic` blocks, or that depend on the old power-off and membership update behavior, need edits before the first 3.0 plan. Terraform upgrades existing state on the first refresh or apply. Copy the state file first. A string that cannot be converted fails that refresh, and Terraform does not write the upgraded state.
 
 Pin 2.x with `version = "~> 2.7"` until the configuration and state are ready, then pin `version = "~> 3.0"`.
 
@@ -31,10 +31,10 @@ The 3.0 provider registers these objects:
 
 | Kind | Names |
 | --- | --- |
-| Resources | `vergeio_member`, `vergeio_network`, `vergeio_tag_member`, `vergeio_user`, `vergeio_vm` |
+| Resources | `vergeio_member`, `vergeio_network`, `vergeio_tag_member`, `vergeio_user`, `vergeio_vm`, `vergeio_vm_drive`, `vergeio_vm_nic` |
 | Data sources | `vergeio_cloudinit_files`, `vergeio_clusters`, `vergeio_groups`, `vergeio_mediasources`, `vergeio_networks`, `vergeio_nodes`, `vergeio_resource_groups`, `vergeio_tags`, `vergeio_version`, `vergeio_vms` |
 
-Drives, NICs, and devices stay nested on `vergeio_vm`.
+Devices stay nested on `vergeio_vm`. Drives and NICs do not.
 
 ## Renamed data source
 
@@ -55,7 +55,7 @@ Write numbers and bools without quotes. State that already stores a numeric stri
 | `vergeio_vm.cluster` | string | number (cluster key) |
 | `vergeio_vm.preferred_node` | string | number (node key) |
 | `vergeio_vm.snapshot_profile` | string | number (profile key) |
-| `vergeio_drive.preferred_tier` | string (`"1"` through `"5"`) | number `1` through `5` |
+| `vergeio_vm_drive.preferred_tier` | string (`"1"` through `"5"`) on the old inline drive | number `1` through `5` |
 | `vergeio_vms.vms[].drives[].preferred_tier` | string | number |
 | `vergeio_vms.vms[].nics[].vnet` | string | number (vNET key) |
 
@@ -75,14 +75,68 @@ resource "vergeio_vm" "example" {
   preferred_node   = 2
   snapshot_profile = 4
 
-  vergeio_drive {
-    name           = "os"
-    preferred_tier = 3
+  boot_disk {
+    name = "os"
+    size = 40
   }
+}
+
+resource "vergeio_vm_drive" "data" {
+  vm_id          = vergeio_vm.example.id
+  name           = "data"
+  disksize       = 100
+  preferred_tier = 3
 }
 ```
 
 Outputs and modules that pass the VM data source `preferred_tier` or NIC `vnet` into a string argument need a number argument instead.
+
+## Drives and NICs
+
+`vergeio_drive` and `vergeio_nic` blocks are gone. A VM keeps machine settings, devices, and one optional `boot_disk`. Every other drive is a `vergeio_vm_drive`. Every NIC is a `vergeio_vm_nic`. Each one sets `vm_id` to the VM id and is matched by `name`.
+
+The state upgrade rewrites numeric ids, then removes the inline drive and NIC lists from the VM. It does not delete those objects in VergeOS, and it does not put a drive into `boot_disk`. The next apply adopts a `boot_disk`, `vergeio_vm_drive`, or `vergeio_vm_nic` whose name already exists on that VM instead of creating a second device. A drive or NIC you drop from configuration and do not declare again stays in VergeOS until you delete it there.
+
+Set `boot_disk.name` to the existing disk name. The default name is `boot`. A one-disk VM whose disk is not named `boot` gets a second disk if the name is left out.
+
+A Terraform `moved` block addresses a whole resource. It cannot pull one nested block out of `vergeio_vm`. Moving `vergeio_vm` to `vergeio_vm_drive` or `vergeio_vm_nic` fails with that explanation and leaves the VM in state. Record an existing device before apply with an import block. The import id is `<vm_id>/<name>` or the drive key or NIC id.
+
+```terraform
+import {
+  to = vergeio_vm_drive.data
+  id = "15/data"
+}
+
+import {
+  to = vergeio_vm_nic.lan
+  id = "15/lan"
+}
+
+resource "vergeio_vm" "example" {
+  name = "example"
+
+  boot_disk {
+    name = "os"
+    size = 40
+  }
+}
+
+resource "vergeio_vm_drive" "data" {
+  vm_id    = vergeio_vm.example.id
+  name     = "data"
+  disksize = 100
+}
+
+resource "vergeio_vm_nic" "lan" {
+  vm_id = vergeio_vm.example.id
+  name  = "lan"
+  vnet  = 6
+}
+```
+
+`boot_disk` is the only drive `vergeio_vm` deletes or resizes. Do not give a `vergeio_vm_drive` the same name. Changing `boot_disk.media` or `boot_disk.source` replaces the VM. Changing `media` or `media_source` on `vergeio_vm_drive` replaces that drive. Destroying the VM still deletes its drives and NICs in VergeOS. Terraform destroys `vergeio_vm_drive` and `vergeio_vm_nic` first because they reference `vm_id`.
+
+Importing a VM imports machine settings only. Add `boot_disk` or the standalone resources and apply again so each device is adopted by name. `vergeio_vms` still returns drives and NICs on each VM. That data source is read-only and does not own them.
 
 ## Behavior changes
 

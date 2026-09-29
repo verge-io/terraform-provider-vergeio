@@ -1,4 +1,5 @@
-# Create a VM with drives, a NIC, devices, and cloud-init files.
+# Create a VM with a boot disk, devices, and cloud-init files.
+# Extra drives are vergeio_vm_drive resources. NICs are vergeio_vm_nic resources.
 
 resource "vergeio_vm" "web-server" {
   name                 = "my-web-server"
@@ -14,54 +15,9 @@ resource "vergeio_vm" "web-server" {
   cloudinit_datasource = "nocloud"
   ha_group             = "web"
 
-  vergeio_drive {
-    name           = "Web Server OS Disk"
-    description    = "Operating System Disk"
-    disksize       = 100
-    interface      = "virtio-scsi"
-    preferred_tier = 3
-    orderid        = 0
-  }
-
-  vergeio_drive {
-    name         = "CD ROM"
-    description  = "CD ROM"
-    media        = "cdrom"
-    media_source = 33
-    interface    = "ahci"
-  }
-
-  vergeio_drive {
-    name           = "Clone"
-    description    = "Clone"
-    media          = "clone"
-    media_source   = 39
-    preferred_tier = 3
-    interface      = "virtio-scsi"
-  }
-
-  vergeio_drive {
-    name           = "Import"
-    description    = "Import"
-    media          = "import"
-    media_source   = 59
-    preferred_tier = 3
-    interface      = "virtio-scsi"
-  }
-
-  vergeio_drive {
-    name        = "EFI Disk"
-    description = "EFI Disk"
-    media       = "efidisk"
-  }
-
-  # Omit enabled to leave the VergeOS default, which is enabled.
-  vergeio_nic {
-    name             = "Web Server Network"
-    description      = "NIC for Web Server"
-    interface        = "virtio"
-    vnet             = 6
-    assign_ipaddress = true
+  boot_disk {
+    name = "Web Server OS Disk"
+    size = 100
   }
 
   vergeio_device {

@@ -126,24 +126,16 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 		Name:          types.StringValue("vm"),
 		GuestAgentIPs: types.ListNull(types.StringType),
 	}
-	// Prior state has one drive and no NICs or devices. Empty lists are nil.
+	// Prior state has a boot disk and no devices. NICs are not on the VM.
 	stateModel := base
-	stateModel.Disks = []*diskResourceModel{{
-		Key:       types.StringValue("46"),
-		Name:      types.StringValue("os"),
-		Interface: types.StringValue("virtio"),
-		Media:     types.StringValue("disk"),
-		DiskSize:  types.Float64Value(1),
-		Enabled:   types.BoolValue(true),
-	}}
-	// Plan removes that drive and adds the first NIC and device.
+	stateModel.BootDisk = &bootDiskModel{
+		Key:   types.StringValue("46"),
+		Name:  types.StringValue("os"),
+		Media: types.StringValue("disk"),
+		Size:  types.Float64Value(1),
+	}
+	// Plan removes that boot disk and adds the first device.
 	planModel := base
-	planModel.NICs = []*nicResourceModel{{
-		Name:      types.StringValue("lan"),
-		Interface: types.StringValue("virtio"),
-		Enabled:   types.BoolValue(true),
-		VNET:      types.Int32Value(6),
-	}}
 	planModel.Devices = []*deviceResourceModel{{
 		Name:    types.StringValue("gpu"),
 		Type:    types.StringValue("node_pci_devices"),
@@ -168,12 +160,12 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 	if diags := state.Get(ctx, &decodedState); diags.HasError() {
 		t.Fatalf("decode state: %v", diags)
 	}
-	if decodedPlan.Disks != nil || decodedState.NICs != nil || decodedState.Devices != nil {
-		t.Fatalf("empty lists decoded as non-nil: plan drives nil=%v state nics nil=%v state devices nil=%v",
-			decodedPlan.Disks == nil, decodedState.NICs == nil, decodedState.Devices == nil)
+	if decodedPlan.BootDisk != nil || decodedState.BootDisk == nil || decodedState.Devices != nil {
+		t.Fatalf("boot disk decode plan nil=%v state nil=%v devices nil=%v",
+			decodedPlan.BootDisk == nil, decodedState.BootDisk == nil, decodedState.Devices == nil)
 	}
-	if len(decodedPlan.NICs) != 1 || len(decodedState.Disks) != 1 || len(decodedPlan.Devices) != 1 {
-		t.Fatalf("decoded plan nics=%d devices=%d state drives=%d", len(decodedPlan.NICs), len(decodedPlan.Devices), len(decodedState.Disks))
+	if decodedPlan.Devices == nil || len(decodedPlan.Devices) != 1 {
+		t.Fatalf("decoded plan devices=%d", len(decodedPlan.Devices))
 	}
 
 	resp := &fwresource.UpdateResponse{
@@ -188,11 +180,8 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 	if diags := resp.State.Get(ctx, &got); diags.HasError() {
 		t.Fatalf("updated state: %v", diags)
 	}
-	if len(got.NICs) != 1 || got.NICs[0].Name.ValueString() != "lan" {
-		t.Fatalf("NICs after adding the first = %d, want 1 named lan", len(got.NICs))
-	}
-	if len(got.Disks) != 0 {
-		t.Fatalf("drives after removing the last = %d, want 0", len(got.Disks))
+	if got.BootDisk != nil {
+		t.Fatalf("boot disk after removal = %#v, want nil", got.BootDisk)
 	}
 	if len(got.Devices) != 1 || got.Devices[0].Key.ValueString() != "12" || got.Devices[0].Name.ValueString() != "gpu" {
 		t.Fatalf("devices after adding the first = %#v", got.Devices)
@@ -202,13 +191,15 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 	defer mu.Unlock()
 	joined := strings.Join(calls, "\n")
 	for _, want := range []string{
-		"POST /api/v4/machine_nics",
 		"DELETE /api/v4/machine_drives/46",
 		"POST /api/v4/machine_devices",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("calls missing %s:\n%s", want, joined)
 		}
+	}
+	if strings.Contains(joined, "POST /api/v4/machine_nics") {
+		t.Errorf("VM update created a NIC:\n%s", joined)
 	}
 }
 
@@ -329,17 +320,10 @@ func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
 	}
 	planModel := stateModel
 	planModel.PowerState = types.BoolValue(true)
-	planModel.Disks = []*diskResourceModel{{
-		Name:    types.StringValue("data"),
-		Media:   types.StringValue("disk"),
-		Enabled: types.BoolValue(true),
-	}}
-	planModel.NICs = []*nicResourceModel{{
-		Name:      types.StringValue("lan"),
-		Interface: types.StringValue("virtio"),
-		Enabled:   types.BoolValue(true),
-		VNET:      types.Int32Value(6),
-	}}
+	planModel.BootDisk = &bootDiskModel{
+		Name:  types.StringValue("data"),
+		Media: types.StringValue("disk"),
+	}
 
 	plan := tfsdk.Plan{Schema: schemaResp.Schema}
 	state := tfsdk.State{Schema: schemaResp.Schema}
@@ -359,10 +343,10 @@ func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if !callBefore(calls, "POST /api/v4/machine_drives", "POST /api/v4/vm_actions") {
-		t.Fatalf("calls = %#v, want the drive created before power on", calls)
+		t.Fatalf("calls = %#v, want the boot disk created before power on", calls)
 	}
-	if !callBefore(calls, "POST /api/v4/machine_nics", "POST /api/v4/vm_actions") {
-		t.Fatalf("calls = %#v, want the NIC created before power on", calls)
+	if strings.Contains(strings.Join(calls, "\n"), "POST /api/v4/machine_nics") {
+		t.Fatalf("calls = %#v, VM update created a NIC", calls)
 	}
 	if !callBefore(calls, "PUT /api/v4/vms/7", "POST /api/v4/machine_drives") {
 		t.Fatalf("calls = %#v, want the VM record updated before the drive is created", calls)

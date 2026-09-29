@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-vergeio/internal/client"
@@ -18,13 +19,19 @@ import (
 const nicIPTestMAC = "52:54:00:11:22:33"
 
 func TestNICIPAddressStaysOptionalComputed(t *testing.T) {
-	vmResource := NewVMResource()
+	nicResource := NewVMNICResource()
 	resp := &fwresource.SchemaResponse{}
-	vmResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+	nicResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
 
-	attr := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "ipaddress")
+	attr, ok := resp.Schema.Attributes["ipaddress"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("vergeio_vm_nic.ipaddress should be a string attribute")
+	}
 	if !attr.Optional || !attr.Computed {
 		t.Fatalf("ipaddress optional=%v computed=%v, want both", attr.Optional, attr.Computed)
+	}
+	if len(attr.PlanModifiers) != 0 {
+		t.Fatalf("ipaddress has %d plan modifiers, want 0", len(attr.PlanModifiers))
 	}
 }
 

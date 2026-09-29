@@ -304,6 +304,31 @@ func (na *NICApi) readNICsByMachine(ctx context.Context, machineID int32) ([]*ni
 	return models, nil
 }
 
+// findNICByName returns the NIC with this name on the machine.
+// A nil NIC and a nil error means the name is not in use. Two NICs with
+// the same name is an error so create does not guess which one to adopt.
+func (na *NICApi) findNICByName(ctx context.Context, machineID int32, name string) (*nicResourceModel, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("NIC name is empty")
+	}
+	nics, err := na.readNICsByMachine(ctx, machineID)
+	if err != nil {
+		return nil, err
+	}
+	var found *nicResourceModel
+	for _, nic := range nics {
+		if nic == nil || strings.TrimSpace(nic.Name.ValueString()) != name {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("more than one NIC named %q on machine %d", name, machineID)
+		}
+		found = nic
+	}
+	return found, nil
+}
+
 // sortNICsForState orders NICs the way nested blocks are stored.
 func sortNICsForState(nics []vergeos.VMNIC) {
 	sort.SliceStable(nics, func(i, j int) bool {
