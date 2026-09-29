@@ -58,8 +58,9 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 	opts := vergeio.Options{Fields: "$key,name,description,filesize"}
 
 	// Build filter
-	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+	fn := data.FilterName.ValueString()
+	if fn != "" {
+		opts.Filter = fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))
 	}
 
 	// Call the SDK API
@@ -74,6 +75,8 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", files))
+
+	files = vergeio.KeepExact(files, fn, func(file vergeos.File) string { return file.Name })
 
 	// Convert SDK files to API model for existing field mapping logic
 	var mediasourceAPIResp []MediasourceAPIDataSourceModel

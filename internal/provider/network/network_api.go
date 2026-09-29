@@ -375,17 +375,21 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 	// What fields do we want
 	opts := vergeio.Options{Fields: "description,name,$key"}
 
+	fn := data.FilterName.ValueString()
+	ft := data.FilterType.ValueString()
+
 	//  Build name filter
-	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+	if fn != "" {
+		opts.Filter = fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))
 	}
 
 	// Build type filter
-	if ft := data.FilterType.ValueString(); ft != "" {
+	if ft != "" {
+		typeClause := fmt.Sprintf("type eq '%s'", vergeio.EscapeFilterValue(ft))
 		if opts.Filter != "" {
-			opts.Filter = fmt.Sprintf("%s and type eq '%s'", opts.Filter, ft)
+			opts.Filter = fmt.Sprintf("%s and %s", opts.Filter, typeClause)
 		} else {
-			opts.Filter = fmt.Sprintf("type eq '%s'", ft)
+			opts.Filter = typeClause
 		}
 	}
 
@@ -401,6 +405,9 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", networks))
+
+	networks = vergeio.KeepExact(networks, fn, func(network vergeos.Network) string { return network.Name })
+	networks = vergeio.KeepExact(networks, ft, func(network vergeos.Network) string { return network.Type })
 
 	// Convert SDK networks to API model for existing field mapping logic
 	var networkAPIResp []NetworkAPIDataSourceModel

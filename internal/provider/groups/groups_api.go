@@ -57,8 +57,9 @@ func (va *GroupsApi) readGroups(ctx context.Context, data *GroupDataSourceModel)
 	opts := vergeio.Options{Fields: "$key,name,description,enabled"}
 
 	// Build filter
-	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+	fn := data.FilterName.ValueString()
+	if fn != "" {
+		opts.Filter = fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))
 	}
 
 	// Call the SDK API
@@ -73,6 +74,8 @@ func (va *GroupsApi) readGroups(ctx context.Context, data *GroupDataSourceModel)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", groups))
+
+	groups = vergeio.KeepExact(groups, fn, func(group vergeos.Group) string { return group.Name })
 
 	// Convert SDK groups to API model for existing field mapping logic
 	var groupsAPIResp []GroupsAPIDataSourceModel

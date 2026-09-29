@@ -926,8 +926,9 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	var listOpts []vergeos.ListOption
 
 	// Add name filter if specified
-	if fn := data.FilterName.ValueString(); fn != "" {
-		listOpts = append(listOpts, vergeos.WithFilter(fmt.Sprintf("name eq '%s'", fn)))
+	fn := data.FilterName.ValueString()
+	if fn != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))))
 	}
 
 	tflog.Debug(ctx, "Calling SDK VMs.List")
@@ -939,6 +940,8 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("SDK returned %d VMs", len(vms)))
+
+	vms = vergeio.KeepExact(vms, fn, func(vm vergeos.VM) string { return vm.Name })
 
 	// Convert SDK VMs to API model for existing field mapping logic
 	var vmAPIResp []VMAPIDataSourceModel

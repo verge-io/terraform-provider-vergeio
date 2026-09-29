@@ -61,8 +61,9 @@ func (va *ResourceGroupsApi) readResourceGroups(ctx context.Context, data *Resou
 	opts := vergeio.Options{Fields: "most"}
 
 	// Build filter
-	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+	fn := data.FilterName.ValueString()
+	if fn != "" {
+		opts.Filter = fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))
 	}
 
 	// Call the SDK API
@@ -77,6 +78,8 @@ func (va *ResourceGroupsApi) readResourceGroups(ctx context.Context, data *Resou
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", resourceGroups))
+
+	resourceGroups = vergeio.KeepExact(resourceGroups, fn, func(rg vergeos.ResourceGroup) string { return rg.Name })
 
 	// Convert SDK resource groups to API model for existing field mapping logic
 	var resourceGroupsAPIResp []ResourceGroupsAPIDataSourceModel
