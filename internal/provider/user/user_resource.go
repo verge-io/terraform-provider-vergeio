@@ -151,8 +151,8 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		return
 	}
 
-	// Write logs using the tflog package
-	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
+	// Log the id only. The model includes the password.
+	tflog.Debug(ctx, fmt.Sprintf("created a user resource with id %s", data.Id.ValueString()))
 
 	// Read data into the model to get all the attributes
 	readDataError := r.userApi.readUser(ctx, &data)

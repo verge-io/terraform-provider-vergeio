@@ -105,7 +105,8 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 	var bodyreader io.Reader
 
 	if payload != nil {
-		log.Printf("[DEBUG] With payload %s", payload.String())
+		// Secret fields stay in the request. Only the debug line is masked.
+		log.Printf("[DEBUG] With payload %s", maskSecretPayload(payload.String()))
 		bodyreader = payload
 	}
 
@@ -168,7 +169,7 @@ func (c *Client) Do(method string, endpoint string, payload *bytes.Buffer, param
 			return nil, err
 		}
 
-		log.Printf("[DEBUG] Resp Body: %s", body)
+		log.Printf("[DEBUG] Resp Body: %s", maskSecretPayload(string(body)))
 
 		test := VergeResponse{}
 		err = json.Unmarshal(body, &test)
