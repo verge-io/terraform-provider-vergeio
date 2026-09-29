@@ -7,7 +7,13 @@ import (
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	resschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
@@ -75,10 +81,145 @@ func TestTagMemberResource_Schema(t *testing.T) {
 	}
 }
 
+func TestTagMemberResource_RequiresReplace(t *testing.T) {
+	tagMemberResource := NewTagMemberResource()
+	resp := &fwresource.SchemaResponse{}
+	tagMemberResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+
+	tagIDAttr, ok := resp.Schema.Attributes["tag_id"].(resschema.Int32Attribute)
+	if !ok {
+		t.Fatal("tag_id should be an int32 attribute")
+	}
+	if !tagIDAttr.Required {
+		t.Fatal("tag_id should be required")
+	}
+	if len(tagIDAttr.PlanModifiers) != 1 {
+		t.Fatalf("tag_id plan modifiers = %d, want 1", len(tagIDAttr.PlanModifiers))
+	}
+	wantTagID := int32planmodifier.RequiresReplace().Description(context.Background())
+	if got := tagIDAttr.PlanModifiers[0].Description(context.Background()); got != wantTagID {
+		t.Errorf("tag_id plan modifier %q, want %q", got, wantTagID)
+	}
+	assertTagMemberInt32RequiresReplace(t, "tag_id", tagIDAttr.PlanModifiers[0], 1, 2)
+
+	memberAttr, ok := resp.Schema.Attributes["member"].(resschema.StringAttribute)
+	if !ok {
+		t.Fatal("member should be a string attribute")
+	}
+	if !memberAttr.Required {
+		t.Fatal("member should be required")
+	}
+	if len(memberAttr.PlanModifiers) != 1 {
+		t.Fatalf("member plan modifiers = %d, want 1", len(memberAttr.PlanModifiers))
+	}
+	wantMember := stringplanmodifier.RequiresReplace().Description(context.Background())
+	if got := memberAttr.PlanModifiers[0].Description(context.Background()); got != wantMember {
+		t.Errorf("member plan modifier %q, want %q", got, wantMember)
+	}
+	assertTagMemberStringRequiresReplace(t, "member", memberAttr.PlanModifiers[0], "vms/123", "vms/456")
+}
+
+func TestTagMemberResource_UpdateRejectsInPlaceChange(t *testing.T) {
+	tagMemberResource := &TagMemberResource{}
+	resp := &fwresource.UpdateResponse{}
+
+	tagMemberResource.Update(context.Background(), fwresource.UpdateRequest{}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("in-place tag member update should be rejected")
+	}
+}
+
+func assertTagMemberInt32RequiresReplace(t *testing.T, name string, mod planmodifier.Int32, prior, next int32) {
+	t.Helper()
+
+	createResp := &planmodifier.Int32Response{PlanValue: types.Int32Value(next)}
+	mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+		PlanValue:   types.Int32Value(next),
+		ConfigValue: types.Int32Value(next),
+		Plan:        tfsdk.Plan{Raw: knownTagMemberPlanValue()},
+	}, createResp)
+	if createResp.RequiresReplace {
+		t.Errorf("%s create planned a replacement", name)
+	}
+
+	sameResp := &planmodifier.Int32Response{PlanValue: types.Int32Value(prior)}
+	mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+		StateValue:  types.Int32Value(prior),
+		PlanValue:   types.Int32Value(prior),
+		ConfigValue: types.Int32Value(prior),
+		State:       tfsdk.State{Raw: knownTagMemberPlanValue()},
+		Plan:        tfsdk.Plan{Raw: knownTagMemberPlanValue()},
+	}, sameResp)
+	if sameResp.RequiresReplace {
+		t.Errorf("%s unchanged value planned a replacement", name)
+	}
+
+	changeResp := &planmodifier.Int32Response{PlanValue: types.Int32Value(next)}
+	mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+		StateValue:  types.Int32Value(prior),
+		PlanValue:   types.Int32Value(next),
+		ConfigValue: types.Int32Value(next),
+		State:       tfsdk.State{Raw: knownTagMemberPlanValue()},
+		Plan:        tfsdk.Plan{Raw: knownTagMemberPlanValue()},
+	}, changeResp)
+	if !changeResp.RequiresReplace {
+		t.Errorf("%s changed value did not plan a replacement", name)
+	}
+	if changeResp.Diagnostics.HasError() {
+		t.Errorf("%s plan diagnostics: %v", name, changeResp.Diagnostics)
+	}
+}
+
+func assertTagMemberStringRequiresReplace(t *testing.T, name string, mod planmodifier.String, prior, next string) {
+	t.Helper()
+
+	createResp := &planmodifier.StringResponse{PlanValue: types.StringValue(next)}
+	mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		PlanValue:   types.StringValue(next),
+		ConfigValue: types.StringValue(next),
+		Plan:        tfsdk.Plan{Raw: knownTagMemberPlanValue()},
+	}, createResp)
+	if createResp.RequiresReplace {
+		t.Errorf("%s create planned a replacement", name)
+	}
+
+	sameResp := &planmodifier.StringResponse{PlanValue: types.StringValue(prior)}
+	mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		StateValue:  types.StringValue(prior),
+		PlanValue:   types.StringValue(prior),
+		ConfigValue: types.StringValue(prior),
+		State:       tfsdk.State{Raw: knownTagMemberPlanValue()},
+		Plan:        tfsdk.Plan{Raw: knownTagMemberPlanValue()},
+	}, sameResp)
+	if sameResp.RequiresReplace {
+		t.Errorf("%s unchanged value planned a replacement", name)
+	}
+
+	changeResp := &planmodifier.StringResponse{PlanValue: types.StringValue(next)}
+	mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		StateValue:  types.StringValue(prior),
+		PlanValue:   types.StringValue(next),
+		ConfigValue: types.StringValue(next),
+		State:       tfsdk.State{Raw: knownTagMemberPlanValue()},
+		Plan:        tfsdk.Plan{Raw: knownTagMemberPlanValue()},
+	}, changeResp)
+	if !changeResp.RequiresReplace {
+		t.Errorf("%s changed value did not plan a replacement", name)
+	}
+	if changeResp.Diagnostics.HasError() {
+		t.Errorf("%s plan diagnostics: %v", name, changeResp.Diagnostics)
+	}
+}
+
+func knownTagMemberPlanValue() tftypes.Value {
+	return tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}, map[string]tftypes.Value{})
+}
+
 func TestTagMemberResource_Configure_WithValidClient(t *testing.T) {
 	tagMemberResource := &TagMemberResource{}
 	client := vergeio.NewClient("test.example.com", "testuser", "testpass", true)
-	
+
 	req := fwresource.ConfigureRequest{
 		ProviderData: client,
 	}
@@ -101,7 +242,7 @@ func TestTagMemberResource_Configure_WithValidClient(t *testing.T) {
 
 func TestTagMemberResource_Configure_WithInvalidClient(t *testing.T) {
 	tagMemberResource := &TagMemberResource{}
-	
+
 	req := fwresource.ConfigureRequest{
 		ProviderData: "invalid",
 	}
@@ -120,7 +261,7 @@ func TestTagMemberResource_Configure_WithInvalidClient(t *testing.T) {
 
 func TestTagMemberResource_Configure_WithNilClient(t *testing.T) {
 	tagMemberResource := &TagMemberResource{}
-	
+
 	req := fwresource.ConfigureRequest{
 		ProviderData: nil,
 	}
@@ -160,7 +301,7 @@ func TestTagMemberResourceModel_Types(t *testing.T) {
 func TestTagMemberResourceModel_NullValues(t *testing.T) {
 	model := &TagMemberResourceModel{
 		Id:     types.StringNull(),
-		TagId:  types.Int32Value(1), // Required field
+		TagId:  types.Int32Value(1),          // Required field
 		Member: types.StringValue("vms/456"), // Required field
 	}
 
@@ -222,7 +363,7 @@ func TestAccTagMemberResource_Update(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_tag_member.test", "member", "vms/123"),
 				),
 			},
-			// Update tag member attributes
+			// Changing member replaces the tag membership.
 			{
 				Config: testAccTagMemberResourceConfig_updated(),
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -273,7 +414,7 @@ func testAccTagMemberResourceConfig_basic() string {
 	host := os.Getenv("TF_ACC_VERGEIO_HOST")
 	username := os.Getenv("TF_ACC_VERGEIO_USERNAME")
 	password := os.Getenv("TF_ACC_VERGEIO_PASSWORD")
-	
+
 	if host == "" || username == "" || password == "" {
 		return `
 provider "vergeio" {
@@ -286,7 +427,7 @@ resource "vergeio_tag_member" "test" {
 }
 `
 	}
-	
+
 	return fmt.Sprintf(`
 provider "vergeio" {
   host     = "%s"
@@ -306,7 +447,7 @@ func testAccTagMemberResourceConfig_updated() string {
 	host := os.Getenv("TF_ACC_VERGEIO_HOST")
 	username := os.Getenv("TF_ACC_VERGEIO_USERNAME")
 	password := os.Getenv("TF_ACC_VERGEIO_PASSWORD")
-	
+
 	if host == "" || username == "" || password == "" {
 		return `
 provider "vergeio" {
@@ -319,7 +460,7 @@ resource "vergeio_tag_member" "test" {
 }
 `
 	}
-	
+
 	return fmt.Sprintf(`
 provider "vergeio" {
   host     = "%s"

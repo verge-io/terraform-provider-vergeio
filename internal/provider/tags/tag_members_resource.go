@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -59,12 +60,18 @@ func (r *TagMemberResource) Schema(ctx context.Context, req resource.SchemaReque
 				},
 			},
 			"tag_id": schema.Int32Attribute{
-				MarkdownDescription: "ID of the tag to assign",
+				MarkdownDescription: "ID of the tag to assign. Changing tag_id replaces the tag membership, because VergeOS treats the tag as read-only.",
 				Required:            true,
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.RequiresReplace(),
+				},
 			},
 			"member": schema.StringAttribute{
-				MarkdownDescription: "Object to tag in format 'object_type/object_id' (e.g., 'vms/123', 'vnets/456')",
+				MarkdownDescription: "Object to tag in format 'object_type/object_id' (e.g., 'vms/123', 'vnets/456'). Changing member replaces the tag membership.",
 				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 		},
 	}
@@ -159,50 +166,13 @@ func (r *TagMemberResource) Read(ctx context.Context, req resource.ReadRequest, 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-// Update a tag member assignment.
+// Update is not supported. tag_id and member require replacement, so Terraform
+// destroys and recreates the tag membership instead of calling this method.
 func (r *TagMemberResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var data TagMemberResourceModel
-
-	// Read Terraform plan data into the model
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Validate member format (should contain '/')
-	memberValue := data.Member.ValueString()
-	if !strings.Contains(memberValue, "/") {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("member"),
-			"Invalid Member Format",
-			"Member must be in format 'object_type/object_id' (e.g., 'vms/123', 'vnets/456')",
-		)
-		return
-	}
-
-	// Update the tag member assignment
-	if err := r.tagsApi.updateTagMember(ctx, &data); err != nil {
-		resp.Diagnostics.AddError(
-			"Error Updating Tag Member",
-			fmt.Sprintf("Unable to update tag member, got error: %s", err.Error()),
-		)
-		return
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("updated tag member resource %v", data))
-
-	// Read updated data from API to ensure consistency
-	if err := r.tagsApi.readTagMember(ctx, &data); err != nil {
-		resp.Diagnostics.AddError(
-			"Error Reading Updated Tag Member",
-			fmt.Sprintf("Unable to read updated tag member, got error: %s", err.Error()),
-		)
-		return
-	}
-
-	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	resp.Diagnostics.AddError(
+		"Tag Member Update Not Supported",
+		"Changing tag_id or member replaces the tag membership. VergeOS does not allow a tag membership to be updated in place.",
+	)
 }
 
 // Delete a tag member assignment.

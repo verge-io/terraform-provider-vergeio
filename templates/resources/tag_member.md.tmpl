@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tag_member (Resource)
 
-Assign tags to VergeOS objects such as VMs and networks. This resource requires VergeOS v26 or later.
+Assign tags to VergeOS objects such as VMs and networks. This resource requires VergeOS v26 or later. Changing `tag_id` or `member` replaces the assignment, because VergeOS does not allow a tag membership to be updated in place.
 
 ## Example Usage
 
@@ -59,8 +59,8 @@ resource "vergeio_tag_member" "vm_tag" {
 
 ### Required
 
-- `tag_id` (Number) - ID of the tag to assign
-- `member` (String) - Object to tag in format `object_type/object_id` (e.g., `vms/123`, `vnets/456`)
+- `tag_id` (Number) - ID of the tag to assign. Changing tag_id replaces the tag membership.
+- `member` (String) - Object to tag in format `object_type/object_id` (e.g., `vms/123`, `vnets/456`). Changing member replaces the tag membership.
 
 ### Read-Only
 
