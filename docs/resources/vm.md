@@ -288,6 +288,10 @@ resource "vergeio_vm" "web-server" {
 
 ### Nested Schema for `vergeio_drive`
 
+A drive added while the VM is already running is hotplugged (`hotplugdrive`, without `unplug`) and the provider waits until the drive status is `online`. A drive added in the same apply that sets `powerstate` to `true` is created before the VM is powered on, so it is present at boot and is not hotplugged. A disabled drive is left offline.
+
+VergeOS cannot hotplug some interfaces. IDE is the known case: the drive is still created, then apply fails and tells you to power cycle the VM. Until that power cycle, the guest does not see the drive.
+
 Required:
 
 - `name` (String) - Drive name. Renaming the drive updates it in place and keeps its key.
@@ -301,7 +305,7 @@ Optional:
 - `enabled` (Boolean) - Default = True
 - `interface` (String)
 	- `virtio`                (Virtio Legacy)
-	- `ide`                   (IDE) Only available on the i440x machine type
+	- `ide`                   (IDE) Only available on the i440x machine type. Cannot be hotplugged; adding an IDE drive to a running VM fails the apply until the VM is power cycled.
 	- `ahci`                  (SATA) Only available on the Q35 machine type
 	- `lsi53c895a`            (LSI53C895A SCSI)
 	- `megasas`               (LSI MegaRAID SAS 1078)
@@ -324,6 +328,8 @@ Optional:
 <a id="nestedblock--vergeio_nic"></a>
 
 ### Nested Schema for `vergeio_nic`
+
+A NIC added while the VM is already running is hotplugged (`hotplugnic`, without `unplug`) and the provider waits until the NIC status is `up`. A NIC added in the same apply that powers the VM on is created first, then the VM starts. A disabled NIC is left down. If VergeOS refuses the hotplug, apply fails and the VM must be power cycled before the guest sees the NIC.
 
 Optional:
 

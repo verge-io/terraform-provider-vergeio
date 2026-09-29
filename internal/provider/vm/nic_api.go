@@ -379,7 +379,7 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 		Retries := 1
 
 		// Power the vm off
-		if err := vmApi.hotplugNIC(ctx, data.Id.ValueString(), vmId); err != nil {
+		if err := vmApi.hotplugNIC(ctx, data.Id.ValueString(), vmId, true); err != nil {
 			return fmt.Errorf("failed to hotplug NIC: %v", err)
 		}
 
@@ -474,6 +474,18 @@ func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, s
 		}
 	}
 
+	// A NIC created while the VM is stopped is present at the next boot.
+	// Update powers the VM on only after this sync. A NIC created while the
+	// VM is already running stays down until hotplugnic.
+	vmRunning := false
+	if len(creates) > 0 {
+		running, err := readVMPowerState(ctx, na.client, vmId)
+		if err != nil {
+			return fmt.Errorf("failed to read VM power state before adding NICs: %w", err)
+		}
+		vmRunning = running
+	}
+
 	tflog.Debug(ctx, "Syncing NICs: Starting insertion")
 	for _, created := range creates {
 		created.Machine = machine
@@ -482,6 +494,11 @@ func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, s
 		}
 		if err := na.readNIC(ctx, created); err != nil {
 			return fmt.Errorf("failed to read disk during the sync: %v", err)
+		}
+		if vmRunning {
+			if err := na.attachCreatedNIC(ctx, created, vmId); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -590,14 +607,54 @@ func putKnownBool(payload map[string]any, key string, value types.Bool) {
 	payload[key] = value.ValueBool()
 }
 
-func (va *VMApi) hotplugNIC(ctx context.Context, nicId string, vmId types.String) error {
+// attachCreatedNIC hotplugs a NIC that was just created on a running VM and
+// waits until it is up. A disabled NIC is left down. When VergeOS refuses
+// the action, or the NIC never comes up, the error tells the caller to
+// power cycle the VM.
+func (na *NICApi) attachCreatedNIC(ctx context.Context, nic *nicResourceModel, vmId types.String) error {
+	if nic == nil || !deviceShouldAttach(nic.Enabled) {
+		tflog.Debug(ctx, "Skipping hotplug for a disabled NIC")
+		return nil
+	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Calling the VMActions API for the NIC %v", nicId))
+	name := nic.Name.ValueString()
+	iface := nic.Interface.ValueString()
+	vmAPI := NewVMApi(na.client)
+	if err := vmAPI.hotplugNIC(ctx, nic.Id.ValueString(), vmId, false); err != nil {
+		return fmt.Errorf("NIC %q (interface %q) was created on running VM %s, but VergeOS refused to hotplug it: %w. Power cycle the VM so the guest can see the NIC", name, iface, vmId.ValueString(), err)
+	}
 
-	// Create the action payload according to vm_actions schema
+	status, err := waitForStatus(ctx, func() (string, error) {
+		var current string
+		readErr := na.checkNICPowerState(ctx, nic.Id.ValueString(), &current)
+		return current, readErr
+	}, "up")
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if status == "" {
+			return fmt.Errorf("NIC %q was hotplugged but its status could not be read: %w", name, err)
+		}
+		return fmt.Errorf("NIC %q (interface %q) stayed %q after hotplug on running VM %s. Power cycle the VM so the guest can see the NIC", name, iface, status, vmId.ValueString())
+	}
+	return nil
+}
+
+// hotplugNIC sends hotplugnic. unplug detaches the NIC; otherwise the action
+// attaches a NIC that is already assigned to the VM.
+func (va *VMApi) hotplugNIC(ctx context.Context, nicId string, vmId types.String, unplug bool) error {
+
+	tflog.Debug(ctx, fmt.Sprintf("Calling the VMActions API for the NIC %v unplug %v", nicId, unplug))
+
+	// Create the action payload according to vm_actions schema.
+	// Unplug is omitted when attaching. The API treats a missing unplug flag
+	// as hotplug, which brings a down NIC up.
 	params := VMActionParams{
 		Device: nicId,
-		Unplug: true,
+	}
+	if unplug {
+		params.Unplug = true
 	}
 	intVMId, err := strconv.Atoi(vmId.ValueString())
 	if err != nil {
@@ -620,7 +677,7 @@ func (va *VMApi) hotplugNIC(ctx context.Context, nicId string, vmId types.String
 		return err
 	}
 	if req.StatusCode != 201 {
-		return fmt.Errorf("failed to kill NIC: status code %v", req.StatusCode)
+		return fmt.Errorf("failed to hotplug NIC: status code %v", req.StatusCode)
 	}
 
 	return nil

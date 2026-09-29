@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
@@ -495,6 +496,92 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 	return nil
 }
 
+// deviceAttachAttempts is how many times a hotplugged drive or NIC is read.
+// The first read is immediate. Later reads wait deviceAttachInterval.
+// A drive hotplug on VergeOS 26.1 was online within about three seconds.
+const (
+	deviceAttachAttempts = 6
+	deviceAttachInterval = time.Second
+)
+
+// deviceShouldAttach reports whether a newly created drive or NIC should be
+// hotplugged. A disabled device is meant to stay offline or down.
+func deviceShouldAttach(enabled types.Bool) bool {
+	if enabled.IsNull() || enabled.IsUnknown() {
+		return true
+	}
+	return enabled.ValueBool()
+}
+
+// readVMPowerState reports whether the VM is running.
+// Sync uses this so a device created on a stopped VM is left for the next
+// boot, and a device created on a running VM is hotplugged.
+func readVMPowerState(ctx context.Context, client *vergeio.Client, vmId types.String) (bool, error) {
+	tflog.Debug(ctx, "Reading VM power state before adding a drive or NIC")
+	if client == nil {
+		return false, errors.New("missing API client")
+	}
+	if vmId.IsNull() || vmId.IsUnknown() || strings.TrimSpace(vmId.ValueString()) == "" {
+		return false, errors.New("missing VM id")
+	}
+
+	apiResp, err := client.Get(fmt.Sprintf("%s/%s",
+		VMEndpoint,
+		url.PathEscape(vmId.ValueString()),
+	), &vergeio.Options{Fields: "machine#status#running as powerstate"})
+	if err != nil {
+		return false, err
+	}
+	if apiResp == nil || apiResp.Body == nil {
+		return false, errors.New("missing response from the API")
+	}
+	defer func() { _ = apiResp.Body.Close() }()
+
+	var status struct {
+		PowerState bool `json:"powerstate"`
+	}
+	if err := json.NewDecoder(apiResp.Body).Decode(&status); err != nil {
+		return false, fmt.Errorf("invalid VM power state response: %w", err)
+	}
+	return status.PowerState, nil
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// waitForStatus polls until the device status matches want.
+// A match returns the status and a nil error. A read failure returns an
+// empty status and that error. Exhausting the attempts returns the last
+// status and an error so the caller can say a power cycle is required.
+func waitForStatus(ctx context.Context, read func() (string, error), want string) (string, error) {
+	var last string
+	for attempt := 0; attempt < deviceAttachAttempts; attempt++ {
+		status, err := read()
+		if err != nil {
+			return "", err
+		}
+		last = strings.TrimSpace(status)
+		if strings.EqualFold(last, want) {
+			return last, nil
+		}
+		if attempt == deviceAttachAttempts-1 {
+			break
+		}
+		if err := sleepContext(ctx, deviceAttachInterval); err != nil {
+			return last, err
+		}
+	}
+	return last, fmt.Errorf("status is still %q", last)
+}
+
 // Update the VM.
 func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
 
@@ -508,17 +595,9 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		return err
 	}
 
-	// Only change power when the plan names a known powerstate that differs
-	// from the VM's current power. Unknown or null means the configuration
-	// omitted powerstate. ValueBool() is false for those, so they must not
-	// be treated as a request to power the VM off.
-	if err := va.applyPlannedPowerState(ctx, planData, stateData); err != nil {
-		return err
-	}
-
-	//just wait for 30 second to make sure the vm is up and running
-	time.Sleep(5 * time.Second)
-
+	// Power stays with the caller. VMResource.Update syncs drives and NICs
+	// first, then applyPlannedPowerState, so a VM powered on in this apply
+	// boots with those devices instead of leaving them offline.
 	return nil
 }
 
