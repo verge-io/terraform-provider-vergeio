@@ -241,6 +241,60 @@ func TestShutdownTimeoutFromPlan(t *testing.T) {
 	}
 }
 
+func TestDeleteTimeoutFromState(t *testing.T) {
+	t.Parallel()
+
+	got, err := deleteTimeoutFromState(&VMResourceModel{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != gracefulShutdownTimeout {
+		t.Fatalf("default delete timeout = %s, want %s", got, gracefulShutdownTimeout)
+	}
+
+	got, err = deleteTimeoutFromState(&VMResourceModel{
+		Timeouts: &vmTimeoutsModel{Delete: types.StringValue("45s")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 45*time.Second {
+		t.Fatalf("configured delete timeout = %s, want 45s", got)
+	}
+
+	if _, err = deleteTimeoutFromState(&VMResourceModel{
+		Timeouts: &vmTimeoutsModel{Delete: types.StringValue("-1s")},
+	}); err == nil || !strings.Contains(err.Error(), "timeouts.delete") {
+		t.Fatalf("err = %v, want a timeouts.delete error", err)
+	}
+}
+
+func TestShutdownOnDestroyMode(t *testing.T) {
+	t.Parallel()
+
+	got, err := shutdownOnDestroyMode(&VMResourceModel{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != shutdownOnDestroyGracefulThenKill {
+		t.Fatalf("unset mode = %q, want %s", got, shutdownOnDestroyGracefulThenKill)
+	}
+
+	for _, mode := range []string{shutdownOnDestroyGracefulThenKill, shutdownOnDestroyGraceful, shutdownOnDestroyKill} {
+		got, err = shutdownOnDestroyMode(&VMResourceModel{ShutdownOnDestroy: types.StringValue(mode)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != mode {
+			t.Fatalf("mode = %q, want %q", got, mode)
+		}
+	}
+
+	if _, err = shutdownOnDestroyMode(&VMResourceModel{ShutdownOnDestroy: types.StringValue("reboot")}); err == nil {
+		t.Fatal("expected an error for an unknown shutdown_on_destroy")
+	}
+}
+
 func TestApplyVMDefaultsForcePowerOff(t *testing.T) {
 	t.Parallel()
 
@@ -254,6 +308,22 @@ func TestApplyVMDefaultsForcePowerOff(t *testing.T) {
 	applyVM(data, &vergeos.VM{Name: "web"})
 	if data.ForcePowerOff.IsNull() || !data.ForcePowerOff.ValueBool() {
 		t.Fatalf("force_power_off = %#v, want an explicit true kept", data.ForcePowerOff)
+	}
+}
+
+func TestApplyVMDefaultsShutdownOnDestroy(t *testing.T) {
+	t.Parallel()
+
+	data := &VMResourceModel{}
+	applyVM(data, &vergeos.VM{Name: "web"})
+	if data.ShutdownOnDestroy.ValueString() != shutdownOnDestroyGracefulThenKill {
+		t.Fatalf("shutdown_on_destroy = %#v, want %s after import", data.ShutdownOnDestroy, shutdownOnDestroyGracefulThenKill)
+	}
+
+	data.ShutdownOnDestroy = types.StringValue(shutdownOnDestroyKill)
+	applyVM(data, &vergeos.VM{Name: "web"})
+	if data.ShutdownOnDestroy.ValueString() != shutdownOnDestroyKill {
+		t.Fatalf("shutdown_on_destroy = %#v, want an explicit kill kept", data.ShutdownOnDestroy)
 	}
 }
 
@@ -294,8 +364,32 @@ func TestForcePowerOffAndTimeoutsSchema(t *testing.T) {
 	if !ok || !updateAttr.Optional {
 		t.Fatal("timeouts.update should be an optional string")
 	}
-	if _, ok := timeoutsBlock.Attributes["delete"].(schema.StringAttribute); !ok {
+	deleteAttr, ok := timeoutsBlock.Attributes["delete"].(schema.StringAttribute)
+	if !ok || !deleteAttr.Optional {
 		t.Fatal("timeouts.delete should be an optional string")
+	}
+	deleteDesc := strings.ToLower(deleteAttr.MarkdownDescription)
+	if !strings.Contains(deleteDesc, "poweroff") || strings.Contains(deleteDesc, "does not use") {
+		t.Fatalf("timeouts.delete description %q should say destroy waits for poweroff", deleteAttr.MarkdownDescription)
+	}
+
+	shutdownAttr, ok := resp.Schema.Attributes["shutdown_on_destroy"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("shutdown_on_destroy should be a string attribute")
+	}
+	if !shutdownAttr.Optional || !shutdownAttr.Computed || shutdownAttr.Default == nil {
+		t.Fatal("shutdown_on_destroy should be optional, computed, and defaulted")
+	}
+	stringDefault := &defaults.StringResponse{}
+	shutdownAttr.Default.DefaultString(t.Context(), defaults.StringRequest{}, stringDefault)
+	if stringDefault.Diagnostics.HasError() || stringDefault.PlanValue.ValueString() != shutdownOnDestroyGracefulThenKill {
+		t.Fatalf("shutdown_on_destroy default = %#v, diagnostics %v", stringDefault.PlanValue, stringDefault.Diagnostics)
+	}
+	if !strings.Contains(strings.ToLower(shutdownAttr.MarkdownDescription), "acpi") {
+		t.Fatalf("shutdown_on_destroy description %q should mention ACPI guests waiting", shutdownAttr.MarkdownDescription)
+	}
+	if len(shutdownAttr.Validators) == 0 {
+		t.Fatal("shutdown_on_destroy should validate its values")
 	}
 }
 

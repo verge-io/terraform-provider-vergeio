@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -90,6 +91,7 @@ type VMResourceModel struct {
 	CloudInitFiles        []CloudInitFile  `tfsdk:"cloudinit_files"`
 	PowerState            types.Bool       `tfsdk:"powerstate"`
 	ForcePowerOff         types.Bool       `tfsdk:"force_power_off"`
+	ShutdownOnDestroy     types.String     `tfsdk:"shutdown_on_destroy"`
 	Timeouts              *vmTimeoutsModel `tfsdk:"timeouts"`
 	GuestAgent            types.Bool       `tfsdk:"guest_agent"`
 	Advanced              types.String     `tfsdk:"advanced"`
@@ -326,10 +328,23 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"force_power_off": schema.BoolAttribute{
-				MarkdownDescription: "Kill the VM if a graceful ACPI poweroff does not stop it before the update timeout. Defaults to false. Guests without ACPI support need this set to true.",
+				MarkdownDescription: "Kill the VM if a graceful ACPI poweroff does not stop it before the update timeout. Defaults to false. Guests without ACPI support need this set to true. This does not change destroy; use shutdown_on_destroy for that.",
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
+			},
+			"shutdown_on_destroy": schema.StringAttribute{
+				MarkdownDescription: "How destroy and replace stop a running VM. graceful_then_kill (default) sends one ACPI poweroff and waits timeouts.delete (default 2 minutes), then kills the VM if it is still running. graceful waits the same way and fails destroy if the guest does not stop. kill sends kill immediately. A guest that ignores ACPI waits out the full delete timeout before the kill fallback.",
+				Optional:            true,
+				Computed:            true,
+				Default:             stringdefault.StaticString(shutdownOnDestroyGracefulThenKill),
+				Validators: []validator.String{
+					stringvalidator.OneOf([]string{
+						shutdownOnDestroyGracefulThenKill,
+						shutdownOnDestroyGraceful,
+						shutdownOnDestroyKill,
+					}...),
+				},
 			},
 			"advanced": schema.StringAttribute{
 				MarkdownDescription: "Propery and value separated by '\n', e.g. 'tag1=val1\ntag2=val2'",
@@ -368,7 +383,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 		// Nested blocks for NICs
 		Blocks: map[string]schema.Block{
 			"timeouts": schema.SingleNestedBlock{
-				MarkdownDescription: "How long to wait for a VM power change.",
+				MarkdownDescription: "How long to wait for a VM power change. update applies when powerstate changes to false. delete applies when a running VM is destroyed or replaced.",
 				Attributes: map[string]schema.Attribute{
 					"update": schema.StringAttribute{
 						Optional:            true,
@@ -379,7 +394,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					},
 					"delete": schema.StringAttribute{
 						Optional:            true,
-						MarkdownDescription: "How long destroy waits for a graceful shutdown. Destroy still sends kill and does not use this value yet.",
+						MarkdownDescription: "How long destroy and replace wait for a graceful ACPI poweroff before the shutdown_on_destroy fallback. A duration such as \"90s\" or \"2m\". Defaults to 2m when unset. A guest that ignores ACPI stays running for this whole wait before kill.",
 						Validators: []validator.String{
 							durationValidator{},
 						},
@@ -1338,33 +1353,14 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		return
 	}
 
+	// Replace, taint, and force-new all run this Delete on the old VM.
 	tflog.Debug(ctx, fmt.Sprintf("Deleting VM %s", data.Id.ValueString()))
-
-	// make sure the VM is in a power state that can be deleted
-	var currentPowerState *bool
-	var err error
-
-	if currentPowerState, err = r.vmApi.isVMRunning(ctx, data.Id.ValueString()); err != nil {
+	if err := r.stopVMForDelete(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
-			"Failed to check Power State before deletion:",
+			"Failed to shut down VM before deletion:",
 			err.Error(),
 		)
 		return
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("Current vm power state is %v", *currentPowerState))
-
-	// If the VM is running, we need to power it off before deletion
-	if *currentPowerState {
-		tflog.Debug(ctx, "VM is running, powering it off before deletion")
-		// Power the vm off
-		if err := r.vmApi.killVM(ctx, &data); err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to kill VM before deletion:",
-				err.Error(),
-			)
-			return
-		}
 	}
 
 	// Proceed with vm deletion

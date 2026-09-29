@@ -29,16 +29,30 @@ const (
 	vmActionKill     = "kill"
 )
 
-// gracefulShutdownTimeout is how long a powerstate=false update waits after
-// one ACPI poweroff. Guests without ACPI need force_power_off. Tests that
-// go through gracefulPowerOff shorten gracefulShutdownInterval.
+// gracefulShutdownTimeout is how long a powerstate=false update, and a
+// destroy or replace, waits after one ACPI poweroff. Guests without ACPI
+// need force_power_off on update. Destroy falls back to kill unless
+// shutdown_on_destroy is graceful. Tests that go through gracefulPowerOff
+// shorten gracefulShutdownInterval.
 var (
 	gracefulShutdownTimeout  = 2 * time.Minute
 	gracefulShutdownInterval = 2 * time.Second
 )
 
-// vmTimeoutsModel is the timeouts block. Update is the graceful poweroff wait.
-// Delete is reserved for a later graceful destroy.
+const (
+	// shutdownOnDestroyGracefulThenKill sends one ACPI poweroff, waits
+	// timeouts.delete, then kills a guest that is still running.
+	shutdownOnDestroyGracefulThenKill = "graceful_then_kill"
+	// shutdownOnDestroyGraceful sends one ACPI poweroff and fails destroy
+	// if the guest does not stop. It does not kill.
+	shutdownOnDestroyGraceful = "graceful"
+	// shutdownOnDestroyKill sends kill and does not wait for ACPI shutdown.
+	shutdownOnDestroyKill = "kill"
+)
+
+// vmTimeoutsModel is the timeouts block. Update is the graceful poweroff
+// wait when powerstate changes to false. Delete is the wait before destroy
+// or replace falls back from that poweroff.
 type vmTimeoutsModel struct {
 	Update types.String `tfsdk:"update"`
 	Delete types.String `tfsdk:"delete"`
@@ -47,17 +61,95 @@ type vmTimeoutsModel struct {
 // shutdownTimeoutFromPlan reads timeouts.update. An unset value uses
 // gracefulShutdownTimeout.
 func shutdownTimeoutFromPlan(plan *VMResourceModel) (time.Duration, error) {
-	if plan == nil || plan.Timeouts == nil || plan.Timeouts.Update.IsNull() || plan.Timeouts.Update.IsUnknown() {
+	if plan == nil || plan.Timeouts == nil {
 		return gracefulShutdownTimeout, nil
 	}
-	timeout, err := time.ParseDuration(strings.TrimSpace(plan.Timeouts.Update.ValueString()))
+	return parseShutdownTimeout(plan.Timeouts.Update, "timeouts.update")
+}
+
+// deleteTimeoutFromState reads timeouts.delete. An unset value uses
+// gracefulShutdownTimeout, the same 2 minute default as an update.
+func deleteTimeoutFromState(data *VMResourceModel) (time.Duration, error) {
+	if data == nil || data.Timeouts == nil {
+		return gracefulShutdownTimeout, nil
+	}
+	return parseShutdownTimeout(data.Timeouts.Delete, "timeouts.delete")
+}
+
+func parseShutdownTimeout(value types.String, name string) (time.Duration, error) {
+	if value.IsNull() || value.IsUnknown() {
+		return gracefulShutdownTimeout, nil
+	}
+	raw := value.ValueString()
+	timeout, err := time.ParseDuration(strings.TrimSpace(raw))
 	if err != nil {
-		return 0, fmt.Errorf("timeouts.update %q is not a duration: %w", plan.Timeouts.Update.ValueString(), err)
+		return 0, fmt.Errorf("%s %q is not a duration: %w", name, raw, err)
 	}
 	if timeout < 0 {
-		return 0, fmt.Errorf("timeouts.update must not be negative")
+		return 0, fmt.Errorf("%s must not be negative", name)
 	}
 	return timeout, nil
+}
+
+// shutdownOnDestroyMode reads shutdown_on_destroy. Null and unknown use
+// graceful_then_kill so a VM stored before the attribute existed still gets
+// an ACPI shutdown on destroy.
+func shutdownOnDestroyMode(data *VMResourceModel) (string, error) {
+	if data == nil || data.ShutdownOnDestroy.IsNull() || data.ShutdownOnDestroy.IsUnknown() {
+		return shutdownOnDestroyGracefulThenKill, nil
+	}
+	switch mode := data.ShutdownOnDestroy.ValueString(); mode {
+	case shutdownOnDestroyGracefulThenKill, shutdownOnDestroyGraceful, shutdownOnDestroyKill:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("shutdown_on_destroy %q must be %s, %s, or %s",
+			mode, shutdownOnDestroyGracefulThenKill, shutdownOnDestroyGraceful, shutdownOnDestroyKill)
+	}
+}
+
+// stopVMForDelete stops a running VM before Delete removes it. Replace uses
+// the same path. The default posts one ACPI poweroff through gracefulPowerOff
+// and, if the guest is still running when timeouts.delete elapses, kills it.
+// A guest that ignores ACPI waits out that timeout. graceful fails instead of
+// killing. kill skips the ACPI shutdown and cuts power immediately. A VM that
+// is already stopped is left alone.
+func (r *VMResource) stopVMForDelete(ctx context.Context, data *VMResourceModel) error {
+	mode, err := shutdownOnDestroyMode(data)
+	if err != nil {
+		return err
+	}
+	tflog.Debug(ctx, fmt.Sprintf("shutdown_on_destroy for VM %s is %s", data.Id.ValueString(), mode))
+	if mode == shutdownOnDestroyKill {
+		return r.killRunningVM(ctx, data)
+	}
+
+	timeout, err := deleteTimeoutFromState(data)
+	if err != nil {
+		return err
+	}
+	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
+	return r.vmApi.gracefulPowerOff(ctx, data.Id.ValueString(), data.Name.ValueString(), timeout, mode == shutdownOnDestroyGracefulThenKill)
+}
+
+// killRunningVM is the previous destroy behavior: kill a VM that is still
+// running, and leave a stopped VM alone.
+func (r *VMResource) killRunningVM(ctx context.Context, data *VMResourceModel) error {
+	currentPowerState, err := r.vmApi.isVMRunning(ctx, data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("checking power state before deletion: %w", err)
+	}
+	if currentPowerState == nil {
+		return errors.New("checking power state before deletion: empty power state")
+	}
+	tflog.Debug(ctx, fmt.Sprintf("Current vm power state is %v", *currentPowerState))
+	if !*currentPowerState {
+		return nil
+	}
+	tflog.Debug(ctx, "VM is running, killing it before deletion")
+	if err := r.vmApi.killVM(ctx, data); err != nil {
+		return fmt.Errorf("killing VM before deletion: %w", err)
+	}
+	return nil
 }
 
 // durationValidator checks that a timeout is a Go duration, such as 90s or 2m.
