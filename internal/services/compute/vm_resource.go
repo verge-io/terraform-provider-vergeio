@@ -134,6 +134,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			"machine": schema.Int32Attribute{
 				MarkdownDescription: "Machine",
 				Computed:            true,
+				// Assigned once. Without this, every VM update plans it as unknown.
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.UseStateForUnknown(),
+				},
 			},
 
 			"name": schema.StringAttribute{
@@ -421,6 +425,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"machine": schema.Int32Attribute{
 							Optional: true,
 							Computed: true,
+							// The NIC stays on the same machine across an in-place VM update.
+							PlanModifiers: []planmodifier.Int32{
+								int32planmodifier.UseStateForUnknown(),
+							},
 						},
 						"name": schema.StringAttribute{
 							MarkdownDescription: "NIC name. Renaming the NIC updates it in place and keeps its id and MAC address.",
@@ -465,6 +473,8 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Optional:            true,
 							Computed:            true,
 							PlanModifiers: []planmodifier.String{
+								// Copies state only when configuration omits the address.
+								// A configured value, including an unknown one, is left alone.
 								stringplanmodifier.UseStateForUnknown(),
 							},
 						},
@@ -479,6 +489,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"asset": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 						},
 					},
 				},
@@ -503,6 +516,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"machine": schema.Int32Attribute{
 							Computed: true,
 							Optional: true,
+							// The drive stays on the same machine across an in-place VM update.
+							PlanModifiers: []planmodifier.Int32{
+								int32planmodifier.UseStateForUnknown(),
+							},
 						},
 						"name": schema.StringAttribute{
 							MarkdownDescription: "Drive name. Renaming the drive updates it in place and keeps its key.",
@@ -544,6 +561,11 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"preferred_tier": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
+							// VergeOS assigns the system default tier when this is omitted,
+							// and a later VM update does not move the drive.
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 							Validators: []validator.String{
 								// Validate string value must be one of the allowed values
 								stringvalidator.OneOf("1", "2", "3", "4", "5"),
@@ -564,6 +586,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"asset": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 						},
 						"orderid": schema.Int32Attribute{
 							Optional: true,
@@ -583,10 +608,16 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"key": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 						},
 						"machine": schema.Int32Attribute{
 							Computed: true,
 							Optional: true,
+							PlanModifiers: []planmodifier.Int32{
+								int32planmodifier.UseStateForUnknown(),
+							},
 						},
 						// "machine_type": schema.StringAttribute{
 						// 	Optional: true,
@@ -631,10 +662,16 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 								"key": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									PlanModifiers: []planmodifier.Int32{
+										int32planmodifier.UseStateForUnknown(),
+									},
 								},
 								"machine_device": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									PlanModifiers: []planmodifier.Int32{
+										int32planmodifier.UseStateForUnknown(),
+									},
 								},
 								"guest_reset": schema.BoolAttribute{
 									Optional: true,
@@ -652,10 +689,16 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 								"key": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									PlanModifiers: []planmodifier.Int32{
+										int32planmodifier.UseStateForUnknown(),
+									},
 								},
 								"machine_device": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									PlanModifiers: []planmodifier.Int32{
+										int32planmodifier.UseStateForUnknown(),
+									},
 								},
 								"model": schema.StringAttribute{
 									Optional: true,
@@ -673,10 +716,16 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 								"key": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									PlanModifiers: []planmodifier.Int32{
+										int32planmodifier.UseStateForUnknown(),
+									},
 								},
 								"machine_device": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									PlanModifiers: []planmodifier.Int32{
+										int32planmodifier.UseStateForUnknown(),
+									},
 								},
 								"profile_type": schema.StringAttribute{
 									Optional: true,

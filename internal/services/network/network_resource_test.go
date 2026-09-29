@@ -7,7 +7,12 @@ import (
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"terraform-provider-vergeio/internal/client"
 )
@@ -102,6 +107,156 @@ func TestNetworkResource_Schema(t *testing.T) {
 	// Check schema description
 	if resp.Schema.MarkdownDescription != "Network or Vnet resource in VergeIO" {
 		t.Errorf("expected description 'Network or Vnet resource in VergeIO', got '%s'", resp.Schema.MarkdownDescription)
+	}
+
+	// need_restart is set by a staged update, so the plan must stay unknown.
+	if len(needRestartAttr.PlanModifiers) != 0 {
+		t.Fatalf("need_restart has %d plan modifiers, want 0", len(needRestartAttr.PlanModifiers))
+	}
+}
+
+func TestNetworkResource_StableComputedPlanModifiers(t *testing.T) {
+	networkResource := NewNetworkResource()
+	resp := &fwresource.SchemaResponse{}
+	networkResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+
+	keepState := stringplanmodifier.UseStateForUnknown().Description(context.Background())
+	keepStateInt := int32planmodifier.UseStateForUnknown().Description(context.Background())
+
+	networkType := networkStringAttr(t, resp.Schema, "type")
+	assertNetworkStringModifiers(t, "type", networkType.PlanModifiers, keepState)
+	assertNetworkStringKeepsState(t, "type", networkType.PlanModifiers, "external", "internal")
+
+	layer2Type := networkStringAttr(t, resp.Schema, "layer2_type")
+	assertNetworkStringModifiers(t, "layer2_type", layer2Type.PlanModifiers, keepState)
+	assertNetworkStringKeepsState(t, "layer2_type", layer2Type.PlanModifiers, "vlan", "vxlan")
+
+	ipType := networkStringAttr(t, resp.Schema, "ipaddress_type")
+	assertNetworkStringModifiers(t, "ipaddress_type", ipType.PlanModifiers, keepState)
+	assertNetworkStringKeepsState(t, "ipaddress_type", ipType.PlanModifiers, "none", "static")
+
+	layer2ID := networkInt32Attr(t, resp.Schema, "layer2_id")
+	assertNetworkInt32Modifiers(t, "layer2_id", layer2ID.PlanModifiers, keepStateInt)
+	assertNetworkInt32KeepsState(t, "layer2_id", layer2ID.PlanModifiers, 1000, 1001)
+
+	mtu := networkInt32Attr(t, resp.Schema, "mtu")
+	assertNetworkInt32Modifiers(t, "mtu", mtu.PlanModifiers, keepStateInt)
+	assertNetworkInt32KeepsState(t, "mtu", mtu.PlanModifiers, 1500, 9000)
+
+	interfaceVnet := networkInt32Attr(t, resp.Schema, "interface_vnet")
+	assertNetworkInt32Modifiers(t, "interface_vnet", interfaceVnet.PlanModifiers, keepStateInt)
+	assertNetworkInt32KeepsState(t, "interface_vnet", interfaceVnet.PlanModifiers, 4, 5)
+}
+
+func networkStringAttr(t *testing.T, s schema.Schema, name string) schema.StringAttribute {
+	t.Helper()
+	attr, ok := s.Attributes[name].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("%s is not a string attribute", name)
+	}
+	return attr
+}
+
+func networkInt32Attr(t *testing.T, s schema.Schema, name string) schema.Int32Attribute {
+	t.Helper()
+	attr, ok := s.Attributes[name].(schema.Int32Attribute)
+	if !ok {
+		t.Fatalf("%s is not an int32 attribute", name)
+	}
+	return attr
+}
+
+func assertNetworkStringModifiers(t *testing.T, name string, got []planmodifier.String, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d plan modifiers, want %d", name, len(got), len(want))
+	}
+	for i := range want {
+		if desc := got[i].Description(context.Background()); desc != want[i] {
+			t.Errorf("%s modifier %d = %q, want %q", name, i, desc, want[i])
+		}
+	}
+}
+
+func assertNetworkInt32Modifiers(t *testing.T, name string, got []planmodifier.Int32, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d plan modifiers, want %d", name, len(got), len(want))
+	}
+	for i := range want {
+		if desc := got[i].Description(context.Background()); desc != want[i] {
+			t.Errorf("%s modifier %d = %q, want %q", name, i, desc, want[i])
+		}
+	}
+}
+
+func networkPriorState() tfsdk.State {
+	return tfsdk.State{Raw: tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}, map[string]tftypes.Value{})}
+}
+
+func assertNetworkStringKeepsState(t *testing.T, name string, mods []planmodifier.String, prior, next string) {
+	t.Helper()
+	plan := types.StringUnknown()
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringNull(),
+			PlanValue:   plan,
+			StateValue:  types.StringValue(prior),
+			State:       networkPriorState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.IsUnknown() || plan.ValueString() != prior {
+		t.Fatalf("%s omitted config plan = %s, want %q", name, plan, prior)
+	}
+
+	plan = types.StringValue(next)
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringValue(next),
+			PlanValue:   plan,
+			StateValue:  types.StringValue(prior),
+			State:       networkPriorState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.ValueString() != next {
+		t.Fatalf("%s configured plan = %s, want %q", name, plan, next)
+	}
+}
+
+func assertNetworkInt32KeepsState(t *testing.T, name string, mods []planmodifier.Int32, prior, next int32) {
+	t.Helper()
+	plan := types.Int32Unknown()
+	for _, mod := range mods {
+		resp := &planmodifier.Int32Response{PlanValue: plan}
+		mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+			ConfigValue: types.Int32Null(),
+			PlanValue:   plan,
+			StateValue:  types.Int32Value(prior),
+			State:       networkPriorState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.IsUnknown() || plan.ValueInt32() != prior {
+		t.Fatalf("%s omitted config plan = %s, want %d", name, plan, prior)
+	}
+
+	plan = types.Int32Value(next)
+	for _, mod := range mods {
+		resp := &planmodifier.Int32Response{PlanValue: plan}
+		mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+			ConfigValue: types.Int32Value(next),
+			PlanValue:   plan,
+			StateValue:  types.Int32Value(prior),
+			State:       networkPriorState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.ValueInt32() != next {
+		t.Fatalf("%s configured plan = %s, want %d", name, plan, next)
 	}
 }
 

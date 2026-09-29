@@ -10,7 +10,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"terraform-provider-vergeio/internal/client"
 )
@@ -129,11 +131,76 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
 		stringplanmodifier.RequiresReplaceIfConfigured().Description(context.Background()),
 	)
+	assertStringKeepsPriorState(t, "vergeio_drive.key", driveKey.PlanModifiers, "45", "46")
+	assertStringKeepsPriorState(t, "vergeio_nic.id", nicID.PlanModifiers, "98", "99")
 
 	nicMAC := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "macaddress")
 	assertPlanModifiers(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers,
 		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
 	)
+	// An omitted MAC keeps the server-assigned address. A configured address,
+	// including one that is still unknown, is not replaced with state.
+	assertStringKeepsPriorState(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers, "f0:db:30:26:43:0c", "52:54:00:11:22:33")
+	assertStringLeavesUnknownConfig(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers, "f0:db:30:26:43:0c")
+
+	keepState := stringplanmodifier.UseStateForUnknown().Description(context.Background())
+	keepStateInt := int32planmodifier.UseStateForUnknown().Description(context.Background())
+
+	driveMachine := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_drive", "machine")
+	assertInt32PlanModifiers(t, "vergeio_drive.machine", driveMachine.PlanModifiers, keepStateInt)
+	assertInt32KeepsPriorState(t, "vergeio_drive.machine", driveMachine.PlanModifiers, 66, 7)
+
+	driveTier := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "preferred_tier")
+	assertPlanModifiers(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, keepState)
+	assertStringKeepsPriorState(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, "4", "1")
+
+	driveAsset := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "asset")
+	assertPlanModifiers(t, "vergeio_drive.asset", driveAsset.PlanModifiers, keepState)
+	assertStringKeepsPriorState(t, "vergeio_drive.asset", driveAsset.PlanModifiers, "48", "49")
+
+	nicMachine := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_nic", "machine")
+	assertInt32PlanModifiers(t, "vergeio_nic.machine", nicMachine.PlanModifiers, keepStateInt)
+	assertInt32KeepsPriorState(t, "vergeio_nic.machine", nicMachine.PlanModifiers, 66, 7)
+
+	nicAsset := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "asset")
+	assertPlanModifiers(t, "vergeio_nic.asset", nicAsset.PlanModifiers, keepState)
+
+	deviceKey := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_device", "key")
+	assertPlanModifiers(t, "vergeio_device.key", deviceKey.PlanModifiers, keepState)
+	assertStringKeepsPriorState(t, "vergeio_device.key", deviceKey.PlanModifiers, "12", "13")
+
+	deviceMachine := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_device", "machine")
+	assertInt32PlanModifiers(t, "vergeio_device.machine", deviceMachine.PlanModifiers, keepStateInt)
+
+	for _, setting := range []string{"usb_settings", "tpm_settings", "nvidia_vgpu_settings"} {
+		settingKey := deviceSettingInt32(t, resp.Schema.Blocks, setting, "key")
+		assertInt32PlanModifiers(t, "vergeio_device."+setting+".key", settingKey.PlanModifiers, keepStateInt)
+		settingMachine := deviceSettingInt32(t, resp.Schema.Blocks, setting, "machine_device")
+		assertInt32PlanModifiers(t, "vergeio_device."+setting+".machine_device", settingMachine.PlanModifiers, keepStateInt)
+	}
+
+	machineAttr, ok := resp.Schema.Attributes["machine"].(schema.Int32Attribute)
+	if !ok {
+		t.Fatal("machine should be an int32 attribute")
+	}
+	assertInt32PlanModifiers(t, "machine", machineAttr.PlanModifiers, keepStateInt)
+	assertInt32KeepsPriorState(t, "machine", machineAttr.PlanModifiers, 66, 7)
+	assertInt32StaysUnknownOnCreate(t, "machine", machineAttr.PlanModifiers)
+
+	// These can change on update, so an unrelated plan must keep them unknown.
+	if mods := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "ipaddress").PlanModifiers; len(mods) != 0 {
+		t.Fatalf("vergeio_nic.ipaddress has %d plan modifiers, want 0", len(mods))
+	}
+	if mods := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_device", "status").PlanModifiers; len(mods) != 0 {
+		t.Fatalf("vergeio_device.status has %d plan modifiers, want 0", len(mods))
+	}
+	ips, ok := resp.Schema.Attributes["guest_agent_ips"].(schema.ListAttribute)
+	if !ok {
+		t.Fatal("guest_agent_ips should be a list attribute")
+	}
+	if len(ips.PlanModifiers) != 0 {
+		t.Fatalf("guest_agent_ips has %d plan modifiers, want 0", len(ips.PlanModifiers))
+	}
 }
 
 func nestedStringAttr(t *testing.T, blocks map[string]schema.Block, blockName, attrName string) schema.StringAttribute {
@@ -172,6 +239,148 @@ func assertPlanModifiers(t *testing.T, name string, got []planmodifier.String, w
 		if desc != want[i] {
 			t.Errorf("%s modifier %d = %q, want %q", name, i, desc, want[i])
 		}
+	}
+}
+
+func assertInt32PlanModifiers(t *testing.T, name string, got []planmodifier.Int32, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d plan modifiers, want %d", name, len(got), len(want))
+	}
+	for i := range want {
+		desc := got[i].Description(context.Background())
+		if desc != want[i] {
+			t.Errorf("%s modifier %d = %q, want %q", name, i, desc, want[i])
+		}
+	}
+}
+
+func deviceSettingInt32(t *testing.T, blocks map[string]schema.Block, setting, name string) schema.Int32Attribute {
+	t.Helper()
+	block, ok := blocks["vergeio_device"].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatal("vergeio_device is not a list nested block")
+	}
+	parent, ok := block.NestedObject.Attributes[setting].(schema.SingleNestedAttribute)
+	if !ok {
+		t.Fatalf("vergeio_device.%s is not a single nested attribute", setting)
+	}
+	attr, ok := parent.Attributes[name].(schema.Int32Attribute)
+	if !ok {
+		t.Fatalf("vergeio_device.%s.%s is not an int32 attribute", setting, name)
+	}
+	return attr
+}
+
+// priorResourceState is a non-null resource state. UseStateForUnknown does
+// nothing while state is null, which is create.
+func priorResourceState() tfsdk.State {
+	return tfsdk.State{Raw: tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}, map[string]tftypes.Value{})}
+}
+
+func assertStringKeepsPriorState(t *testing.T, name string, mods []planmodifier.String, prior, next string) {
+	t.Helper()
+	plan := types.StringUnknown()
+	var replace bool
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringNull(),
+			PlanValue:   plan,
+			StateValue:  types.StringValue(prior),
+			State:       priorResourceState(),
+		}, resp)
+		plan = resp.PlanValue
+		replace = replace || resp.RequiresReplace
+	}
+	if plan.IsUnknown() || plan.ValueString() != prior {
+		t.Fatalf("%s omitted config plan = %s, want %q", name, plan, prior)
+	}
+	if replace {
+		t.Fatalf("%s omitted config planned a replacement", name)
+	}
+
+	plan = types.StringValue(next)
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringValue(next),
+			PlanValue:   plan,
+			StateValue:  types.StringValue(prior),
+			State:       priorResourceState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.ValueString() != next {
+		t.Fatalf("%s configured plan = %s, want %q", name, plan, next)
+	}
+}
+
+func assertStringLeavesUnknownConfig(t *testing.T, name string, mods []planmodifier.String, prior string) {
+	t.Helper()
+	plan := types.StringUnknown()
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringUnknown(),
+			PlanValue:   plan,
+			StateValue:  types.StringValue(prior),
+			State:       priorResourceState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if !plan.IsUnknown() {
+		t.Fatalf("%s unknown config plan = %s, want unknown", name, plan)
+	}
+}
+
+func assertInt32KeepsPriorState(t *testing.T, name string, mods []planmodifier.Int32, prior, next int32) {
+	t.Helper()
+	plan := types.Int32Unknown()
+	for _, mod := range mods {
+		resp := &planmodifier.Int32Response{PlanValue: plan}
+		mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+			ConfigValue: types.Int32Null(),
+			PlanValue:   plan,
+			StateValue:  types.Int32Value(prior),
+			State:       priorResourceState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.IsUnknown() || plan.ValueInt32() != prior {
+		t.Fatalf("%s omitted config plan = %s, want %d", name, plan, prior)
+	}
+
+	plan = types.Int32Value(next)
+	for _, mod := range mods {
+		resp := &planmodifier.Int32Response{PlanValue: plan}
+		mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+			ConfigValue: types.Int32Value(next),
+			PlanValue:   plan,
+			StateValue:  types.Int32Value(prior),
+			State:       priorResourceState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if plan.ValueInt32() != next {
+		t.Fatalf("%s configured plan = %s, want %d", name, plan, next)
+	}
+}
+
+func assertInt32StaysUnknownOnCreate(t *testing.T, name string, mods []planmodifier.Int32) {
+	t.Helper()
+	plan := types.Int32Unknown()
+	for _, mod := range mods {
+		resp := &planmodifier.Int32Response{PlanValue: plan}
+		mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
+			ConfigValue: types.Int32Null(),
+			PlanValue:   plan,
+			StateValue:  types.Int32Null(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if !plan.IsUnknown() {
+		t.Fatalf("%s create plan = %s, want unknown", name, plan)
 	}
 }
 

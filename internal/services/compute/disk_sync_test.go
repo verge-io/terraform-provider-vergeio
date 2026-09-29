@@ -125,8 +125,9 @@ func TestSyncDisksUnrelatedVMUpdateDoesNotRewrite(t *testing.T) {
 		OrderId:             types.Int32Value(1),
 		PreserveDriveFormat: types.BoolValue(true),
 	}
-	// Configured fields stay known and equal. Computed fields are unknown,
-	// which is what an update of an unrelated VM attribute produces.
+	// Configured fields stay known and equal. The schema copies prior state
+	// for machine, asset, and preferred_tier. Sync still treats an unknown
+	// plan value as unchanged, so it is not written as 0, false, or "".
 	planDrive := &diskResourceModel{
 		Key:                 stateDrive.Key,
 		Name:                stateDrive.Name,

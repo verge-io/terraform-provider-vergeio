@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -153,36 +154,57 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"need_restart": schema.BoolAttribute{
 				MarkdownDescription: "Whether VergeOS has staged a change that is not live until the network restarts. True after an update when the network was not restarted.",
 				Computed:            true,
+				// Stays unknown on purpose. An update can set this, and the plan
+				// should not claim the previous value will remain.
 			},
 			"type": schema.StringAttribute{
 				MarkdownDescription: "Type of Network",
 				Optional:            true,
 				Computed:            true,
+				// Readonly after create. Updates do not send it.
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"layer2_id": schema.Int32Attribute{
 				MarkdownDescription: "VLAN ID",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.UseStateForUnknown(),
+				},
 			},
 			"mtu": schema.Int32Attribute{
 				MarkdownDescription: "Network MTU",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.UseStateForUnknown(),
+				},
 			},
 			"interface_vnet": schema.Int32Attribute{
 				MarkdownDescription: "Key/ID of the physical network",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.UseStateForUnknown(),
+				},
 			},
 			"ipaddress_type": schema.StringAttribute{
 				MarkdownDescription: "IP address type of the vnet",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"layer2_type": schema.StringAttribute{
 				MarkdownDescription: "Layer2 type of the vnet",
 				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"enable_bonding": schema.BoolAttribute{
 				MarkdownDescription: "Enable bonding",
