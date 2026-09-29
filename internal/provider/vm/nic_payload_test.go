@@ -2,6 +2,7 @@ package vm
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -118,14 +119,52 @@ func TestNICCreatePayloadSendsExplicitFalse(t *testing.T) {
 }
 
 func TestNICIPFromAPI(t *testing.T) {
-	if got := nicIPFromAPI(""); got.ValueString() != "N/A" {
-		t.Fatalf("empty IP = %q, want N/A", got.ValueString())
+	if got := nicIPFromAPI(""); !got.IsNull() {
+		t.Fatalf("empty IP = %#v, want null", got)
 	}
-	if got := nicIPFromAPI("  "); got.ValueString() != "N/A" {
-		t.Fatalf("blank IP = %q, want N/A", got.ValueString())
+	if got := nicIPFromAPI("  "); !got.IsNull() {
+		t.Fatalf("blank IP = %#v, want null", got)
 	}
-	if got := nicIPFromAPI("10.0.0.8"); got.ValueString() != "10.0.0.8" {
-		t.Fatalf("assigned IP = %q", got.ValueString())
+	if got := nicIPFromAPI("10.0.0.8"); got.IsNull() || got.ValueString() != "10.0.0.8" {
+		t.Fatalf("assigned IP = %#v", got)
+	}
+}
+
+func TestNICIPAssignPayloadIncludesRequestedIP(t *testing.T) {
+	data := &nicResourceModel{
+		VNET:      types.Int32Value(26),
+		MAC:       types.StringValue("52:54:00:11:22:33"),
+		IPAddress: types.StringValue("  10.0.0.50  "),
+	}
+	body := jsonObject(t, nicIPAssignPayload(data))
+	requireNumber(t, body, "vnet", 26)
+	requireString(t, body, "mac", "52:54:00:11:22:33")
+	requireString(t, body, "type", "static")
+	requireString(t, body, "ip", "10.0.0.50")
+}
+
+func TestNICIPAssignPayloadOmitsUnsetIP(t *testing.T) {
+	cases := []types.String{
+		types.StringNull(),
+		types.StringUnknown(),
+		types.StringValue(""),
+		types.StringValue("   "),
+	}
+	for _, ip := range cases {
+		data := &nicResourceModel{
+			VNET:      types.Int32Value(26),
+			MAC:       types.StringValue("52:54:00:11:22:33"),
+			IPAddress: ip,
+		}
+		body := jsonObject(t, nicIPAssignPayload(data))
+		requireAbsent(t, body, "ip")
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "N/A") {
+			t.Fatalf("payload contained placeholder N/A: %s", raw)
+		}
 	}
 }
 

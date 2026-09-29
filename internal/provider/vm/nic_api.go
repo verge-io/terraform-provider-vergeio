@@ -67,11 +67,14 @@ type nicAPIPowerStatus struct {
 	PowerState string `json:"powerstate,omitempty"`
 }
 
-// To assign an IP.
+// nicIPAPIResourceModel is the body for POST /vnet_addresses.
+// IP is the address to reserve. An empty IP is omitted so VergeOS
+// assigns the next free address.
 type nicIPAPIResourceModel struct {
 	VNET int32  `json:"vnet,omitempty"`
 	MAC  string `json:"mac,omitempty"`
 	Type string `json:"type,omitempty"`
+	IP   string `json:"ip,omitempty"`
 }
 
 // NIC Endpoints.
@@ -152,7 +155,9 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 			return errors.New("Error assigning an IP to the nic: " + ipError.Error())
 		}
 	} else {
-		data.IPAddress = types.StringValue("N/A")
+		// No address was reserved. Null matches an unset ipaddress.
+		// A placeholder such as "N/A" does not.
+		data.IPAddress = types.StringNull()
 	}
 
 	return nil
@@ -164,11 +169,7 @@ func (nc *NICApi) assignIP(ctx context.Context, data *nicResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Assigning an IP to the nic %v", data.Id.ValueString()))
 	tflog.Debug(ctx, fmt.Sprintf("MAC of the nic %v", data.MAC.ValueString()))
 
-	apiData := nicIPAPIResourceModel{
-		VNET: data.VNET.ValueInt32(),
-		MAC:  data.MAC.ValueString(),
-		Type: "static",
-	}
+	apiData := nicIPAssignPayload(data)
 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
@@ -307,8 +308,8 @@ func (na *NICApi) readNICsByMachine(ctx context.Context, machineID int32) ([]*ni
 		if err := na.readNIC(ctx, model); err != nil {
 			return nil, fmt.Errorf("reading NIC %d: %w", nic.ID.Int(), err)
 		}
-		// createNIC records "N/A" when no address is assigned. Match that so
-		// an import compares equal to the state left by create.
+		// createNIC leaves ipaddress null when no address is assigned. Match
+		// that so an import compares equal to the state left by create.
 		model.IPAddress = nicIPFromAPI(nic.IPAddress)
 		models = append(models, model)
 	}
@@ -326,13 +327,40 @@ func sortNICsForState(nics []vergeos.VMNIC) {
 }
 
 // nicIPFromAPI maps the API address onto the value create stores.
-// An unassigned NIC is recorded as "N/A".
+// An unassigned NIC is null, not a placeholder string.
 func nicIPFromAPI(ip string) types.String {
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
-		return types.StringValue("N/A")
+		return types.StringNull()
 	}
 	return types.StringValue(ip)
+}
+
+// nicIPAssignPayload is the JSON body for POST /vnet_addresses.
+// A configured ipaddress is sent as ip so VergeOS reserves that address.
+// An unset or blank address is omitted, and VergeOS assigns the next free one.
+func nicIPAssignPayload(data *nicResourceModel) nicIPAPIResourceModel {
+	payload := nicIPAPIResourceModel{
+		Type: "static",
+	}
+	if data == nil {
+		return payload
+	}
+	payload.VNET = data.VNET.ValueInt32()
+	payload.MAC = data.MAC.ValueString()
+	if ip := requestedNICIP(data.IPAddress); ip != "" {
+		payload.IP = ip
+	}
+	return payload
+}
+
+// requestedNICIP is the address from configuration.
+// Null, unknown, and blank values are not a request.
+func requestedNICIP(ip types.String) string {
+	if ip.IsNull() || ip.IsUnknown() {
+		return ""
+	}
+	return strings.TrimSpace(ip.ValueString())
 }
 
 // preserveNICConfigFields copies attributes that are not on machine_nics.
