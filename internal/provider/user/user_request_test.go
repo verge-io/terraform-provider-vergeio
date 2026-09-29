@@ -67,6 +67,65 @@ func TestUserUpdateBodyKeepsFalseAndEmpty(t *testing.T) {
 	requireAbsent(t, body, "change_password")
 }
 
+func TestUserUpdateSendsChangedPassword(t *testing.T) {
+	plan := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("new-secret"),
+	}
+	state := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("old-secret"),
+	}
+
+	req, err := userUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsonObject(t, req)
+	requireString(t, body, "password", "new-secret")
+	requireAbsent(t, body, "name")
+	requireAbsent(t, body, "change_password")
+}
+
+func TestUserUpdateOmitsUnchangedPassword(t *testing.T) {
+	plan := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("same-secret"),
+		Enabled:  types.BoolValue(false),
+	}
+	state := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("same-secret"),
+		Enabled:  types.BoolValue(true),
+	}
+
+	req, err := userUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsonObject(t, req)
+	requireBool(t, body, "enabled", false)
+	requireAbsent(t, body, "password")
+}
+
+func TestUserUpdateSendsPasswordWhenStateHasNone(t *testing.T) {
+	plan := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("first-secret"),
+	}
+	state := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringNull(),
+	}
+
+	req, err := userUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsonObject(t, req)
+	requireString(t, body, "password", "first-secret")
+}
+
 func TestUserUpdateOmitsUnsetEnabled(t *testing.T) {
 	plan := &UserResourceModel{
 		Name:    types.StringValue("ada"),
