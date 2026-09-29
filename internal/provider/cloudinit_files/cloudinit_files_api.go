@@ -18,7 +18,6 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-
 // IClient interface.
 var _ vergeio.IClient = &CloudinitFileApi{}
 
@@ -186,8 +185,9 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 
 	// Build filter
 	var listOpts []vergeos.ListOption
-	if fn := data.FilterName.ValueString(); fn != "" {
-		listOpts = append(listOpts, vergeos.WithFilter(fmt.Sprintf("name eq '%s'", fn)))
+	fn := data.FilterName.ValueString()
+	if fn != "" {
+		listOpts = append(listOpts, vergeos.WithFilter(fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))))
 	}
 
 	// Call the SDK API
@@ -197,6 +197,8 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", cloudinitFiles))
+
+	cloudinitFiles = vergeio.KeepExact(cloudinitFiles, fn, func(file vergeos.CloudInitFile) string { return file.Name })
 
 	// Convert SDK cloudinitFiles to API model for existing field mapping logic
 	var cloudinitFileAPIResp []CloudinitFileAPIResourceModel

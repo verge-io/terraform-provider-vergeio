@@ -65,10 +65,11 @@ func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) erro
 	var filterParts []string
 
 	// Add name filter if specified
+	var filterName string
 	if !data.Filter.IsNull() && !data.Filter.IsUnknown() {
-		filterName := data.Filter.ValueString()
+		filterName = data.Filter.ValueString()
 		if filterName != "" {
-			filterParts = append(filterParts, fmt.Sprintf("name eq '%s'", filterName))
+			filterParts = append(filterParts, fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(filterName)))
 		}
 	}
 
@@ -110,6 +111,8 @@ func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) erro
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the tags resource %v", len(tags)))
 
+	tags = vergeio.KeepExact(tags, filterName, func(tag vergeos.Tag) string { return tag.Name })
+
 	// Convert SDK tags to API model for existing field mapping logic
 	var tagsAPIResp []TagAPIModel
 	for _, tag := range tags {
@@ -147,7 +150,7 @@ func (ta *TagsApi) getCategoryIDByNameSDK(ctx context.Context, name string) (int
 
 	// Call the SDK API with filter
 	listOpts := []vergeos.ListOption{
-		vergeos.WithFilter(fmt.Sprintf("name eq '%s'", name)),
+		vergeos.WithFilter(fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(name))),
 	}
 
 	categories, err := ta.sdk.TagCategories.List(ctx, listOpts...)
@@ -158,6 +161,7 @@ func (ta *TagsApi) getCategoryIDByNameSDK(ctx context.Context, name string) (int
 		return 0, err
 	}
 
+	categories = vergeio.KeepExact(categories, name, func(category vergeos.TagCategory) string { return category.Name })
 	if len(categories) == 0 {
 		return 0, fmt.Errorf("category '%s' not found", name)
 	}

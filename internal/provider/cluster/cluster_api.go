@@ -14,7 +14,6 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-
 // IClient interface.
 var _ vergeio.IClient = &ClusterApi{}
 
@@ -57,8 +56,9 @@ func (va *ClusterApi) readClusters(ctx context.Context, data *ClusterDataSourceM
 	opts := vergeio.Options{Fields: "description,name,$key"}
 
 	// Build filter
-	if fn := data.FilterName.ValueString(); fn != "" {
-		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
+	fn := data.FilterName.ValueString()
+	if fn != "" {
+		opts.Filter = fmt.Sprintf("name eq '%s'", vergeio.EscapeFilterValue(fn))
 	}
 
 	// Call the SDK API
@@ -73,6 +73,8 @@ func (va *ClusterApi) readClusters(ctx context.Context, data *ClusterDataSourceM
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", clusters))
+
+	clusters = vergeio.KeepExact(clusters, fn, func(cluster vergeos.Cluster) string { return cluster.Name })
 
 	// Convert SDK clusters to API model for existing field mapping logic
 	var clusterAPIResp []ClusterAPIDataSourceModel
