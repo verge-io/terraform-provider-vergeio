@@ -20,11 +20,7 @@ import (
 var _ vergeio.IClient = &ResourceGroupsApi{}
 
 func NewResourceGroupsApi(c *vergeio.Client) *ResourceGroupsApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &ResourceGroupsApi{
 		name:   "Resource Groups Api",
 		client: c,

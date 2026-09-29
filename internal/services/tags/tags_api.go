@@ -21,11 +21,7 @@ import (
 var _ vergeio.IClient = &TagsApi{}
 
 func NewTagsApi(c *vergeio.Client) *TagsApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &TagsApi{
 		name:   "Tags Api",
 		client: c,

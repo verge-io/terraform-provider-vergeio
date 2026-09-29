@@ -120,11 +120,7 @@ const (
 var _ vergeio.IClient = &DiskApi{}
 
 func NewDiskApi(c *vergeio.Client) *DiskApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &DiskApi{
 		name:   "Disk Api",
 		client: c,

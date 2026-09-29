@@ -12,10 +12,18 @@ See the docs folder for examples
 
 ## Configuration Reference
 
-- **host** - (**Required**) URL or IP address for the system or tenant.
-- **username** - (**Required**) Username for the system or tenant.
-- **password** - (**Required**) Password for the provided username.
-- **insecure** (**Optional**) Required for systems with self-signed SSL certificates
+Every argument is optional. A value in the provider block wins over the environment variable for the same setting. Authentication is an API key, or a username and password. When both are set, the API key is used.
+
+| Argument | Environment variable | Description |
+| --- | --- | --- |
+| `host` | `VERGEOS_HOST` | Hostname or IP address for the system or tenant. |
+| `username` | `VERGEOS_USERNAME` | Username. Required when `api_key` is unset. |
+| `password` | `VERGEOS_PASSWORD` | Password for `username`. Required when `api_key` is unset. |
+| `api_key` | `VERGEOS_API_KEY` | API key sent as a bearer token. |
+| `insecure` | `VERGEOS_INSECURE` | Skip TLS certificate verification. Defaults to `false`. `VERGEOS_VERIFY_SSL=false` means the same thing. |
+| `timeout` | `VERGEOS_TIMEOUT` | HTTP request timeout in seconds. Defaults to `60`. |
+
+The provider fails during configuration when `host` is missing or when neither an API key nor both a username and password are available. The error names each missing value.
 
 ```
 provider "vergeio" {
@@ -24,6 +32,18 @@ provider "vergeio" {
 	password = "my_password"
 	insecure = false
 }
+```
+
+```
+provider "vergeio" {
+	host = "Hostname_or_ip"
+	api_key = "my_api_key"
+}
+```
+
+```
+# VERGEOS_HOST, VERGEOS_API_KEY or VERGEOS_USERNAME and VERGEOS_PASSWORD
+provider "vergeio" {}
 ```
 
 ## Resources
@@ -78,6 +98,8 @@ provider "vergeio" {
 	username = "username"
 	password = "password"
 	insecure = false
+	# api_key = "my_api_key" # used instead of username and password
+	# timeout = 60           # seconds; VERGEOS_TIMEOUT when omitted
 }
 
 resource "vergeio_vm" "new_vm" {
