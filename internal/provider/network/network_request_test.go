@@ -79,6 +79,15 @@ func TestNetworkCreateRequestSendsExplicitFalse(t *testing.T) {
 	}
 }
 
+func TestNetworkPowerStateString(t *testing.T) {
+	if got := networkPowerStateString(false); got != "false" {
+		t.Fatalf("networkPowerStateString(false) = %q, want false", got)
+	}
+	if got := networkPowerStateString(true); got != "true" {
+		t.Fatalf("networkPowerStateString(true) = %q, want true", got)
+	}
+}
+
 func marshalRequest(t *testing.T, req any) string {
 	t.Helper()
 	raw, err := json.Marshal(req)

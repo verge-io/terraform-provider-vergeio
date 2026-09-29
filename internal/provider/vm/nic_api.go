@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -296,6 +297,75 @@ func (nc *NICApi) readNIC(ctx context.Context, data *nicResourceModel) error {
 	tflog.Debug(ctx, "NIC Data was successfully read from the API")
 
 	return nil
+}
+
+// readNICsByMachine lists machine_nics for a VM machine and reads each row.
+// machineID is the VM's machine id, not the VM row key. Order is name, then
+// id, so two reads return the same block order.
+func (na *NICApi) readNICsByMachine(ctx context.Context, machineID int32) ([]*nicResourceModel, error) {
+	nics, err := na.sdk.VMNICs.List(ctx, int(machineID))
+	if err != nil {
+		return nil, fmt.Errorf("listing NICs for machine %d: %w", machineID, err)
+	}
+	sortNICsForState(nics)
+	if len(nics) == 0 {
+		return nil, nil
+	}
+
+	models := make([]*nicResourceModel, 0, len(nics))
+	for _, nic := range nics {
+		model := &nicResourceModel{Id: types.StringValue(strconv.Itoa(nic.ID.Int()))}
+		if err := na.readNIC(ctx, model); err != nil {
+			return nil, fmt.Errorf("reading NIC %d: %w", nic.ID.Int(), err)
+		}
+		// createNIC records "N/A" when no address is assigned. Match that so
+		// an import compares equal to the state left by create.
+		model.IPAddress = nicIPFromAPI(nic.IPAddress)
+		models = append(models, model)
+	}
+	return models, nil
+}
+
+// sortNICsForState orders NICs the way nested blocks are stored.
+func sortNICsForState(nics []vergeos.VMNIC) {
+	sort.SliceStable(nics, func(i, j int) bool {
+		if nics[i].Name != nics[j].Name {
+			return nics[i].Name < nics[j].Name
+		}
+		return nics[i].ID.Int() < nics[j].ID.Int()
+	})
+}
+
+// nicIPFromAPI maps the API address onto the value create stores.
+// An unassigned NIC is recorded as "N/A".
+func nicIPFromAPI(ip string) types.String {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return types.StringValue("N/A")
+	}
+	return types.StringValue(ip)
+}
+
+// preserveNICConfigFields copies attributes that are not on machine_nics.
+// assign_ipaddress is a create-time flag, so a refresh keeps the configured value.
+func preserveNICConfigFields(prior, current []*nicResourceModel) {
+	byID := make(map[string]*nicResourceModel, len(prior))
+	for _, nic := range prior {
+		if nic == nil || nic.Id.IsNull() || nic.Id.ValueString() == "" {
+			continue
+		}
+		byID[nic.Id.ValueString()] = nic
+	}
+	for _, nic := range current {
+		if nic == nil || nic.Id.IsNull() {
+			continue
+		}
+		old, ok := byID[nic.Id.ValueString()]
+		if !ok {
+			continue
+		}
+		nic.AssignIPAddress = old.AssignIPAddress
+	}
 }
 
 // Delete the NIC from the API.

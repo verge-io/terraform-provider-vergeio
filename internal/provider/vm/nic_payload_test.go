@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/verge-io/govergeos"
 )
 
 // TestNICCreatePayloadOmitsUnsetFields locks the contract behind the disabled
@@ -54,6 +55,55 @@ func TestNICCreatePayloadSendsExplicitFalse(t *testing.T) {
 	enabled, ok := payload["enabled"].(bool)
 	if !ok || enabled {
 		t.Fatalf("explicit enabled=false was not sent, payload=%#v", payload)
+	}
+}
+
+func TestNICIPFromAPI(t *testing.T) {
+	if got := nicIPFromAPI(""); got.ValueString() != "N/A" {
+		t.Fatalf("empty IP = %q, want N/A", got.ValueString())
+	}
+	if got := nicIPFromAPI("  "); got.ValueString() != "N/A" {
+		t.Fatalf("blank IP = %q, want N/A", got.ValueString())
+	}
+	if got := nicIPFromAPI("10.0.0.8"); got.ValueString() != "10.0.0.8" {
+		t.Fatalf("assigned IP = %q", got.ValueString())
+	}
+}
+
+func TestPreserveNICConfigFields(t *testing.T) {
+	prior := []*nicResourceModel{{
+		Id:              types.StringValue("7"),
+		AssignIPAddress: types.BoolValue(true),
+	}}
+	current := []*nicResourceModel{{
+		Id:              types.StringValue("7"),
+		Name:            types.StringValue("nic0"),
+		AssignIPAddress: types.BoolNull(),
+	}}
+	preserveNICConfigFields(prior, current)
+	if !current[0].AssignIPAddress.ValueBool() {
+		t.Fatal("assign_ipaddress was not kept from prior state")
+	}
+
+	imported := []*nicResourceModel{{
+		Id:   types.StringValue("7"),
+		Name: types.StringValue("nic0"),
+	}}
+	preserveNICConfigFields(nil, imported)
+	if !imported[0].AssignIPAddress.IsNull() {
+		t.Fatal("import with no prior state should leave assign_ipaddress unset")
+	}
+}
+
+func TestSortNICsForState(t *testing.T) {
+	nics := []vergeos.VMNIC{
+		{ID: vergeos.FlexInt(3), Name: "nic1"},
+		{ID: vergeos.FlexInt(1), Name: "nic0"},
+		{ID: vergeos.FlexInt(2), Name: "nic1"},
+	}
+	sortNICsForState(nics)
+	if nics[0].Name != "nic0" || nics[1].ID.Int() != 2 || nics[2].ID.Int() != 3 {
+		t.Fatalf("unexpected NIC order: %#v", nics)
 	}
 }
 

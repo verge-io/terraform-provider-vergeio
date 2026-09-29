@@ -65,6 +65,13 @@ func TestNetworkResource_Schema(t *testing.T) {
 		t.Error("enabled should be optional")
 	}
 
+	// powerstate is read back after import, including when the config omits it.
+	if powerAttr, ok := resp.Schema.Attributes["powerstate"]; !ok {
+		t.Error("powerstate attribute should exist")
+	} else if !powerAttr.IsOptional() || !powerAttr.IsComputed() {
+		t.Error("powerstate should be optional and computed")
+	}
+
 	// Check schema description
 	if resp.Schema.MarkdownDescription != "Network or Vnet resource in VergeIO" {
 		t.Errorf("expected description 'Network or Vnet resource in VergeIO', got '%s'", resp.Schema.MarkdownDescription)

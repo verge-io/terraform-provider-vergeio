@@ -137,8 +137,9 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Computed: true,
 			},
 			"powerstate": schema.StringAttribute{
-				MarkdownDescription: "Power state of the network",
+				MarkdownDescription: "Power state of the network. Read from the API as \"true\" or \"false\".",
 				Optional:            true,
+				Computed:            true,
 			},
 			"type": schema.StringAttribute{
 				MarkdownDescription: "Type of Network",

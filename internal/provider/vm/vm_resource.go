@@ -1006,6 +1006,16 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	data.CloudInitDataSource = plannedCloudInitDS
 	data.CloudInitFiles = plannedCloudInitFiles
 
+	// Store drives and NICs from the same read used after import, so the
+	// state written here matches a later refresh.
+	if err := r.readDrivesAndNICs(ctx, &data); err != nil {
+		resp.Diagnostics.AddError(
+			"Error Fetching Drives and NICs",
+			err.Error(),
+		)
+		return
+	}
+
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
@@ -1041,8 +1051,47 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		return
 	}
 
+	// Drives and NICs live in machine_drives and machine_nics, keyed by the
+	// VM's machine id. ImportState only sets id, so this is what puts the
+	// nested blocks back into state. Without it the next plan adds devices
+	// that already exist and apply fails the consistency check.
+	if err := r.readDrivesAndNICs(ctx, &data); err != nil {
+		resp.Diagnostics.AddError(
+			"Error Fetching Drives and NICs",
+			err.Error(),
+		)
+		return
+	}
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// readDrivesAndNICs replaces nested drive and NIC blocks from the API.
+// Attributes that the device APIs do not return are copied from prior state.
+func (r *VMResource) readDrivesAndNICs(ctx context.Context, data *VMResourceModel) error {
+	if data.Machine.IsNull() || data.Machine.IsUnknown() {
+		return nil
+	}
+
+	priorDisks := data.Disks
+	priorNICs := data.NICs
+	machineID := data.Machine.ValueInt32()
+
+	disks, err := r.diskApi.readDisksByMachine(ctx, machineID)
+	if err != nil {
+		return err
+	}
+	nics, err := r.nicApi.readNICsByMachine(ctx, machineID)
+	if err != nil {
+		return err
+	}
+
+	preserveDiskConfigFields(priorDisks, disks)
+	preserveNICConfigFields(priorNICs, nics)
+	data.Disks = disks
+	data.NICs = nics
+	return nil
 }
 
 // Update a VM.
@@ -1149,6 +1198,14 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			(machineTypesAreEquivalent(planVal, stateVal) || machineTypesAreEquivalent(stateVal, planVal)) {
 			stateData.MachineType = planData.MachineType
 		}
+	}
+
+	if err := r.readDrivesAndNICs(ctx, &stateData); err != nil {
+		resp.Diagnostics.AddError(
+			"Error Fetching Drives and NICs",
+			err.Error(),
+		)
+		return
 	}
 
 	// Save updated data into Terraform state

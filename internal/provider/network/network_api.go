@@ -246,6 +246,16 @@ func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceMo
 	return nil
 }
 
+// networkPowerStateString is the Terraform value for the API powerstate bool.
+// VMs store that bool directly. Network configurations set the strings
+// "true" and "false".
+func networkPowerStateString(running bool) string {
+	if running {
+		return "true"
+	}
+	return "false"
+}
+
 // Checks the power state of the network.
 func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkResourceModel) error {
 
@@ -387,6 +397,9 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.IPaddress_Type = types.StringValue(networkAPIResp.IPaddress_Type)
 	data.Layer2_Type = types.StringValue(networkAPIResp.Layer2_Type)
 	data.Enable_Bonding = types.BoolValue(networkAPIResp.Enable_Bonding)
+	// Same source VMs use: the API powerstate bool. The network schema stores
+	// it as the strings "true" and "false", which is what configurations set.
+	data.PowerState = types.StringValue(networkPowerStateString(network.PowerState))
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
