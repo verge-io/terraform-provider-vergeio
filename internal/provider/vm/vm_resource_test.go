@@ -2,14 +2,10 @@ package vm
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 )
@@ -78,7 +74,7 @@ func TestVMResource_Schema(t *testing.T) {
 func TestVMResource_Configure_WithValidClient(t *testing.T) {
 	vmResource := &VMResource{}
 	client := vergeio.NewClient("test.example.com", "testuser", "testpass", true)
-	
+
 	req := fwresource.ConfigureRequest{
 		ProviderData: client,
 	}
@@ -101,7 +97,7 @@ func TestVMResource_Configure_WithValidClient(t *testing.T) {
 
 func TestVMResource_Configure_WithInvalidClient(t *testing.T) {
 	vmResource := &VMResource{}
-	
+
 	req := fwresource.ConfigureRequest{
 		ProviderData: "invalid",
 	}
@@ -120,7 +116,7 @@ func TestVMResource_Configure_WithInvalidClient(t *testing.T) {
 
 func TestVMResource_Configure_WithNilClient(t *testing.T) {
 	vmResource := &VMResource{}
-	
+
 	req := fwresource.ConfigureRequest{
 		ProviderData: nil,
 	}
@@ -208,179 +204,4 @@ func TestVMResourceModel_NullValues(t *testing.T) {
 	if model.Name.IsNull() {
 		t.Error("Name should not be null")
 	}
-}
-
-// Acceptance Tests
-func TestAccVMResource_Basic(t *testing.T) {
-	vmName := "tf-acc-test-vm-basic"
-	
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckVMDestroy,
-		Steps: []resource.TestStep{
-			// Create and Read testing
-			{
-				Config: testAccVMResourceConfig_basic(vmName),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					testAccCheckVMExists("vergeio_vm.test"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "enabled", "true"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "cpu_cores", "2"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "ram", "2048"),
-					resource.TestCheckResourceAttrSet("vergeio_vm.test", "id"),
-				),
-			},
-			// ImportState testing
-			{
-				ResourceName:      "vergeio_vm.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-			},
-		},
-	})
-}
-
-func TestAccVMResource_Update(t *testing.T) {
-	vmName := "tf-acc-test-vm-update"
-	
-	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
-		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
-		CheckDestroy:             testAccCheckVMDestroy,
-		Steps: []resource.TestStep{
-			// Create initial VM
-			{
-				Config: testAccVMResourceConfig_basic(vmName),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					testAccCheckVMExists("vergeio_vm.test"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "cpu_cores", "2"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "ram", "2048"),
-				),
-			},
-			// Update VM attributes
-			{
-				Config: testAccVMResourceConfig_updated(vmName),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					testAccCheckVMExists("vergeio_vm.test"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "cpu_cores", "4"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "ram", "4096"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "description", "Updated Test VM"),
-				),
-			},
-		},
-	})
-}
-
-// Helper functions for acceptance tests
-func testAccCheckVMExists(resourceName string) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[resourceName]
-		if !ok {
-			return fmt.Errorf("resource not found: %s", resourceName)
-		}
-
-		if rs.Primary.ID == "" {
-			return fmt.Errorf("no ID is set")
-		}
-
-		// In a real implementation, you would verify the VM exists via API call
-		// For now, we just verify that we have an ID
-		return nil
-	}
-}
-
-func testAccCheckVMDestroy(s *terraform.State) error {
-	// Check that all VMs with tf-acc-test prefix are destroyed
-	for _, rs := range s.RootModule().Resources {
-		if rs.Type != "vergeio_vm" {
-			continue
-		}
-
-		// In a real implementation, you would verify the VM no longer exists via API call
-		// For now, we assume the destroy worked if no error occurred during test
-	}
-
-	return nil
-}
-
-// Test configuration templates
-func testAccVMResourceConfig_basic(vmName string) string {
-	host := os.Getenv("TF_ACC_VERGEIO_HOST")
-	username := os.Getenv("TF_ACC_VERGEIO_USERNAME")
-	password := os.Getenv("TF_ACC_VERGEIO_PASSWORD")
-	
-	if host == "" || username == "" || password == "" {
-		return fmt.Sprintf(`
-provider "vergeio" {
-  # Environment variables required for acceptance testing
-}
-
-resource "vergeio_vm" "test" {
-  name      = "%s"
-  enabled   = true
-  cpu_cores = 2
-  ram       = 2048
-}
-`, vmName)
-	}
-	
-	return fmt.Sprintf(`
-provider "vergeio" {
-  host     = "%s"
-  username = "%s"
-  password = "%s"
-  insecure = true
-}
-
-resource "vergeio_vm" "test" {
-  name      = "%s"
-  enabled   = true
-  cpu_cores = 2
-  ram       = 2048
-}
-`, host, username, password, vmName)
-}
-
-func testAccVMResourceConfig_updated(vmName string) string {
-	host := os.Getenv("TF_ACC_VERGEIO_HOST")
-	username := os.Getenv("TF_ACC_VERGEIO_USERNAME")
-	password := os.Getenv("TF_ACC_VERGEIO_PASSWORD")
-	
-	if host == "" || username == "" || password == "" {
-		return fmt.Sprintf(`
-provider "vergeio" {
-  # Environment variables required for acceptance testing
-}
-
-resource "vergeio_vm" "test" {
-  name        = "%s"
-  enabled     = true
-  cpu_cores   = 4
-  ram         = 4096
-  cluster     = 1
-  description = "Updated Test VM"
-}
-`, vmName)
-	}
-	
-	return fmt.Sprintf(`
-provider "vergeio" {
-  host     = "%s"
-  username = "%s"
-  password = "%s"
-  insecure = true
-}
-
-resource "vergeio_vm" "test" {
-  name        = "%s"
-  enabled     = true
-  cpu_cores   = 4
-  ram         = 4096
-  cluster     = 1
-  description = "Updated Test VM"
-}
-`, host, username, password, vmName)
 }

@@ -1,0 +1,83 @@
+name: Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli:
+        description: CLI used by terraform-plugin-testing
+        type: choice
+        options:
+          - terraform
+          - opentofu
+        default: terraform
+  # Nightly lab run. Uncomment when TF_ACC_VERGEIO_HOST, TF_ACC_VERGEIO_USERNAME,
+  # and TF_ACC_VERGEIO_PASSWORD are stored as repository secrets. The job skips
+  # itself when those secrets are empty.
+  # schedule:
+  #   - cron: "0 7 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - name: Require lab credentials or skip
+        id: creds
+        env:
+          TF_ACC_VERGEIO_HOST: ${{ secrets.TF_ACC_VERGEIO_HOST }}
+          TF_ACC_VERGEIO_USERNAME: ${{ secrets.TF_ACC_VERGEIO_USERNAME }}
+          TF_ACC_VERGEIO_PASSWORD: ${{ secrets.TF_ACC_VERGEIO_PASSWORD }}
+        run: |
+          if [ -z "$TF_ACC_VERGEIO_HOST" ] || [ -z "$TF_ACC_VERGEIO_USERNAME" ] || [ -z "$TF_ACC_VERGEIO_PASSWORD" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "VergeOS acceptance secrets are not set. Skipping the lab run."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        if: steps.creds.outputs.configured == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        if: steps.creds.outputs.configured == 'true' && inputs.cli != 'opentofu'
+        with:
+          terraform_wrapper: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        if: steps.creds.outputs.configured == 'true' && inputs.cli == 'opentofu'
+      - name: Select CLI
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          if [ "${{ inputs.cli }}" = "opentofu" ]; then
+            bin="$(command -v tofu)"
+          else
+            bin="$(command -v terraform)"
+          fi
+          "$bin" version
+          echo "TF_ACC_TERRAFORM_PATH=$bin" >> "$GITHUB_ENV"
+      - name: Sweep before
+        if: steps.creds.outputs.configured == 'true'
+        run: TF_ACC=1 go test ./internal/acctest -run TestSweep -count=1 -timeout 30m
+        env:
+          TF_ACC_VERGEIO_HOST: ${{ secrets.TF_ACC_VERGEIO_HOST }}
+          TF_ACC_VERGEIO_USERNAME: ${{ secrets.TF_ACC_VERGEIO_USERNAME }}
+          TF_ACC_VERGEIO_PASSWORD: ${{ secrets.TF_ACC_VERGEIO_PASSWORD }}
+      - name: Acceptance tests
+        if: steps.creds.outputs.configured == 'true'
+        run: TF_ACC=1 go test ./internal/provider/... -run 'TestAcc' -timeout 120m -parallel 2
+        env:
+          TF_ACC_VERGEIO_HOST: ${{ secrets.TF_ACC_VERGEIO_HOST }}
+          TF_ACC_VERGEIO_USERNAME: ${{ secrets.TF_ACC_VERGEIO_USERNAME }}
+          TF_ACC_VERGEIO_PASSWORD: ${{ secrets.TF_ACC_VERGEIO_PASSWORD }}
+      - name: Sweep after
+        if: always() && steps.creds.outputs.configured == 'true'
+        run: TF_ACC=1 go test ./internal/acctest -run TestSweep -count=1 -timeout 30m
+        env:
+          TF_ACC_VERGEIO_HOST: ${{ secrets.TF_ACC_VERGEIO_HOST }}
+          TF_ACC_VERGEIO_USERNAME: ${{ secrets.TF_ACC_VERGEIO_USERNAME }}
+          TF_ACC_VERGEIO_PASSWORD: ${{ secrets.TF_ACC_VERGEIO_PASSWORD }}

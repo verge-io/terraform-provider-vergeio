@@ -104,20 +104,10 @@ func (nc *NICApi) Name() string {
 // Create the NIC in the API.
 func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 
-	apiData := nicAPIResourceModel{
-		Machine:     data.Machine.ValueInt32(),
-		Name:        data.Name.ValueString(),
-		Description: data.Description.ValueString(),
-		Interface:   data.Interface.ValueString(),
-		Driver:      data.Driver.ValueString(),
-		Model:       data.Model.ValueString(),
-		Vendor:      data.Vendor.ValueString(),
-		Port:        data.Port.ValueInt32(),
-		Enabled:     data.Enabled.ValueBool(),
-		VNET:        data.VNET.ValueInt32(),
-		MAC:         data.MAC.ValueString(),
-		Asset:       data.Asset.ValueString(),
-	}
+	// Build from known plan values only. Null and unknown attributes are left
+	// out so a create does not send the zero value (enabled=false) over a
+	// platform default. See nicCreatePayload.
+	apiData := nicCreatePayload(data)
 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
@@ -501,6 +491,46 @@ func (na *NICApi) checkNICPowerState(ctx context.Context, key string, powerState
 	tflog.Debug(ctx, fmt.Sprintf("NIC status read from API: %v", nicAPIResp.PowerState))
 
 	return nil
+}
+
+// nicCreatePayload is the JSON body for NIC create.
+// Unset (null or unknown) attributes are omitted. An explicit false is sent.
+func nicCreatePayload(data *nicResourceModel) map[string]any {
+	payload := map[string]any{}
+	putKnownString(payload, "name", data.Name)
+	putKnownString(payload, "description", data.Description)
+	putKnownString(payload, "interface", data.Interface)
+	putKnownString(payload, "driver", data.Driver)
+	putKnownString(payload, "model", data.Model)
+	putKnownString(payload, "vendor", data.Vendor)
+	putKnownString(payload, "macaddress", data.MAC)
+	putKnownString(payload, "asset", data.Asset)
+	putKnownInt32(payload, "machine", data.Machine)
+	putKnownInt32(payload, "port", data.Port)
+	putKnownInt32(payload, "vnet", data.VNET)
+	putKnownBool(payload, "enabled", data.Enabled)
+	return payload
+}
+
+func putKnownString(payload map[string]any, key string, value types.String) {
+	if value.IsNull() || value.IsUnknown() || value.ValueString() == "" {
+		return
+	}
+	payload[key] = value.ValueString()
+}
+
+func putKnownInt32(payload map[string]any, key string, value types.Int32) {
+	if value.IsNull() || value.IsUnknown() || value.ValueInt32() == 0 {
+		return
+	}
+	payload[key] = value.ValueInt32()
+}
+
+func putKnownBool(payload map[string]any, key string, value types.Bool) {
+	if value.IsNull() || value.IsUnknown() {
+		return
+	}
+	payload[key] = value.ValueBool()
 }
 
 func (va *VMApi) hotplugNIC(ctx context.Context, nicId string, vmId types.String) error {
