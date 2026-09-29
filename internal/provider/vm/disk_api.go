@@ -42,23 +42,24 @@ type diskResourceModel struct {
 	PreserveDriveFormat types.Bool    `tfsdk:"preserve_drive_format"`
 }
 
-// API resource model.
+// diskAPIResourceModel is the drive create/update body and the decoded GET.
+// Pointers keep false, 0, and "" in the JSON. A nil pointer is omitted.
 type diskAPIResourceModel struct {
-	Key                 string `json:"$key,omitempty"`
-	Machine             int32  `json:"machine,omitempty"`
-	Name                string `json:"name,omitempty"`
-	Description         string `json:"description,omitempty"`
-	Interface           string `json:"interface,omitempty"`
-	Media               string `json:"media,omitempty"`
-	MediaSource         int32  `json:"media_source,omitempty"`
-	DiskSize            int64  `json:"disksize,omitempty"`
-	PreferredTier       string `json:"preferred_tier,omitempty"`
-	Enabled             bool   `json:"enabled,omitempty"`
-	ReadOnly            bool   `json:"readonly,omitempty"`
-	Serial              string `json:"serial,omitempty"`
-	Asset               string `json:"asset,omitempty"`
-	OrderId             int32  `json:"orderid,omitempty"`
-	PreserveDriveFormat bool   `json:"preserve_drive_format,omitempty"`
+	Key                 *string `json:"$key,omitempty"`
+	Machine             *int32  `json:"machine,omitempty"`
+	Name                *string `json:"name,omitempty"`
+	Description         *string `json:"description,omitempty"`
+	Interface           *string `json:"interface,omitempty"`
+	Media               *string `json:"media,omitempty"`
+	MediaSource         *int32  `json:"media_source,omitempty"`
+	DiskSize            *int64  `json:"disksize,omitempty"`
+	PreferredTier       *string `json:"preferred_tier,omitempty"`
+	Enabled             *bool   `json:"enabled,omitempty"`
+	ReadOnly            *bool   `json:"readonly,omitempty"`
+	Serial              *string `json:"serial,omitempty"`
+	Asset               *string `json:"asset,omitempty"`
+	OrderId             *int32  `json:"orderid,omitempty"`
+	PreserveDriveFormat *bool   `json:"preserve_drive_format,omitempty"`
 }
 
 // Power status of the disk.
@@ -142,26 +143,70 @@ func (da *DiskApi) Name() string {
 	return da.name
 }
 
+// diskSizeBytes is the API disksize for a configured size in GB.
+// A known 0 is returned as a non-nil pointer. Null and unknown are omitted.
+func diskSizeBytes(size types.Float64) *int64 {
+	if size.IsNull() || size.IsUnknown() {
+		return nil
+	}
+	sizeBytes := int64(size.ValueFloat64() * 1024 * 1024 * 1024)
+	return &sizeBytes
+}
+
+// changedDiskSizeBytes returns disksize when the planned size differs.
+func changedDiskSizeBytes(plan, state types.Float64) *int64 {
+	if plan.IsNull() || plan.IsUnknown() {
+		return nil
+	}
+	if !state.IsNull() && !state.IsUnknown() && plan.ValueFloat64() == state.ValueFloat64() {
+		return nil
+	}
+	return diskSizeBytes(plan)
+}
+
+// diskCreatePayload is the JSON body for drive create.
+func diskCreatePayload(data *diskResourceModel) diskAPIResourceModel {
+	return diskAPIResourceModel{
+		Machine:             vergeio.KnownInt32(data.Machine),
+		Name:                vergeio.KnownString(data.Name),
+		Description:         vergeio.KnownString(data.Description),
+		Interface:           vergeio.KnownString(data.Interface),
+		Media:               vergeio.KnownString(data.Media),
+		MediaSource:         vergeio.KnownInt32(data.MediaSource),
+		DiskSize:            diskSizeBytes(data.DiskSize),
+		PreferredTier:       vergeio.KnownString(data.PreferredTier),
+		Enabled:             vergeio.KnownBool(data.Enabled),
+		ReadOnly:            vergeio.KnownBool(data.ReadOnly),
+		Serial:              vergeio.KnownString(data.Serial),
+		Asset:               vergeio.KnownString(data.Asset),
+		OrderId:             vergeio.KnownInt32(data.OrderId),
+		PreserveDriveFormat: vergeio.KnownBool(data.PreserveDriveFormat),
+	}
+}
+
+// diskUpdatePayload is the JSON body for drive update.
+// Only attributes that differ from state are set.
+func diskUpdatePayload(planData *diskResourceModel, stateData *diskResourceModel) diskAPIResourceModel {
+	return diskAPIResourceModel{
+		Machine:             vergeio.ChangedInt32(planData.Machine, stateData.Machine),
+		Name:                vergeio.ChangedString(planData.Name, stateData.Name),
+		Description:         vergeio.ChangedString(planData.Description, stateData.Description),
+		Interface:           vergeio.ChangedString(planData.Interface, stateData.Interface),
+		DiskSize:            changedDiskSizeBytes(planData.DiskSize, stateData.DiskSize),
+		PreferredTier:       vergeio.ChangedString(planData.PreferredTier, stateData.PreferredTier),
+		Enabled:             vergeio.ChangedBool(planData.Enabled, stateData.Enabled),
+		ReadOnly:            vergeio.ChangedBool(planData.ReadOnly, stateData.ReadOnly),
+		Serial:              vergeio.ChangedString(planData.Serial, stateData.Serial),
+		Asset:               vergeio.ChangedString(planData.Asset, stateData.Asset),
+		OrderId:             vergeio.ChangedInt32(planData.OrderId, stateData.OrderId),
+		PreserveDriveFormat: vergeio.ChangedBool(planData.PreserveDriveFormat, stateData.PreserveDriveFormat),
+	}
+}
+
 // Create the Disk in the API.
 func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) error {
 
-	// Prepare the API data packet
-	apiData := diskAPIResourceModel{
-		Machine:             data.Machine.ValueInt32(),
-		Name:                data.Name.ValueString(),
-		Description:         data.Description.ValueString(),
-		Interface:           data.Interface.ValueString(),
-		Media:               data.Media.ValueString(),
-		MediaSource:         data.MediaSource.ValueInt32(),
-		DiskSize:            int64(data.DiskSize.ValueFloat64() * 1024 * 1024 * 1024),
-		PreferredTier:       data.PreferredTier.ValueString(),
-		Enabled:             data.Enabled.ValueBool(),
-		ReadOnly:            data.ReadOnly.ValueBool(),
-		Serial:              data.Serial.ValueString(),
-		Asset:               data.Asset.ValueString(),
-		OrderId:             data.OrderId.ValueInt32(),
-		PreserveDriveFormat: data.PreserveDriveFormat.ValueBool(),
-	}
+	apiData := diskCreatePayload(data)
 
 	// Make a copy of the original data
 	origData := *data
@@ -245,21 +290,7 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 // Update the Disk in the API.
 func (da *DiskApi) updateDisk(ctx context.Context, planData *diskResourceModel, stateData *diskResourceModel) error {
 
-	// Prepare the API data packet from the plan
-	apiData := diskAPIResourceModel{
-		Machine:             vergeio.Int32ToNil(planData.Machine, stateData.Machine, 0),
-		Name:                vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Description:         vergeio.StringToNil(planData.Description, stateData.Description, ""),
-		Interface:           vergeio.StringToNil(planData.Interface, stateData.Interface, ""),
-		DiskSize:            int64(vergeio.Float64ToNil(planData.DiskSize, stateData.DiskSize, 0) * 1024 * 1024 * 1024),
-		PreferredTier:       vergeio.StringToNil(planData.PreferredTier, stateData.PreferredTier, ""),
-		Enabled:             vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
-		ReadOnly:            vergeio.BoolToNil(planData.ReadOnly, stateData.ReadOnly, false),
-		Serial:              vergeio.StringToNil(planData.Serial, stateData.Serial, ""),
-		Asset:               vergeio.StringToNil(planData.Asset, stateData.Asset, ""),
-		OrderId:             vergeio.Int32ToNil(planData.OrderId, stateData.OrderId, 0),
-		PreserveDriveFormat: vergeio.BoolToNil(planData.PreserveDriveFormat, stateData.PreserveDriveFormat, false),
-	}
+	apiData := diskUpdatePayload(planData, stateData)
 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
@@ -328,18 +359,18 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 	}
 
 	// save into the resource model
-	data.Machine = types.Int32Value(diskAPIResp.Machine)
-	data.Name = types.StringValue(diskAPIResp.Name)
-	data.Description = types.StringValue(diskAPIResp.Description)
-	data.Interface = types.StringValue(diskAPIResp.Interface)
-	data.DiskSize = types.Float64Value(math.Round(float64(diskAPIResp.DiskSize)/(1024*1024*1024)*100) / 100)
-	data.PreferredTier = types.StringValue(diskAPIResp.PreferredTier)
-	data.Enabled = types.BoolValue(diskAPIResp.Enabled)
-	data.ReadOnly = types.BoolValue(diskAPIResp.ReadOnly)
-	data.Serial = types.StringValue(diskAPIResp.Serial)
-	data.Asset = types.StringValue(diskAPIResp.Asset)
-	data.OrderId = types.Int32Value(diskAPIResp.OrderId)
-	data.PreserveDriveFormat = types.BoolValue(diskAPIResp.PreserveDriveFormat)
+	data.Machine = types.Int32Value(vergeio.Int32Or(diskAPIResp.Machine, 0))
+	data.Name = types.StringValue(vergeio.StringOr(diskAPIResp.Name, ""))
+	data.Description = types.StringValue(vergeio.StringOr(diskAPIResp.Description, ""))
+	data.Interface = types.StringValue(vergeio.StringOr(diskAPIResp.Interface, ""))
+	data.DiskSize = types.Float64Value(math.Round(float64(vergeio.Int64Or(diskAPIResp.DiskSize, 0))/(1024*1024*1024)*100) / 100)
+	data.PreferredTier = types.StringValue(vergeio.StringOr(diskAPIResp.PreferredTier, ""))
+	data.Enabled = types.BoolValue(vergeio.BoolOr(diskAPIResp.Enabled, false))
+	data.ReadOnly = types.BoolValue(vergeio.BoolOr(diskAPIResp.ReadOnly, false))
+	data.Serial = types.StringValue(vergeio.StringOr(diskAPIResp.Serial, ""))
+	data.Asset = types.StringValue(vergeio.StringOr(diskAPIResp.Asset, ""))
+	data.OrderId = types.Int32Value(vergeio.Int32Or(diskAPIResp.OrderId, 0))
+	data.PreserveDriveFormat = types.BoolValue(vergeio.BoolOr(diskAPIResp.PreserveDriveFormat, false))
 
 	tflog.Debug(ctx, fmt.Sprintf("Finish reading the disk %v", data.Key.ValueString()))
 

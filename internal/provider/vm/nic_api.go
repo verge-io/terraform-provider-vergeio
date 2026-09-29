@@ -41,22 +41,25 @@ type nicResourceModel struct {
 	Asset           types.String `tfsdk:"asset"`
 }
 
+// nicAPIResourceModel is the NIC update body and the decoded GET.
+// Enabled is a pointer with omitempty: an unset NIC omits enabled, and an
+// explicit false is sent. A plain bool with omitempty cannot do both.
 type nicAPIResourceModel struct {
-	Id              string `json:"id,omitempty"`
-	Machine         int32  `json:"machine,omitempty"`
-	Name            string `json:"name,omitempty"`
-	Description     string `json:"description,omitempty"`
-	Interface       string `json:"interface,omitempty"`
-	Driver          string `json:"driver,omitempty"`
-	Model           string `json:"model,omitempty"`
-	Vendor          string `json:"vendor,omitempty"`
-	Port            int32  `json:"port,omitempty"`
-	Enabled         bool   `json:"enabled"`
-	VNET            int32  `json:"vnet,omitempty"`
-	MAC             string `json:"macaddress,omitempty"`
-	IPAddress       string `json:"ipaddress,omitempty"`
-	AssignIPAddress bool   `json:"assign_ipaddress,omitempty"`
-	Asset           string `json:"asset,omitempty"`
+	Id              *string `json:"id,omitempty"`
+	Machine         *int32  `json:"machine,omitempty"`
+	Name            *string `json:"name,omitempty"`
+	Description     *string `json:"description,omitempty"`
+	Interface       *string `json:"interface,omitempty"`
+	Driver          *string `json:"driver,omitempty"`
+	Model           *string `json:"model,omitempty"`
+	Vendor          *string `json:"vendor,omitempty"`
+	Port            *int32  `json:"port,omitempty"`
+	Enabled         *bool   `json:"enabled,omitempty"`
+	VNET            *int32  `json:"vnet,omitempty"`
+	MAC             *string `json:"macaddress,omitempty"`
+	IPAddress       *string `json:"ipaddress,omitempty"`
+	AssignIPAddress *bool   `json:"assign_ipaddress,omitempty"`
+	Asset           *string `json:"asset,omitempty"`
 }
 
 // to get the power status.
@@ -199,21 +202,7 @@ func (nc *NICApi) assignIP(data *nicResourceModel) error {
 // Update the NIC in the API.
 func (nc *NICApi) updateNIC(ctx context.Context, planData *nicResourceModel, stateData *nicResourceModel) error {
 
-	// Prepare the API data packet from the plan
-	apiData := nicAPIResourceModel{
-		Machine:     vergeio.Int32ToNil(planData.Machine, stateData.Machine, 0),
-		Name:        vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Description: vergeio.StringToNil(planData.Description, stateData.Description, ""),
-		Interface:   vergeio.StringToNil(planData.Interface, stateData.Interface, ""),
-		Driver:      vergeio.StringToNil(planData.Driver, stateData.Driver, ""),
-		Model:       vergeio.StringToNil(planData.Model, stateData.Model, ""),
-		Vendor:      vergeio.StringToNil(planData.Vendor, stateData.Vendor, ""),
-		Port:        vergeio.Int32ToNil(planData.Port, stateData.Port, 0),
-		Enabled:     vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
-		VNET:        vergeio.Int32ToNil(planData.VNET, stateData.VNET, 0),
-		MAC:         vergeio.StringToNil(planData.MAC, stateData.MAC, ""),
-		Asset:       vergeio.StringToNil(planData.Asset, stateData.Asset, ""),
-	}
+	apiData := nicUpdatePayload(planData, stateData)
 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
@@ -281,18 +270,18 @@ func (nc *NICApi) readNIC(ctx context.Context, data *nicResourceModel) error {
 	}
 
 	// save into the resource model
-	data.Machine = types.Int32Value(nicAPIResp.Machine)
-	data.Name = types.StringValue(nicAPIResp.Name)
-	data.Description = types.StringValue(nicAPIResp.Description)
-	data.Interface = types.StringValue(nicAPIResp.Interface)
-	data.Driver = types.StringValue(nicAPIResp.Driver)
-	data.Model = types.StringValue(nicAPIResp.Model)
-	data.Vendor = types.StringValue(nicAPIResp.Vendor)
-	data.Port = types.Int32Value(nicAPIResp.Port)
-	data.Enabled = types.BoolValue(nicAPIResp.Enabled)
-	data.VNET = types.Int32Value(nicAPIResp.VNET)
-	data.MAC = types.StringValue(nicAPIResp.MAC)
-	data.Asset = types.StringValue(nicAPIResp.Asset)
+	data.Machine = types.Int32Value(vergeio.Int32Or(nicAPIResp.Machine, 0))
+	data.Name = types.StringValue(vergeio.StringOr(nicAPIResp.Name, ""))
+	data.Description = types.StringValue(vergeio.StringOr(nicAPIResp.Description, ""))
+	data.Interface = types.StringValue(vergeio.StringOr(nicAPIResp.Interface, ""))
+	data.Driver = types.StringValue(vergeio.StringOr(nicAPIResp.Driver, ""))
+	data.Model = types.StringValue(vergeio.StringOr(nicAPIResp.Model, ""))
+	data.Vendor = types.StringValue(vergeio.StringOr(nicAPIResp.Vendor, ""))
+	data.Port = types.Int32Value(vergeio.Int32Or(nicAPIResp.Port, 0))
+	data.Enabled = types.BoolValue(vergeio.BoolOr(nicAPIResp.Enabled, false))
+	data.VNET = types.Int32Value(vergeio.Int32Or(nicAPIResp.VNET, 0))
+	data.MAC = types.StringValue(vergeio.StringOr(nicAPIResp.MAC, ""))
+	data.Asset = types.StringValue(vergeio.StringOr(nicAPIResp.Asset, ""))
 
 	tflog.Debug(ctx, "NIC Data was successfully read from the API")
 
@@ -564,7 +553,9 @@ func (na *NICApi) checkNICPowerState(ctx context.Context, key string, powerState
 }
 
 // nicCreatePayload is the JSON body for NIC create.
-// Unset (null or unknown) attributes are omitted. An explicit false is sent.
+// Unset (null or unknown) attributes are omitted. An explicit false, 0, or ""
+// is sent. Enabled stays omitted when the configuration does not set it, so
+// the platform default is kept, and enabled=false is still sent when set.
 func nicCreatePayload(data *nicResourceModel) map[string]any {
 	payload := map[string]any{}
 	putKnownString(payload, "name", data.Name)
@@ -583,17 +574,37 @@ func nicCreatePayload(data *nicResourceModel) map[string]any {
 }
 
 func putKnownString(payload map[string]any, key string, value types.String) {
-	if value.IsNull() || value.IsUnknown() || value.ValueString() == "" {
+	if value.IsNull() || value.IsUnknown() {
 		return
 	}
 	payload[key] = value.ValueString()
 }
 
 func putKnownInt32(payload map[string]any, key string, value types.Int32) {
-	if value.IsNull() || value.IsUnknown() || value.ValueInt32() == 0 {
+	if value.IsNull() || value.IsUnknown() {
 		return
 	}
 	payload[key] = value.ValueInt32()
+}
+
+// nicUpdatePayload is the JSON body for NIC update.
+// Unset attributes are omitted. An explicit false, 0, or "" is sent when it
+// differs from state.
+func nicUpdatePayload(planData *nicResourceModel, stateData *nicResourceModel) nicAPIResourceModel {
+	return nicAPIResourceModel{
+		Machine:     vergeio.ChangedInt32(planData.Machine, stateData.Machine),
+		Name:        vergeio.ChangedString(planData.Name, stateData.Name),
+		Description: vergeio.ChangedString(planData.Description, stateData.Description),
+		Interface:   vergeio.ChangedString(planData.Interface, stateData.Interface),
+		Driver:      vergeio.ChangedString(planData.Driver, stateData.Driver),
+		Model:       vergeio.ChangedString(planData.Model, stateData.Model),
+		Vendor:      vergeio.ChangedString(planData.Vendor, stateData.Vendor),
+		Port:        vergeio.ChangedInt32(planData.Port, stateData.Port),
+		Enabled:     vergeio.ChangedBool(planData.Enabled, stateData.Enabled),
+		VNET:        vergeio.ChangedInt32(planData.VNET, stateData.VNET),
+		MAC:         vergeio.ChangedString(planData.MAC, stateData.MAC),
+		Asset:       vergeio.ChangedString(planData.Asset, stateData.Asset),
+	}
 }
 
 func putKnownBool(payload map[string]any, key string, value types.Bool) {

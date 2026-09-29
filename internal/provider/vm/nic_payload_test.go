@@ -44,6 +44,65 @@ func TestNICCreatePayloadOmitsUnknownBool(t *testing.T) {
 	}
 }
 
+func TestNICCreatePayloadSendsExplicitFalseZeroAndEmpty(t *testing.T) {
+	data := &nicResourceModel{
+		Name:        types.StringValue("nic0"),
+		Interface:   types.StringValue("virtio"),
+		Description: types.StringValue(""),
+		Port:        types.Int32Value(0),
+		VNET:        types.Int32Value(18),
+		Enabled:     types.BoolValue(false),
+	}
+	payload := decodePayload(t, nicCreatePayload(data))
+	enabled, ok := payload["enabled"].(bool)
+	if !ok || enabled {
+		t.Fatalf("explicit enabled=false was not sent, payload=%#v", payload)
+	}
+	if payload["description"] != "" {
+		t.Fatalf("explicit empty description was not sent, payload=%#v", payload)
+	}
+	if payload["port"] != float64(0) {
+		t.Fatalf("explicit port=0 was not sent, payload=%#v", payload)
+	}
+}
+
+func TestNICUpdatePayloadSendsExplicitFalseZeroAndEmpty(t *testing.T) {
+	plan := &nicResourceModel{
+		Name:        types.StringValue("nic0"),
+		Description: types.StringValue(""),
+		Port:        types.Int32Value(0),
+		Enabled:     types.BoolValue(false),
+		VNET:        types.Int32Value(18),
+	}
+	state := &nicResourceModel{
+		Name:        types.StringValue("nic0"),
+		Description: types.StringValue("before"),
+		Port:        types.Int32Value(1),
+		Enabled:     types.BoolValue(true),
+		VNET:        types.Int32Value(18),
+	}
+	body := jsonObject(t, nicUpdatePayload(plan, state))
+	requireBool(t, body, "enabled", false)
+	requireString(t, body, "description", "")
+	requireNumber(t, body, "port", 0)
+	requireAbsent(t, body, "name")
+	requireAbsent(t, body, "vnet")
+}
+
+func TestNICUpdatePayloadOmitsUnsetEnabled(t *testing.T) {
+	plan := &nicResourceModel{
+		Name:    types.StringValue("nic1"),
+		Enabled: types.BoolNull(),
+	}
+	state := &nicResourceModel{
+		Name:    types.StringValue("nic0"),
+		Enabled: types.BoolValue(true),
+	}
+	body := jsonObject(t, nicUpdatePayload(plan, state))
+	requireString(t, body, "name", "nic1")
+	requireAbsent(t, body, "enabled")
+}
+
 func TestNICCreatePayloadSendsExplicitFalse(t *testing.T) {
 	data := &nicResourceModel{
 		Name:      types.StringValue("nic0"),
