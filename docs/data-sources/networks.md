@@ -9,35 +9,38 @@ description: |-
 # vergeio_networks (Data Source)
 Retrieves information about networks on the system
 
-# Example Usage
+## Example Usage
 
 ```terraform
+# Networks data source fetches the Network from the VergeIO. 
+
 data "vergeio_networks" "all" {
 }
 output "networks" {
-	value = data.vergeio_networks.all.networks
+  value = data.vergeio_networks.all.networks
 }
-```
 
-Add a filter to see information on a specific network:
+# Add a filter to see information on a specific network
 
-```terraform
 data "vergeio_networks" "all" {
-    filter_name="External"
+  filter_name = "External"
 }
 output "networks" {
-	value = data.vergeio_networks.all.networks
+  value = data.vergeio_networks.all.networks
 }
 ```
 
-Filter by network type (internal or external):
+Filter by network type (`internal` or `external`):
 
 ```terraform
+# Filter by network type (internal or external).
+
 data "vergeio_networks" "internal_only" {
-    filter_type = "internal"
+  filter_type = "internal"
 }
+
 output "internal_networks" {
-	value = data.vergeio_networks.internal_only.networks
+  value = data.vergeio_networks.internal_only.networks
 }
 ```
 

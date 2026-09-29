@@ -14,63 +14,64 @@ Supports filtering by name and/or category to handle duplicate tag names across 
 
 ## Example Usage
 
-### Get all tags
 ```terraform
+# Tags data source fetches the Tags from the VergeIO.
+
 data "vergeio_tags" "all" {
 }
-
 output "tags" {
   value = data.vergeio_tags.all.tags
 }
-```
 
-### Filter tags by name
-```terraform
+# Add a filter to see information on a specific tag
+
 data "vergeio_tags" "production" {
   filter = "production"
 }
-
 output "production_tags" {
   value = data.vergeio_tags.production.tags
 }
 ```
 
-### Filter by category ID (for duplicate tag names)
+### Filter by category ID
 
-When you have the same tag name in multiple categories (e.g., "true" in both "powerup" and "backup" categories), use `category_filter` to specify which category:
+The same tag name can exist in more than one category. `category_filter` selects the category by id.
 
 ```terraform
-# Get the "true" tag from the "powerup" category (ID: 5)
+# The same tag name can exist in more than one category. category_filter
+# selects the category by id.
+
 data "vergeio_tags" "powerup_true" {
   filter          = "true"
   category_filter = 5
 }
 
-# Get the "true" tag from the "backup" category (ID: 8)
 data "vergeio_tags" "backup_true" {
   filter          = "true"
   category_filter = 8
 }
 ```
 
-### Filter by category name (more readable)
+### Filter by category name
 
-If you know the category name but not the ID, use `category_name`:
+`category_name` selects the category when the id is not known. It cannot be combined with `category_filter`.
 
 ```terraform
-# Get the "true" tag from the "powerup" category
+# category_name selects the category when the id is not known.
+# It cannot be combined with category_filter.
+
 data "vergeio_tags" "powerup_true" {
   filter        = "true"
   category_name = "powerup"
 }
 
-# Get all tags in the "backup" category
 data "vergeio_tags" "all_backup_tags" {
   category_name = "backup"
 }
 ```
 
-### Use with tag_member resource
+### Use with vergeio_tag_member
+
 ```terraform
 data "vergeio_tags" "powerup_enabled" {
   filter        = "true"
@@ -79,11 +80,12 @@ data "vergeio_tags" "powerup_enabled" {
 
 resource "vergeio_tag_member" "vm_powerup" {
   tag_id = data.vergeio_tags.powerup_enabled.tags[0].key
-  member = "vms/${vergeio_vm.example.id}"
+  member = "vms/123"
 }
 ```
 
-### Access category information in results
+### Read category fields
+
 ```terraform
 data "vergeio_tags" "all" {}
 

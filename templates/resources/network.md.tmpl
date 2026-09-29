@@ -12,40 +12,13 @@ Create an Internal or External vNET resource in VergeIO
 
 ## Example Usage
 
+Create an internal vNET with all parameters.
 
-Create an Internal vNET with all parameters
-```
-resource "vergeio_network" "example" {
-  name                 = "Example Net"
-  enabled              = true
-  vnet_default_gateway = 3
-  network              = "192.168.0.0/24"
-  dhcp_enabled         = true
-  dhcp_sequential      = true
-  dynamic_dhcp         = true
-  dhcp_start           = "192.168.0.2"
-  dhcp_stop            = "192.168.0.200"
-  on_power_loss        = "power_on"
-  restart_on_change    = true
-}
-```
-Create a Layer 2 External vNET with a VLAN Tag
-```
-resource "vergeio_network" "external_example" {
-  name = "External Example"
-  enabled = true
-  interface_vnet = 4
-  layer2_id = 1000
-  type = "external"
-  on_power_loss = "last_state"
-  ipaddress_type = "none"
-  layer2_type = "vlan" 
+{{ tffile "examples/resources/vergeio_network/resource.tf" }}
 
-# Add VLAN Bonding to the External vNET
-  enable_bonding = true
-  bond_interfaces_args = [4,5] 
-}
-```
+Create a layer 2 external vNET with a VLAN tag.
+
+{{ tffile "examples/resources/vergeio_network/resource_external.tf" }}
 
 VergeOS stages some updates on a running network, including DHCP range and address changes. The network keeps serving the previous settings and sets `need_restart` until it restarts. `restart_on_change` defaults to true, so Terraform restarts a running network after those updates. Set it to false to leave the network up for a maintenance window. Terraform then stores `need_restart` and warns in the apply output that the change is not live yet. A stopped network is not restarted; it picks up the staged change when it starts.
 

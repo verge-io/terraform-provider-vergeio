@@ -14,88 +14,27 @@ Supports filtering by name and/or category to handle duplicate tag names across 
 
 ## Example Usage
 
-### Get all tags
-```terraform
-data "vergeio_tags" "all" {
-}
+{{ tffile "examples/data-sources/vergeio_tags/data-source.tf" }}
 
-output "tags" {
-  value = data.vergeio_tags.all.tags
-}
-```
+### Filter by category ID
 
-### Filter tags by name
-```terraform
-data "vergeio_tags" "production" {
-  filter = "production"
-}
+The same tag name can exist in more than one category. `category_filter` selects the category by id.
 
-output "production_tags" {
-  value = data.vergeio_tags.production.tags
-}
-```
+{{ tffile "examples/data-sources/vergeio_tags/data-source_category_id.tf" }}
 
-### Filter by category ID (for duplicate tag names)
+### Filter by category name
 
-When you have the same tag name in multiple categories (e.g., "true" in both "powerup" and "backup" categories), use `category_filter` to specify which category:
+`category_name` selects the category when the id is not known. It cannot be combined with `category_filter`.
 
-```terraform
-# Get the "true" tag from the "powerup" category (ID: 5)
-data "vergeio_tags" "powerup_true" {
-  filter          = "true"
-  category_filter = 5
-}
+{{ tffile "examples/data-sources/vergeio_tags/data-source_category_name.tf" }}
 
-# Get the "true" tag from the "backup" category (ID: 8)
-data "vergeio_tags" "backup_true" {
-  filter          = "true"
-  category_filter = 8
-}
-```
+### Use with vergeio_tag_member
 
-### Filter by category name (more readable)
+{{ tffile "examples/data-sources/vergeio_tags/data-source_member.tf" }}
 
-If you know the category name but not the ID, use `category_name`:
+### Read category fields
 
-```terraform
-# Get the "true" tag from the "powerup" category
-data "vergeio_tags" "powerup_true" {
-  filter        = "true"
-  category_name = "powerup"
-}
-
-# Get all tags in the "backup" category
-data "vergeio_tags" "all_backup_tags" {
-  category_name = "backup"
-}
-```
-
-### Use with tag_member resource
-```terraform
-data "vergeio_tags" "powerup_enabled" {
-  filter        = "true"
-  category_name = "powerup"
-}
-
-resource "vergeio_tag_member" "vm_powerup" {
-  tag_id = data.vergeio_tags.powerup_enabled.tags[0].key
-  member = "vms/${vergeio_vm.example.id}"
-}
-```
-
-### Access category information in results
-```terraform
-data "vergeio_tags" "all" {}
-
-output "tags_with_categories" {
-  value = [for tag in data.vergeio_tags.all.tags : {
-    id            = tag.key
-    name          = tag.name
-    category_id   = tag.category
-    category_name = tag.category_name
-  }]
-}
-```
+{{ tffile "examples/data-sources/vergeio_tags/data-source_categories.tf" }}
 
 ## Example Output
 

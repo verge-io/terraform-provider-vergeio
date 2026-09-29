@@ -48,24 +48,26 @@ provider "vergeio" {}
 
 ## Resources
 
-- vergeio_drive
 - vergeio_member
 - vergeio_network
-- vergeio_nic
+- vergeio_tag_member
 - vergeio_user
 - vergeio_vm
-- vergeio_tag_members
+
+Drives, NICs, and devices are nested blocks on `vergeio_vm`.
 
 ## Data Sources
 
+- vergeio_cloudinit_files
 - vergeio_clusters
 - vergeio_groups
 - vergeio_mediasources
 - vergeio_networks
 - vergeio_nodes
+- vergeio_resource_groups
+- vergeio_tags
 - vergeio_version
 - vergeio_vms
-- vergeio_tags
 
 # Building Provider From Source
 

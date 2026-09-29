@@ -9,37 +9,13 @@ description: |-
 # vergeio_networks (Data Source)
 Retrieves information about networks on the system
 
-# Example Usage
+## Example Usage
 
-```terraform
-data "vergeio_networks" "all" {
-}
-output "networks" {
-	value = data.vergeio_networks.all.networks
-}
-```
+{{ tffile "examples/data-sources/vergeio_networks/data-source.tf" }}
 
-Add a filter to see information on a specific network:
+Filter by network type (`internal` or `external`):
 
-```terraform
-data "vergeio_networks" "all" {
-    filter_name="External"
-}
-output "networks" {
-	value = data.vergeio_networks.all.networks
-}
-```
-
-Filter by network type (internal or external):
-
-```terraform
-data "vergeio_networks" "internal_only" {
-    filter_type = "internal"
-}
-output "internal_networks" {
-	value = data.vergeio_networks.internal_only.networks
-}
-```
+{{ tffile "examples/data-sources/vergeio_networks/data-source_type.tf" }}
 
 # Example Output
 

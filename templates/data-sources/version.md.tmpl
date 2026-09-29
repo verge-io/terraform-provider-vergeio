@@ -8,14 +8,9 @@ description: |-
 
 # vergeio_version (Data Source)
 Retrieves the version of the system
-# Example Usage
-```
-data "vergeio_version" "all" {
-}
-output "version" {
-  value = data.vergeio_version.all
-}
-```
+## Example Usage
+
+{{ tffile "examples/data-sources/vergeio_version/data-source.tf" }}
 # Example Output
 ```
 {

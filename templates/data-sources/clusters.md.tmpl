@@ -9,24 +9,9 @@ description: |-
 # vergeio_clusters (Data Source)
 Retrieves information on the clusters attached to the system
 
-# Example Usage
-```
-data "vergeio_clusters" "all" {
-}
-output "cluster_id" {
-	value = data.vergeio_clusters.all.clusters
-}
-```
-Add a fliter to see information on a specific cluster
+## Example Usage
 
-```
-data "vergeio_clusters" "all" {
-	filter_name = "Compute"
-}
-output "cluster_id" {
-	value = data.vergeio_clusters.all.clusters
-}
-```
+{{ tffile "examples/data-sources/vergeio_clusters/data-source.tf" }}
 # Example Output
 ```
 {

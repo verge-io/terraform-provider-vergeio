@@ -13,21 +13,20 @@ Assign tags to VergeOS objects such as VMs and networks. This resource requires 
 ## Example Usage
 
 ```terraform
-# Assign a tag to a VM
+# Create a tag member assignment to assign a tag to an object
+
 resource "vergeio_tag_member" "vm_production" {
   tag_id = 1
   member = "vms/54"
 }
 
-# Assign a tag to a network
+# Assign tag to a network
 resource "vergeio_tag_member" "network_production" {
   tag_id = 2
   member = "vnets/19"
 }
-```
 
-Use with other resources - assign tag to a newly created VM:
-```terraform
+# Use with other resources - assign tag to a newly created VM
 resource "vergeio_vm" "web-server" {
   name         = "example-web-server"
   cpu_cores    = 2
@@ -42,8 +41,11 @@ resource "vergeio_tag_member" "web_server_tag" {
 }
 ```
 
-Use with tags data source to look up tag by name:
+Look up a tag by name, then assign it.
+
 ```terraform
+# Look up a tag by name, then assign it.
+
 data "vergeio_tags" "production" {
   filter = "production"
 }
