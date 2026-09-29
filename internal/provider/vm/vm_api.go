@@ -371,6 +371,55 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	return nil
 }
 
+// plannedPowerChange reports whether UpdateVM should change VM power.
+// A null or unknown powerstate means the configuration did not set it, so
+// the current power is left alone. A known value is applied only when it
+// differs from the VM's current power. powerOn is meaningful only when
+// change is true.
+func plannedPowerChange(planned types.Bool, current bool) (change bool, powerOn bool) {
+	if planned.IsNull() || planned.IsUnknown() {
+		return false, false
+	}
+	desired := planned.ValueBool()
+	if desired == current {
+		return false, false
+	}
+	return true, desired
+}
+
+// applyPlannedPowerState powers the VM on or off only when the plan asks
+// for a known powerstate that differs from the VM's current power.
+func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
+	if planData.PowerState.IsNull() || planData.PowerState.IsUnknown() {
+		tflog.Debug(ctx, "Planned powerstate is unset; leaving VM power unchanged")
+		return nil
+	}
+
+	currentPowerState, err := va.isVMRunning(ctx, planData.Id.ValueString())
+	if err != nil {
+		return err
+	}
+	change, powerOn := plannedPowerChange(planData.PowerState, *currentPowerState)
+	if !change {
+		return nil
+	}
+	if powerOn {
+		tflog.Debug(ctx, "Planned powerstate is on and the VM is stopped; powering on")
+		if err := va.powerOnVM(ctx, planData); err != nil {
+			return err
+		}
+		stateData.PowerState = types.BoolValue(true)
+		return nil
+	}
+
+	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; powering off")
+	if err := va.killVM(ctx, planData); err != nil {
+		return err
+	}
+	stateData.PowerState = types.BoolValue(false)
+	return nil
+}
+
 // Update the VM.
 func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
 
@@ -437,43 +486,12 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		return err
 	}
 
-	// We now have to handle the desired power state.
-	// If it's set to true, we have to check the power state.
-	if planData.PowerState.ValueBool() {
-		tflog.Debug(ctx, "Power state is set to true, checking the current power state")
-
-		var currentPowerState *bool
-		var err error
-
-		if currentPowerState, err = va.isVMRunning(ctx, planData.Id.ValueString()); err != nil {
-			return err
-		}
-
-		// If the current power state is not running, we have to power it on.
-		if !*currentPowerState {
-			// It's not running, so we have to power it on.
-			if err := va.powerOnVM(ctx, planData); err != nil {
-				return err
-			}
-			stateData.PowerState = types.BoolValue(true)
-		}
-		// otherwise, if it's set to false then we need to make sure the VM is powered off.
-	} else if !planData.PowerState.ValueBool() {
-		tflog.Debug(ctx, "Power state is set to false, checking current the power state")
-
-		var currentPowerState *bool
-		var err error
-
-		if currentPowerState, err = va.isVMRunning(ctx, planData.Id.ValueString()); err != nil {
-			return err
-		}
-		if *currentPowerState {
-			// It's running, so we have to power it off.
-			if err := va.killVM(ctx, planData); err != nil {
-				return err
-			}
-			stateData.PowerState = types.BoolValue(false)
-		}
+	// Only change power when the plan names a known powerstate that differs
+	// from the VM's current power. Unknown or null means the configuration
+	// omitted powerstate. ValueBool() is false for those, so they must not
+	// be treated as a request to power the VM off.
+	if err := va.applyPlannedPowerState(ctx, planData, stateData); err != nil {
+		return err
 	}
 
 	//just wait for 30 second to make sure the vm is up and running
