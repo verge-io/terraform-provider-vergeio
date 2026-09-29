@@ -21,5 +21,45 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Build
+        run: go build -o terraform-provider-vergeio .
+      - name: Vet
+        run: go vet ./...
+      - name: Lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          args: --timeout=5m
       - name: Unit tests
         run: go test ./...
+      - name: Install Terraform
+        run: |
+          curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip"
+          echo "dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df  /tmp/terraform.zip" | sha256sum -c
+          sudo unzip -o /tmp/terraform.zip -d /usr/local/bin
+          terraform version
+      - name: Docs
+        run: |
+          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name vergeio
+          git diff --exit-code
+
+  # The unit suite does not launch a Terraform CLI. This job still runs it with
+  # TF_ACC_TERRAFORM_PATH pointed at OpenTofu so acceptance helpers, when they
+  # run, use the same binary. Acceptance coverage under OpenTofu is the
+  # workflow_dispatch acceptance workflow.
+  unit-opentofu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+      - name: Unit tests with OpenTofu on the path
+        run: |
+          tofu version
+          echo "TF_ACC_TERRAFORM_PATH=$(command -v tofu)" >> "$GITHUB_ENV"
+          go test ./...

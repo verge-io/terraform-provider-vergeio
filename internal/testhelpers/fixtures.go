@@ -12,20 +12,21 @@ func TestAccDataSourceConfig() string {
 
 // Test fixture data - these will be expanded based on specific resource needs
 var (
-	// TestNetworkName is a test network identifier
-	TestNetworkName = "test-network"
-	
-	// TestVMName is a test VM identifier  
-	TestVMName = "test-vm"
-	
-	// TestUserName is a test user identifier
-	TestUserName = "test-user"
+	// TestNetworkName is a test network identifier.
+	// New acceptance tests should use acctest.Name so the sweeper can find them.
+	TestNetworkName = "tf-acc-network"
+
+	// TestVMName is a test VM identifier.
+	TestVMName = "tf-acc-vm"
+
+	// TestUserName is a test user identifier.
+	TestUserName = "tf-acc-user"
 )
 
 // GetTestConfig returns configuration for specific resource testing
 func GetTestConfig(resourceType string) string {
 	baseConfig := ProviderConfig()
-	
+
 	switch resourceType {
 	case "network":
 		return baseConfig + `

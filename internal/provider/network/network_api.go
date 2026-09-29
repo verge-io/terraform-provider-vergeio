@@ -87,16 +87,49 @@ type VNetAction struct {
 
 // createNetwork creates a new network.
 func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceModel) error {
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		return err
+	}
 
+	network, err := nc.sdk.Networks.Create(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	data.Id = types.StringValue(fmt.Sprintf("%d", network.ID.Int()))
+	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
+
+	return nil
+}
+
+// updateNetwork updates an existing network.
+func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResourceModel, stateData *NetworkResourceModel) error {
+	req, networkIDInt, err := networkUpdateRequest(planData, stateData)
+	if err != nil {
+		return err
+	}
+
+	_, err = nc.sdk.Networks.Update(ctx, networkIDInt, req)
+	if err != nil {
+		return err
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", req))
+
+	return nil
+}
+
+// networkCreateRequest builds the SDK create body.
+// A bool that is null or unknown is left unset. An explicit false is sent,
+// because encoding it as a plain bool with omitempty drops the field and the
+// API keeps its default.
+func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateRequest, error) {
 	apiData := NetworkAPIResourceModel{
 		Name:            data.Name.ValueString(),
-		Enabled:         data.Enabled.ValueBool(),
 		Default_Gateway: data.Default_Gateway.ValueInt32(),
 		IPaddress:       data.IPaddress.ValueString(),
 		Network:         data.Network.ValueString(),
-		DHCP:            data.DHCP.ValueBool(),
-		Dynamic_DHCP:    data.Dynamic_DHCP.ValueBool(),
-		DHCP_Sequential: data.DHCP_Sequential.ValueBool(),
 		DynamicIP_Start: data.DynamicIP_Start.ValueString(),
 		DynamicIP_Stop:  data.DynamicIP_Stop.ValueString(),
 		On_Power_Loss:   data.On_Power_Loss.ValueString(),
@@ -107,65 +140,41 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		Interface_Vnet:  data.Interface_Vnet.ValueInt32(),
 		IPaddress_Type:  data.IPaddress_Type.ValueString(),
 		Layer2_Type:     data.Layer2_Type.ValueString(),
-		Enable_Bonding:  data.Enable_Bonding.ValueBool(),
 	}
 
-	// if data.Bond_Interfaces_Args != nil {
 	for _, arg := range data.Bond_Interfaces_Args.Elements() {
 		apiData.Bond_Interfaces_Args = append(apiData.Bond_Interfaces_Args, arg.(types.Int32).ValueInt32())
 	}
 
-	// Encode the API data
-	encodedBuffer := new(bytes.Buffer)
-	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for network Item")
-	}
-
-	// Convert to SDK request
-	var req vergeos.NetworkCreateRequest
-	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
-		return fmt.Errorf("failed to convert API data: %v", err)
-	}
-
-	// Call SDK API
-	network, err := nc.sdk.Networks.Create(ctx, &req)
+	req, err := decodeNetworkRequest[vergeos.NetworkCreateRequest](apiData)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	// save into the Terraform state.
-	data.Id = types.StringValue(fmt.Sprintf("%d", network.ID.Int()))
-	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
-
-	return nil
+	assignKnownBool(&req.Enabled, data.Enabled)
+	assignKnownBool(&req.DHCPEnabled, data.DHCP)
+	assignKnownBool(&req.DHCPDynamic, data.Dynamic_DHCP)
+	assignKnownBool(&req.DHCPSequential, data.DHCP_Sequential)
+	assignKnownBool(&req.EnableBonding, data.Enable_Bonding)
+	return req, nil
 }
 
-// updateNetwork updates an existing network.
-func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResourceModel, stateData *NetworkResourceModel) error {
-
-	// Prepare the API data packet from the plan
+// networkUpdateRequest builds the SDK update body.
+func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkResourceModel) (*vergeos.NetworkUpdateRequest, int, error) {
 	var defaultGateway int32
 	if !planData.Default_Gateway.IsNull() {
 		defaultGateway = planData.Default_Gateway.ValueInt32()
 	}
 	apiData := NetworkAPIResourceModel{
-
 		Id:              vergeio.StringToNil(planData.Id, stateData.Id, ""),
 		Name:            vergeio.StringToNil(planData.Name, stateData.Name, ""),
-		Enabled:         vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
 		Default_Gateway: defaultGateway,
-		//		Default_Gateway: vergeio.Int32ToNil(planData.Default_Gateway, stateData.Default_Gateway, 0),
 		IPaddress:       vergeio.StringToNil(planData.IPaddress, stateData.IPaddress, ""),
 		Network:         vergeio.StringToNil(planData.Network, stateData.Network, ""),
-		DHCP:            vergeio.BoolToNil(planData.DHCP, stateData.DHCP, false),
-		Dynamic_DHCP:    vergeio.BoolToNil(planData.Dynamic_DHCP, stateData.Dynamic_DHCP, false),
-		DHCP_Sequential: vergeio.BoolToNil(planData.DHCP_Sequential, stateData.DHCP_Sequential, false),
 		DynamicIP_Start: vergeio.StringToNil(planData.DynamicIP_Start, stateData.DynamicIP_Start, ""),
 		DynamicIP_Stop:  vergeio.StringToNil(planData.DynamicIP_Stop, stateData.DynamicIP_Stop, ""),
 		On_Power_Loss:   vergeio.StringToNil(planData.On_Power_Loss, stateData.On_Power_Loss, ""),
 		PowerState:      vergeio.StringToNil(planData.PowerState, stateData.PowerState, ""),
-		// Type is readonly and cannot be updated
-		// Type:            vergeio.StringToNil(planData.Type, stateData.Type, ""),
+		// Type is readonly and cannot be updated.
 		VLAN_TAG:       vergeio.Int32ToNil(planData.VLAN_TAG, stateData.VLAN_TAG, 0),
 		MTU:            vergeio.Int32ToNil(planData.MTU, stateData.MTU, 0),
 		Interface_Vnet: vergeio.Int32ToNil(planData.Interface_Vnet, stateData.Interface_Vnet, 0),
@@ -173,34 +182,45 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 		Layer2_Type:    vergeio.StringToNil(planData.Layer2_Type, stateData.Layer2_Type, ""),
 	}
 
-	// Encode the API data
-	encodedBuffer := new(bytes.Buffer)
-	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for VM Item")
+	req, err := decodeNetworkRequest[vergeos.NetworkUpdateRequest](apiData)
+	if err != nil {
+		return nil, 0, err
 	}
+	// Known false must be a non-nil pointer. The intermediate model uses bool
+	// with omitempty, which would otherwise delete the field.
+	assignKnownBool(&req.Enabled, planData.Enabled)
+	assignKnownBool(&req.DHCPEnabled, planData.DHCP)
+	assignKnownBool(&req.DHCPDynamic, planData.Dynamic_DHCP)
+	assignKnownBool(&req.DHCPSequential, planData.DHCP_Sequential)
+	assignKnownBool(&req.EnableBonding, planData.Enable_Bonding)
 
-	// Convert to SDK request
-	var req vergeos.NetworkUpdateRequest
-	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
-		return fmt.Errorf("failed to convert API data: %v", err)
-	}
-
-	// Parse network ID
 	networkIDInt, err := strconv.Atoi(apiData.Id)
 	if err != nil {
-		return fmt.Errorf("invalid network ID format: %v", err)
+		return nil, 0, fmt.Errorf("invalid network ID format: %v", err)
 	}
+	return req, networkIDInt, nil
+}
 
-	// Call SDK API
-	_, err = nc.sdk.Networks.Update(ctx, networkIDInt, &req)
-	if err != nil {
-		return err
+func decodeNetworkRequest[T any](apiData NetworkAPIResourceModel) (*T, error) {
+	encodedBuffer := new(bytes.Buffer)
+	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
+		return nil, errors.New("invalid format received for network Item")
 	}
+	var req T
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return nil, fmt.Errorf("failed to convert API data: %v", err)
+	}
+	return &req, nil
+}
 
-	// Write logs using the tflog package
-	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
-
-	return nil
+// assignKnownBool sets dst when v is set in the plan, including false.
+// Null and unknown values are left alone.
+func assignKnownBool(dst **bool, v types.Bool) {
+	if v.IsNull() || v.IsUnknown() {
+		return
+	}
+	b := v.ValueBool()
+	*dst = &b
 }
 
 // deleteNetwork deletes a network.
@@ -255,7 +275,7 @@ func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkR
 	} else {
 		powerState = "stopped"
 	}
-	
+
 	networkAPIResp := NetworkAPIResourceModel{
 		PowerState: powerState,
 	}
@@ -285,13 +305,13 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 		Action: "kill",
 		Params: json.RawMessage("{}"), // Empty params for kill action
 	}
-	
+
 	// Convert to JSON payload
 	bytedata, err := json.Marshal(actionPayload)
 	if err != nil {
 		return err
 	}
-	
+
 	// Note: Using legacy HTTP client for actions until SDK adds network actions support
 	req, err := nc.client.Post("api/v4/vnet_actions", bytes.NewBuffer(bytedata))
 	if err != nil {
@@ -326,19 +346,19 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	// Convert SDK response to API model for field mapping consistency
 	// Note: Some fields may not be available in SDK yet, using defaults where needed
 	networkAPIResp := NetworkAPIResourceModel{
-		Name:        network.Name,
-		Enabled:     network.Enabled,
-		IPaddress:   network.IPAddress,
-		Network:     network.Network,
-		DHCP:        network.DHCPEnabled,
-		Dynamic_DHCP: network.DHCPDynamic,
+		Name:            network.Name,
+		Enabled:         network.Enabled,
+		IPaddress:       network.IPAddress,
+		Network:         network.Network,
+		DHCP:            network.DHCPEnabled,
+		Dynamic_DHCP:    network.DHCPDynamic,
 		DHCP_Sequential: network.DHCPSequential,
 		DynamicIP_Start: network.DHCPStart,
 		DynamicIP_Stop:  network.DHCPStop,
 		On_Power_Loss:   network.OnPowerLoss,
 		Type:            network.Type,
 		// Fields not yet available in SDK - using defaults
-		VLAN_TAG:       0,  // TODO: Update when SDK exposes Layer2ID/VLANID
+		VLAN_TAG:       0,    // TODO: Update when SDK exposes Layer2ID/VLANID
 		MTU:            1500, // Default MTU
 		Interface_Vnet: 0,
 		IPaddress_Type: "static", // Default
