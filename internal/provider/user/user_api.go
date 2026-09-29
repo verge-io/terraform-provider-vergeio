@@ -83,8 +83,9 @@ func userCreateRequest(data *UserResourceModel) (*vergeos.UserCreateRequest, err
 }
 
 // userUpdateRequest builds the SDK update body from attributes that differ
-// from state. Auth source and type are readonly. Password and change_password
-// stay off the update body, matching the previous request.
+// from state. Auth source and type are readonly. Password is included only
+// when the planned value differs from state. change_password is not writable
+// here; readUser stores the value the API returns.
 func userUpdateRequest(planData *UserResourceModel, stateData *UserResourceModel) (*vergeos.UserUpdateRequest, error) {
 	apiData := UserAPIResourceModel{
 		Name:        vergeio.ChangedString(planData.Name, stateData.Name),
@@ -92,6 +93,7 @@ func userUpdateRequest(planData *UserResourceModel, stateData *UserResourceModel
 		DisplayName: vergeio.ChangedString(planData.DisplayName, stateData.DisplayName),
 		Email:       vergeio.ChangedString(planData.Email, stateData.Email),
 		RemoteName:  vergeio.ChangedString(planData.RemoteName, stateData.RemoteName),
+		Password:    vergeio.ChangedString(planData.Password, stateData.Password),
 	}
 	return decodeUserRequest[vergeos.UserUpdateRequest](apiData)
 }
@@ -136,12 +138,12 @@ func (nc *UserApi) updateUser(ctx context.Context, planData *UserResourceModel, 
 		return err
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Update user request %v", req))
-
 	userIDInt, err := strconv.Atoi(stateData.Id.ValueString())
 	if err != nil {
 		return fmt.Errorf("invalid user ID format: %v", err)
 	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Updating user %d", userIDInt))
 
 	// Call SDK API
 	_, err = nc.sdk.Users.Update(ctx, userIDInt, req)
@@ -149,9 +151,29 @@ func (nc *UserApi) updateUser(ctx context.Context, planData *UserResourceModel, 
 		return err
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", req))
+	tflog.Debug(ctx, fmt.Sprintf("Updated user %d", userIDInt))
 
 	return nil
+}
+
+// applyUser copies an API user onto the resource model.
+// Password is absent from the API response. A known password from the plan
+// or prior state is kept, which is the value the configuration last applied.
+// change_password is stored from the API so an unset attribute does not stay
+// unknown after apply.
+func applyUser(data *UserResourceModel, user *vergeos.User) {
+	data.Id = types.StringValue(fmt.Sprintf("%d", user.Key.Int()))
+	data.Name = types.StringValue(user.Name)
+	data.Enabled = types.BoolValue(user.Enabled)
+	data.DisplayName = types.StringValue(user.DisplayName)
+	data.Email = types.StringValue(user.Email)
+	data.AuthSource = types.Int32Value(int32(user.AuthSource))
+	data.RemoteName = types.StringValue(user.RemoteName)
+	data.Type = types.StringValue(user.Type)
+	if data.Password.IsNull() || data.Password.IsUnknown() {
+		data.Password = types.StringNull()
+	}
+	data.ChangePassword = types.BoolValue(user.ChangePassword)
 }
 
 // Read the User from the API.
@@ -171,23 +193,9 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 		return err
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Read the user %v", user))
+	tflog.Debug(ctx, fmt.Sprintf("Read the user %v", user.Key.Int()))
 
-	data.Id = types.StringValue(fmt.Sprintf("%d", user.Key.Int()))
-	data.Name = types.StringValue(user.Name)
-	data.Enabled = types.BoolValue(user.Enabled)
-	data.DisplayName = types.StringValue(user.DisplayName)
-	data.Email = types.StringValue(user.Email)
-	data.AuthSource = types.Int32Value(int32(user.AuthSource))
-	data.RemoteName = types.StringValue(user.RemoteName)
-	data.Type = types.StringValue(user.Type)
-	// Password not returned for security reasons - preserve planned value if it exists
-	if data.Password.IsNull() || data.Password.IsUnknown() {
-		// For new resources, password is not readable from API
-		data.Password = types.StringNull()
-	}
-	// ChangePassword defaults to false after creation since API doesn't return this field
-	data.ChangePassword = types.BoolValue(false)
+	applyUser(data, user)
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 

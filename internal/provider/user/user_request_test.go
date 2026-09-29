@@ -67,6 +67,81 @@ func TestUserUpdateBodyKeepsFalseAndEmpty(t *testing.T) {
 	requireAbsent(t, body, "change_password")
 }
 
+func TestUserUpdateSendsChangedPassword(t *testing.T) {
+	plan := &UserResourceModel{
+		Name:           types.StringValue("ada"),
+		Password:       types.StringValue("new-secret"),
+		ChangePassword: types.BoolValue(false),
+	}
+	state := &UserResourceModel{
+		Name:           types.StringValue("ada"),
+		Password:       types.StringValue("old-secret"),
+		ChangePassword: types.BoolValue(false),
+	}
+
+	req, err := userUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Users.Update json.Marshals this struct onto PUT /api/v4/users/{id}.
+	// pyVergeOS users.update(..., password=...) sends the same object.
+	// change_password stays off this body: it means the user must change
+	// their password at next login, and read stores the API value.
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"password":"new-secret"}`
+	if string(raw) != want {
+		t.Fatalf("Users.Update body = %s, want %s", raw, want)
+	}
+}
+
+func TestUserUpdateOmitsUnchangedPassword(t *testing.T) {
+	plan := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("same-secret"),
+		Enabled:  types.BoolValue(false),
+	}
+	state := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("same-secret"),
+		Enabled:  types.BoolValue(true),
+	}
+
+	req, err := userUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsonObject(t, req)
+	requireBool(t, body, "enabled", false)
+	requireAbsent(t, body, "password")
+}
+
+func TestUserUpdateSendsPasswordWhenStateHasNone(t *testing.T) {
+	plan := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringValue("first-secret"),
+	}
+	state := &UserResourceModel{
+		Name:     types.StringValue("ada"),
+		Password: types.StringNull(),
+	}
+
+	req, err := userUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"password":"first-secret"}`
+	if string(raw) != want {
+		t.Fatalf("Users.Update body = %s, want %s", raw, want)
+	}
+}
+
 func TestUserUpdateOmitsUnsetEnabled(t *testing.T) {
 	plan := &UserResourceModel{
 		Name:    types.StringValue("ada"),
