@@ -81,8 +81,8 @@ func TestNetworkResource_Schema(t *testing.T) {
 	if !restartAttr.IsOptional() || !restartAttr.IsComputed() {
 		t.Error("restart_on_change should be optional and computed")
 	}
-	def, ok := restartAttr.Default.(defaults.Bool)
-	if !ok {
+	def := restartAttr.Default
+	if def == nil {
 		t.Fatal("restart_on_change should default to true")
 	}
 	defaultResp := &defaults.BoolResponse{}
