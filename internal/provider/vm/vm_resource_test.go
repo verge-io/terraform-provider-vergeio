@@ -7,6 +7,9 @@ import (
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
@@ -92,6 +95,83 @@ func TestVMResource_Schema(t *testing.T) {
 	// Check schema description
 	if resp.Schema.MarkdownDescription != "VM resource in VergeIO" {
 		t.Errorf("expected description 'VM resource in VergeIO', got '%s'", resp.Schema.MarkdownDescription)
+	}
+}
+
+func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
+	vmResource := NewVMResource()
+	resp := &fwresource.SchemaResponse{}
+	vmResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+
+	driveKey := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "key")
+	assertPlanModifiers(t, "vergeio_drive.key", driveKey.PlanModifiers,
+		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
+		stringplanmodifier.RequiresReplaceIfConfigured().Description(context.Background()),
+	)
+
+	driveMedia := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "media")
+	assertPlanModifiers(t, "vergeio_drive.media", driveMedia.PlanModifiers,
+		stringplanmodifier.RequiresReplace().Description(context.Background()),
+	)
+
+	driveSource := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_drive", "media_source")
+	if len(driveSource.PlanModifiers) != 1 {
+		t.Fatalf("vergeio_drive.media_source modifiers = %d, want 1", len(driveSource.PlanModifiers))
+	}
+	got := driveSource.PlanModifiers[0].Description(context.Background())
+	want := int32planmodifier.RequiresReplace().Description(context.Background())
+	if got != want {
+		t.Errorf("vergeio_drive.media_source modifier %q, want %q", got, want)
+	}
+
+	nicID := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "id")
+	assertPlanModifiers(t, "vergeio_nic.id", nicID.PlanModifiers,
+		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
+		stringplanmodifier.RequiresReplaceIfConfigured().Description(context.Background()),
+	)
+
+	nicMAC := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "macaddress")
+	assertPlanModifiers(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers,
+		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
+	)
+}
+
+func nestedStringAttr(t *testing.T, blocks map[string]schema.Block, blockName, attrName string) schema.StringAttribute {
+	t.Helper()
+	block, ok := blocks[blockName].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatalf("%s is not a list nested block", blockName)
+	}
+	attr, ok := block.NestedObject.Attributes[attrName].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("%s.%s is not a string attribute", blockName, attrName)
+	}
+	return attr
+}
+
+func nestedInt32Attr(t *testing.T, blocks map[string]schema.Block, blockName, attrName string) schema.Int32Attribute {
+	t.Helper()
+	block, ok := blocks[blockName].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatalf("%s is not a list nested block", blockName)
+	}
+	attr, ok := block.NestedObject.Attributes[attrName].(schema.Int32Attribute)
+	if !ok {
+		t.Fatalf("%s.%s is not an int32 attribute", blockName, attrName)
+	}
+	return attr
+}
+
+func assertPlanModifiers(t *testing.T, name string, got []planmodifier.String, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s has %d plan modifiers, want %d", name, len(got), len(want))
+	}
+	for i := range want {
+		desc := got[i].Description(context.Background())
+		if desc != want[i] {
+			t.Errorf("%s modifier %d = %q, want %q", name, i, desc, want[i])
+		}
 	}
 }
 
