@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
@@ -385,51 +384,43 @@ func preserveNICConfigFields(prior, current []*nicResourceModel) {
 	}
 }
 
-// Delete the NIC from the API.
+// deleteNIC unplugs a NIC that is still attached, waits until it is down,
+// and then deletes it. The unplug action is sent once. Sending it again
+// while the guest is still releasing the NIC returns 422.
 func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId types.String) error {
 
 	tflog.Debug(ctx, "Deleting the nic")
 
-	// VM API for hotplugging via VM Actions
-	vmApi := NewVMApi(na.client)
-
-	var powerState string = ""
-
-	// Call the API to check if the nic is in a power state that can be deleted
-	if err := na.checkNICPowerState(ctx, data.Id.ValueString(), &powerState); err != nil {
+	id := data.Id.ValueString()
+	var powerState string
+	if err := na.checkNICPowerState(ctx, id, &powerState); err != nil {
 		return fmt.Errorf("error checking NIC power state %v", err)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Current NIC power state is %v", powerState))
 
-	// Call the API to check if the vm is in a power state that can be deleted
-	for strings.ToLower(powerState) != "down" {
-		Retries := 1
-
-		// Power the vm off
-		if err := vmApi.hotplugNIC(ctx, data.Id.ValueString(), vmId, true); err != nil {
-			return fmt.Errorf("failed to hotplug NIC: %v", err)
+	if !strings.EqualFold(strings.TrimSpace(powerState), "down") {
+		if err := sendUnplug(ctx, powerState, func() error {
+			return NewVMApi(na.client).hotplugNIC(ctx, id, vmId, true)
+		}); err != nil {
+			return fmt.Errorf("failed to unplug NIC: %v", err)
 		}
 
-		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(2 * time.Second)
-
-		// Call the API to check if the nic is in a power state that can be deleted
-		if err := na.checkNICPowerState(ctx, data.Id.ValueString(), &powerState); err != nil {
-			return fmt.Errorf("error checking NIC power state %v", err)
+		name := ""
+		if !data.Name.IsNull() && !data.Name.IsUnknown() {
+			name = data.Name.ValueString()
 		}
-
-		Retries += 1
-
-		// We are only going to retry 5 times before giving up
-		if Retries > 5 {
-			return fmt.Errorf("failed to kill NIC before deletion after %d retries", Retries)
+		if err := waitUntilDetached(ctx, func() (string, error) {
+			var current string
+			readErr := na.checkNICPowerState(ctx, id, &current)
+			return current, readErr
+		}, "down", "NIC", name, id, "id"); err != nil {
+			return err
 		}
-		continue
 	}
 
 	// Call the API
-	_, apiErr := na.client.Delete(ctx, NICEndpoint+"/"+data.Id.ValueString())
+	_, apiErr := na.client.Delete(ctx, NICEndpoint+"/"+id)
 
 	if apiErr != nil {
 		return errors.New("Error deleting the NIC: " + apiErr.Error())
