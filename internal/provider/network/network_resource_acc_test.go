@@ -29,6 +29,7 @@ func TestAccNetworkResource(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_network.test", "name", networkName),
 					resource.TestCheckResourceAttr("vergeio_network.test", "type", "internal"),
 					resource.TestCheckResourceAttr("vergeio_network.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("vergeio_network.test", "powerstate", "false"),
 					resource.TestCheckResourceAttrSet("vergeio_network.test", "id"),
 				),
 			},
@@ -87,8 +88,9 @@ func testAccNetworkResourceConfig(networkName, extra string) string {
 	}
 	return acctest.Config(fmt.Sprintf(`
 resource "vergeio_network" "test" {
-  name = %q
-  type = "internal"
+  name       = %q
+  type       = "internal"
+  powerstate = "false"
   %s
 }
 `, networkName, extra))

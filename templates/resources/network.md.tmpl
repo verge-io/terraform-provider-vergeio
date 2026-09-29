@@ -67,7 +67,7 @@ resource "vergeio_network" "external_example" {
 	- `last_state` (**Default/Off**)
 	- `power_on`   **Automatically powers the resource on**
 	- `leave_off`  Leaves the resource in an off state
-- `powerstate` (Boolean) - Default = False, Sets if vNET should be powered on after creation
+- `powerstate` (String) - `"true"` or `"false"`. Default = `"false"`. Read back from the API after create and import. Sets whether the vNET should be powered on after creation.
 - `type` (String) - Default = Internal, Type of vNET to create (Internal/External)
 - `interface_vnet` (Number) - Physical vNET ID to attach an external vNET to, Depends on `type=external`
 - `layer2_id` (Number) - VLAN ID to assign an external vNET, Depends on `type=external`

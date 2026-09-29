@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -89,13 +90,13 @@ func (da *DiskApi) GetDiskInterfacesFromAPI(ctx context.Context) ([]string, erro
 	if err != nil {
 		return nil, fmt.Errorf("unable to fetch valid disk interfaces from VergeOS API: %w", err)
 	}
-	
+
 	// Convert map keys to slice of strings
 	interfaces := make([]string, 0, len(interfacesMap))
 	for iface := range interfacesMap {
 		interfaces = append(interfaces, iface)
 	}
-	
+
 	return interfaces, nil
 }
 
@@ -343,6 +344,67 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 	tflog.Debug(ctx, fmt.Sprintf("Finish reading the disk %v", data.Key.ValueString()))
 
 	return nil
+}
+
+// readDisksByMachine lists machine_drives for a VM machine and reads each row.
+// Import only has the VM id, so drives have to be discovered by machine rather
+// than by keys already stored in state. Order is orderid, then name, then key
+// so two reads return the same block order.
+func (da *DiskApi) readDisksByMachine(ctx context.Context, machineID int32) ([]*diskResourceModel, error) {
+	drives, err := da.sdk.VMDrives.List(ctx, int(machineID))
+	if err != nil {
+		return nil, fmt.Errorf("listing drives for machine %d: %w", machineID, err)
+	}
+	sortDrivesForState(drives)
+	if len(drives) == 0 {
+		return nil, nil
+	}
+
+	disks := make([]*diskResourceModel, 0, len(drives))
+	for _, drive := range drives {
+		disk := &diskResourceModel{Key: types.StringValue(strconv.Itoa(drive.ID.Int()))}
+		if err := da.readDisk(ctx, disk); err != nil {
+			return nil, fmt.Errorf("reading drive %d: %w", drive.ID.Int(), err)
+		}
+		disks = append(disks, disk)
+	}
+	return disks, nil
+}
+
+// sortDrivesForState orders drives the way nested blocks are stored.
+func sortDrivesForState(drives []vergeos.VMDrive) {
+	sort.SliceStable(drives, func(i, j int) bool {
+		if drives[i].OrderID != drives[j].OrderID {
+			return drives[i].OrderID < drives[j].OrderID
+		}
+		if drives[i].Name != drives[j].Name {
+			return drives[i].Name < drives[j].Name
+		}
+		return drives[i].ID.Int() < drives[j].ID.Int()
+	})
+}
+
+// preserveDiskConfigFields copies attributes readDisk does not refresh.
+// media and media_source stay as configured; a refresh must not drop them.
+func preserveDiskConfigFields(prior, current []*diskResourceModel) {
+	byKey := make(map[string]*diskResourceModel, len(prior))
+	for _, disk := range prior {
+		if disk == nil || disk.Key.IsNull() || disk.Key.ValueString() == "" {
+			continue
+		}
+		byKey[disk.Key.ValueString()] = disk
+	}
+	for _, disk := range current {
+		if disk == nil || disk.Key.IsNull() {
+			continue
+		}
+		old, ok := byKey[disk.Key.ValueString()]
+		if !ok {
+			continue
+		}
+		disk.Media = old.Media
+		disk.MediaSource = old.MediaSource
+	}
 }
 
 // Delete the Disk from the API.

@@ -104,3 +104,104 @@ resource "vergeio_vm" "test" {
 }
 `, vmName, body))
 }
+
+// TestAccVMResource_DriveAndNIC imports a VM that already has a drive and a NIC.
+// ImportStateVerify fails if Read does not put those blocks back into state.
+func TestAccVMResource_DriveAndNIC(t *testing.T) {
+	vmName := acctest.Name("vm")
+	networkName := acctest.Name("network")
+	config := testAccVMWithDriveAndNICConfig(vmName, networkName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMAndNetworkDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.#", "1"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.name", "os"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.interface", "virtio-scsi"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.disksize", "5"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.orderid", "0"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.#", "1"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.name", "nic0"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.interface", "virtio"),
+					resource.TestCheckResourceAttrPair("vergeio_vm.test", "vergeio_nic.0.vnet", "vergeio_network.test", "id"),
+				),
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				ResourceName:      "vergeio_vm.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
+				ResourceName:      "vergeio_network.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+func testAccCheckVMAndNetworkDestroy(s *terraform.State) error {
+	if err := testAccCheckVMDestroy(s); err != nil {
+		return err
+	}
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	return acctest.CheckDeleted(s, "vergeio_network", func(ctx context.Context, id int) error {
+		_, err := client.Networks.Get(ctx, id)
+		return err
+	})
+}
+
+func testAccVMWithDriveAndNICConfig(vmName, networkName string) string {
+	if err := acctest.RequirePrefix(vmName); err != nil {
+		panic(err)
+	}
+	if err := acctest.RequirePrefix(networkName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_network" "test" {
+  name       = %q
+  type       = "internal"
+  enabled    = true
+  powerstate = "false"
+}
+
+resource "vergeio_vm" "test" {
+  name      = %q
+  enabled   = true
+  cpu_cores = 2
+  ram       = 2048
+
+  vergeio_drive {
+    name      = "os"
+    disksize  = 5
+    interface = "virtio-scsi"
+    orderid   = 0
+  }
+
+  vergeio_nic {
+    name      = "nic0"
+    interface = "virtio"
+    vnet      = tonumber(vergeio_network.test.id)
+  }
+}
+`, networkName, vmName))
+}
