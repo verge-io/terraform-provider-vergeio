@@ -15,55 +15,55 @@ linters:
     # Pre-existing findings. New issues in these files still fail unless the
     # text below matches. Remove a rule when that finding is fixed.
     rules:
-      - path: internal/provider/vergeio/field_cache.go
+      - path: internal/client/field_cache.go
         linters: [errcheck]
         text: Body.Close
-      - path: internal/provider/vm/device_api.go
+      - path: internal/services/compute/vm_device.go
         linters: [errcheck]
         text: Body.Close
-      - path: internal/provider/vm/disk_api.go
+      - path: internal/services/compute/vm_drive.go
         linters: [errcheck]
         text: checkDiskPowerState
-      - path: internal/provider/vm/disk_api.go
+      - path: internal/services/compute/vm_drive.go
         linters: [errcheck]
         text: Body.Close
-      - path: internal/provider/vm/vm_api.go
+      - path: internal/services/compute/vm_api.go
         linters: [ineffassign]
         text: currentPowerState
-      - path: internal/provider/vm/vm_resource.go
+      - path: internal/services/compute/vm_resource.go
         linters: [ineffassign]
         text: ineffectual assignment to i
-      - path: internal/provider/vergeio/field_cache.go
+      - path: internal/client/field_cache.go
         linters: [staticcheck]
         text: S1009
-      - path: internal/provider/vm/disk_api.go
+      - path: internal/services/compute/vm_drive.go
         linters: [staticcheck]
         text: omit type string
-      - path: internal/provider/vm/nic_api.go
+      - path: internal/services/compute/vm_nic.go
         linters: [staticcheck]
         text: omit type string
-      - path: internal/provider/vm/nic_api.go
+      - path: internal/services/compute/vm_nic.go
         linters: [errcheck]
         text: Body.Close
-      - path: internal/provider/tags/tags_api.go
+      - path: internal/services/tags/tags_api.go
         linters: [errcheck]
         text: Body.Close
-      - path: internal/provider/vm/vm_resource.go
+      - path: internal/services/compute/vm_resource.go
         linters: [staticcheck]
         text: SA1019
-      - path: internal/provider/vm/vm_resource.go
+      - path: internal/services/compute/vm_resource.go
         linters: [staticcheck]
         text: S1009
-      - path: internal/provider/tags/tags_api.go
+      - path: internal/services/tags/tags_api.go
         linters: [unused]
         text: getCategoryIDByName
-      - path: internal/provider/tags/tags_api.go
+      - path: internal/services/tags/tags_api.go
         linters: [unused]
         text: checkEndpointAvailability
-      - path: internal/provider/vm/disk_api.go
+      - path: internal/services/compute/vm_drive.go
         linters: [unused]
         text: getValidDiskInterfaces
-      - path: internal/provider/vm/vm_api.go
+      - path: internal/services/compute/vm_api.go
         linters: [unused]
         text: getValidMachineTypes
 

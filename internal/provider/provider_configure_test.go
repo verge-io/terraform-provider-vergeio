@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"terraform-provider-vergeio/internal/provider/vergeio"
+	"terraform-provider-vergeio/internal/client"
 
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
