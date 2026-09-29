@@ -359,6 +359,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 		// Nested blocks for NICs
 		Blocks: map[string]schema.Block{
 			"vergeio_nic": schema.ListNestedBlock{
+				MarkdownDescription: "NICs for the VM. A NIC added while the VM is running is hotplugged and brought up. A NIC added in the same apply that powers the VM on is created before power-on. If hotplug is refused, apply fails and the VM must be power cycled before the guest sees the NIC.",
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"id": schema.StringAttribute{
@@ -439,6 +440,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 			},
 			// Nested blocks for drives
 			"vergeio_drive": schema.ListNestedBlock{
+				MarkdownDescription: "Drives for the VM. A drive added while the VM is running is hotplugged. A drive added in the same apply that powers the VM on is created before power-on. Interfaces that cannot be hotplugged, such as IDE, stay offline until the VM is power cycled, and apply fails with that error.",
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"key": schema.StringAttribute{
@@ -1174,7 +1176,10 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating VM state %s", stateData.Id.ValueString()))
 
-	// Update the VM
+	// Update VM attributes only. Power is applied after the drive and NIC
+	// sync so a VM started in this apply boots with the new devices.
+	// Drives and NICs created while the VM is already running are hotplugged
+	// inside the sync.
 	if updateError := r.vmApi.UpdateVM(ctx, &planData, &stateData); updateError != nil {
 		resp.Diagnostics.AddError(
 			"Error updating VM",
@@ -1187,18 +1192,34 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// the first drive, NIC, or device can be added and the last one removed.
 	tflog.Debug(ctx, fmt.Sprintf("Updating the disk with the plan data %v", planData.Disks))
 	tflog.Debug(ctx, "Syncing disks ran")
-	if err := r.diskApi.syncDisks(ctx, &planData.Disks, &stateData.Disks, stateData.Machine, stateData.Id); err != nil {
+	diskErr := r.diskApi.syncDisks(ctx, &planData.Disks, &stateData.Disks, stateData.Machine, stateData.Id)
+	if diskErr != nil {
 		resp.Diagnostics.AddError(
 			"Error syncing disks",
-			err.Error(),
+			diskErr.Error(),
 		)
 	}
 
-	if err := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id); err != nil {
+	nicErr := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id)
+	if nicErr != nil {
 		resp.Diagnostics.AddError(
 			"Error syncing NICs",
-			err.Error(),
+			nicErr.Error(),
 		)
+	}
+
+	// Power on only after the new drives and NICs exist. A failed sync skips
+	// the power change so the VM is not started without those devices.
+	if diskErr == nil && nicErr == nil {
+		if err := r.vmApi.applyPlannedPowerState(ctx, &planData, &stateData); err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating VM power state",
+				err.Error(),
+			)
+			return
+		}
+		// UpdateVM used to wait here so a following read sees the VM running.
+		time.Sleep(5 * time.Second)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating the devices with the plan data %v", planData.Devices))

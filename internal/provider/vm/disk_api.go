@@ -474,7 +474,7 @@ func (da *DiskApi) deleteDisk(ctx context.Context, data *diskResourceModel, vmId
 		Retries := 1
 
 		// Power the vm off
-		if err := vmApi.hotplugDrive(ctx, data.Key.ValueString(), vmId); err != nil {
+		if err := vmApi.hotplugDrive(ctx, data.Key.ValueString(), vmId, true); err != nil {
 			return fmt.Errorf("failed to hotplug drive: %v", err)
 		}
 
@@ -594,6 +594,18 @@ func (da *DiskApi) syncDisks(ctx context.Context, planData *[]*diskResourceModel
 		}
 	}
 
+	// A drive created while the VM is stopped is present at the next boot.
+	// Update powers the VM on only after this sync. A drive created while
+	// the VM is already running stays offline until hotplugdrive.
+	vmRunning := false
+	if len(creates) > 0 {
+		running, err := readVMPowerState(ctx, da.client, vmId)
+		if err != nil {
+			return fmt.Errorf("failed to read VM power state before adding drives: %w", err)
+		}
+		vmRunning = running
+	}
+
 	tflog.Debug(ctx, "Syncing disks: Starting insertion")
 	for _, created := range creates {
 		created.Machine = machineId
@@ -602,6 +614,11 @@ func (da *DiskApi) syncDisks(ctx context.Context, planData *[]*diskResourceModel
 		}
 		if err := da.readDisk(ctx, created); err != nil {
 			return fmt.Errorf("failed to read disk during the sync: %v", err)
+		}
+		if vmRunning {
+			if err := da.attachCreatedDrive(ctx, created, vmId); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -646,15 +663,55 @@ func (da *DiskApi) checkDiskPowerState(ctx context.Context, key string, powerSta
 	return nil
 }
 
-// Hotplug the disk so that it can be deleted
-func (va *VMApi) hotplugDrive(ctx context.Context, driveId string, vmId types.String) error {
+// attachCreatedDrive hotplugs a drive that was just created on a running VM
+// and waits until it is online. A disabled drive is left offline.
+// When VergeOS refuses the action, or the drive never comes online, the
+// error tells the caller to power cycle the VM. IDE is the known interface
+// the platform will not hotplug.
+func (da *DiskApi) attachCreatedDrive(ctx context.Context, disk *diskResourceModel, vmId types.String) error {
+	if disk == nil || !deviceShouldAttach(disk.Enabled) {
+		tflog.Debug(ctx, "Skipping hotplug for a disabled drive")
+		return nil
+	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Calling the hotplug drive API for the drive %v", driveId))
+	name := disk.Name.ValueString()
+	iface := disk.Interface.ValueString()
+	vmAPI := NewVMApi(da.client)
+	if err := vmAPI.hotplugDrive(ctx, disk.Key.ValueString(), vmId, false); err != nil {
+		return fmt.Errorf("drive %q (interface %q) was created on running VM %s, but VergeOS refused to hotplug it: %w. Some interfaces, such as IDE, cannot be hotplugged and stay offline until the VM is power cycled", name, iface, vmId.ValueString(), err)
+	}
 
-	// Create the action payload according to vnet_actions schema
+	status, err := waitForStatus(ctx, func() (string, error) {
+		var current string
+		readErr := da.checkDiskPowerState(ctx, disk.Key.ValueString(), &current)
+		return current, readErr
+	}, "online")
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if status == "" {
+			return fmt.Errorf("drive %q was hotplugged but its status could not be read: %w", name, err)
+		}
+		return fmt.Errorf("drive %q (interface %q) stayed %q after hotplug on running VM %s. Power cycle the VM so the guest can see the drive", name, iface, status, vmId.ValueString())
+	}
+	return nil
+}
+
+// hotplugDrive sends hotplugdrive. unplug detaches the drive; otherwise the
+// action attaches a drive that is already assigned to the VM.
+func (va *VMApi) hotplugDrive(ctx context.Context, driveId string, vmId types.String, unplug bool) error {
+
+	tflog.Debug(ctx, fmt.Sprintf("Calling the hotplug drive API for the drive %v unplug %v", driveId, unplug))
+
+	// Create the action payload according to vnet_actions schema.
+	// Unplug is omitted when attaching. The API treats a missing unplug flag
+	// as hotplug, which brings an offline drive online.
 	params := VMActionParams{
 		Device: driveId,
-		Unplug: true,
+	}
+	if unplug {
+		params.Unplug = true
 	}
 	intVMId, err := strconv.Atoi(vmId.ValueString())
 	if err != nil {

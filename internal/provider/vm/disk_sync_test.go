@@ -335,3 +335,277 @@ func TestSyncDisksDeletesLastWhenPlanIsEmpty(t *testing.T) {
 		t.Fatalf("calls = %#v, want power-state GET then DELETE of drive 46", driveCalls)
 	}
 }
+
+func TestSyncDisksHotplugsCreatedDriveOnRunningVM(t *testing.T) {
+	const driveJSON = `{"machine":1,"name":"data","disksize":1073741824,"interface":"virtio","enabled":true}`
+	var calls []string
+	var hotplugBody string
+	statusReads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"version":"26.0.0"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"powerstate":true}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":"99"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/99" && strings.Contains(r.URL.RawQuery, "powerState"):
+			statusReads++
+			payload := `{"powerstate":"offline"}`
+			if statusReads > 1 {
+				payload = `{"powerstate":"online"}`
+			}
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(payload)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/99":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(driveJSON)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			hotplugBody = string(body)
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &DiskApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	plan := []*diskResourceModel{{
+		Name:      types.StringValue("data"),
+		Interface: types.StringValue("virtio"),
+		Media:     types.StringValue("disk"),
+		DiskSize:  types.Float64Value(1),
+		Enabled:   types.BoolValue(true),
+	}}
+	var state []*diskResourceModel
+
+	if err := api.syncDisks(t.Context(), &plan, &state, types.Int32Value(1), types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	if len(state) != 1 || state[0].Key.ValueString() != "99" {
+		t.Fatalf("state after hotplug = %#v", state)
+	}
+	if !strings.Contains(hotplugBody, `"action":"hotplugdrive"`) || !strings.Contains(hotplugBody, `"device":"99"`) {
+		t.Fatalf("hotplug body = %s, want hotplugdrive for drive 99", hotplugBody)
+	}
+	if strings.Contains(hotplugBody, "unplug") {
+		t.Fatalf("attach hotplug included unplug: %s", hotplugBody)
+	}
+	if statusReads < 2 {
+		t.Fatalf("status reads = %d, want a poll while the drive is still offline", statusReads)
+	}
+	if !callBefore(calls, "POST /api/v4/machine_drives", "POST /api/v4/vm_actions") {
+		t.Fatalf("calls = %#v, want the drive created before hotplug", calls)
+	}
+}
+
+func TestSyncDisksCreateOnStoppedVMDoesNotHotplug(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"powerstate":false}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":"99"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/99":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"machine":1,"name":"data","disksize":1073741824,"interface":"virtio","enabled":true}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &DiskApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	plan := []*diskResourceModel{{
+		Name:     types.StringValue("data"),
+		Media:    types.StringValue("disk"),
+		DiskSize: types.Float64Value(1),
+		Enabled:  types.BoolValue(true),
+	}}
+	var state []*diskResourceModel
+
+	if err := api.syncDisks(t.Context(), &plan, &state, types.Int32Value(1), types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if call == "POST /api/v4/vm_actions" {
+			t.Fatalf("stopped VM hotplugged a drive: %#v", calls)
+		}
+	}
+}
+
+func TestSyncDisksSkipsHotplugForDisabledDrive(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"powerstate":true}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":"99"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/99":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"machine":1,"name":"data","interface":"virtio","enabled":false}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &DiskApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	plan := []*diskResourceModel{{
+		Name:    types.StringValue("data"),
+		Enabled: types.BoolValue(false),
+	}}
+	var state []*diskResourceModel
+
+	if err := api.syncDisks(t.Context(), &plan, &state, types.Int32Value(1), types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if call == "POST /api/v4/vm_actions" {
+			t.Fatalf("disabled drive was hotplugged: %#v", calls)
+		}
+	}
+}
+
+func TestSyncDisksHotplugRefusalRequiresPowerCycle(t *testing.T) {
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"version":"26.0.0"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"powerstate":true}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":"99"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/99":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"machine":1,"name":"data","interface":"ide","enabled":true}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			w.WriteHeader(http.StatusBadRequest)
+			if _, err := w.Write([]byte(`{"err":"cannot hotplug ide drive"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &DiskApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	plan := []*diskResourceModel{{
+		Name:      types.StringValue("data"),
+		Interface: types.StringValue("ide"),
+		Enabled:   types.BoolValue(true),
+	}}
+	var state []*diskResourceModel
+
+	err := api.syncDisks(t.Context(), &plan, &state, types.Int32Value(1), types.StringValue("7"))
+	if err == nil {
+		t.Fatal("expected hotplug refusal to fail the sync")
+	}
+	if !strings.Contains(err.Error(), "power cycle") || !strings.Contains(err.Error(), "cannot hotplug ide drive") {
+		t.Fatalf("error = %v, want a power-cycle message that includes the API refusal", err)
+	}
+	if !callBefore(calls, "POST /api/v4/machine_drives", "POST /api/v4/vm_actions") {
+		t.Fatalf("calls = %#v, want the drive created before the refused hotplug", calls)
+	}
+}
+
+func TestHotplugDriveUnplugSetsFlag(t *testing.T) {
+	var body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		body = string(payload)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v4/vm_actions" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		if _, err := w.Write([]byte(`{}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	api := &VMApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	if err := api.hotplugDrive(t.Context(), "46", types.StringValue("7"), true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, `"action":"hotplugdrive"`) || !strings.Contains(body, `"unplug":true`) || !strings.Contains(body, `"device":"46"`) {
+		t.Fatalf("unplug body = %s, want hotplugdrive with unplug true", body)
+	}
+}
+
+func callBefore(calls []string, earlier, later string) bool {
+	earlierAt, laterAt := -1, -1
+	for i, call := range calls {
+		if call == earlier && earlierAt < 0 {
+			earlierAt = i
+		}
+		if call == later && laterAt < 0 {
+			laterAt = i
+		}
+	}
+	return earlierAt >= 0 && laterAt >= 0 && earlierAt < laterAt
+}

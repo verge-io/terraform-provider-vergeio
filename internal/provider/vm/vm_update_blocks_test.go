@@ -211,3 +211,172 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 		}
 	}
 }
+
+// TestVMUpdateSyncsDrivesAndNICsBeforePowerOn is the apply that both starts
+// a stopped VM and adds a drive and a NIC. The devices have to be created
+// before poweron, or the guest boots without them and they stay offline.
+func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
+	const stoppedVM = `{"$key":7,"machine":1,"name":"vm","cpu_cores":1,"ram":512,"enabled":true,"powerstate":false}`
+	const runningVM = `{"$key":7,"machine":1,"name":"vm","cpu_cores":1,"ram":512,"enabled":true,"powerstate":true}`
+	const driveJSON = `{"$key":"99","machine":1,"name":"data","interface":"virtio","disksize":1073741824,"enabled":true}`
+	const nicJSON = `{"$key":"98","machine":1,"name":"lan","interface":"virtio","enabled":true,"vnet":6,"macaddress":"52:54:00:aa:bb:cc"}`
+
+	var mu sync.Mutex
+	var calls []string
+	var actionBodies []string
+	powered := false
+	driveCreated := false
+	nicCreated := false
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		mu.Lock()
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		if r.URL.Path == "/api/v4/vm_actions" {
+			actionBodies = append(actionBodies, string(body))
+			if strings.Contains(string(body), `"action":"poweron"`) {
+				powered = true
+			}
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives" {
+			driveCreated = true
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_nics" {
+			nicCreated = true
+		}
+		isPowered := powered
+		hasDrive := driveCreated
+		hasNIC := nicCreated
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		var response []byte
+		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			response = []byte(`{"version":"26.0.0"}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			response = []byte(`{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			if isPowered {
+				response = []byte(runningVM)
+			} else {
+				response = []byte(stoppedVM)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			w.WriteHeader(http.StatusCreated)
+			response = []byte(`{"$key":"99"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/99":
+			w.WriteHeader(http.StatusOK)
+			response = []byte(driveJSON)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives":
+			w.WriteHeader(http.StatusOK)
+			if hasDrive {
+				response = []byte(`[` + driveJSON + `]`)
+			} else {
+				response = []byte(`[]`)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_nics":
+			w.WriteHeader(http.StatusCreated)
+			response = []byte(`{"$key":"98"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
+			w.WriteHeader(http.StatusOK)
+			response = []byte(nicJSON)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics":
+			w.WriteHeader(http.StatusOK)
+			if hasNIC {
+				response = []byte(`[` + nicJSON + `]`)
+			} else {
+				response = []byte(`[]`)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			w.WriteHeader(http.StatusCreated)
+			response = []byte(`{}`)
+		default:
+			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		if _, err := w.Write(response); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	ctx := t.Context()
+	client := vergeio.NewClient(server.URL, "user", "pass", true)
+	vmResource := &VMResource{
+		vmApi:     NewVMApi(client),
+		diskApi:   NewDiskApi(client),
+		nicApi:    NewNICApi(client),
+		deviceApi: NewDeviceApi(client),
+	}
+
+	schemaResp := &fwresource.SchemaResponse{}
+	vmResource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+
+	stateModel := VMResourceModel{
+		Id:            types.StringValue("7"),
+		Machine:       types.Int32Value(1),
+		Name:          types.StringValue("vm"),
+		PowerState:    types.BoolValue(false),
+		GuestAgentIPs: types.ListNull(types.StringType),
+	}
+	planModel := stateModel
+	planModel.PowerState = types.BoolValue(true)
+	planModel.Disks = []*diskResourceModel{{
+		Name:    types.StringValue("data"),
+		Media:   types.StringValue("disk"),
+		Enabled: types.BoolValue(true),
+	}}
+	planModel.NICs = []*nicResourceModel{{
+		Name:      types.StringValue("lan"),
+		Interface: types.StringValue("virtio"),
+		Enabled:   types.BoolValue(true),
+		VNET:      types.Int32Value(6),
+	}}
+
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, &planModel); diags.HasError() {
+		t.Fatalf("plan: %v", diags)
+	}
+	if diags := state.Set(ctx, &stateModel); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+
+	resp := &fwresource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	vmResource.Update(ctx, fwresource.UpdateRequest{Plan: plan, State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update: %v", resp.Diagnostics)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !callBefore(calls, "POST /api/v4/machine_drives", "POST /api/v4/vm_actions") {
+		t.Fatalf("calls = %#v, want the drive created before power on", calls)
+	}
+	if !callBefore(calls, "POST /api/v4/machine_nics", "POST /api/v4/vm_actions") {
+		t.Fatalf("calls = %#v, want the NIC created before power on", calls)
+	}
+	if !callBefore(calls, "PUT /api/v4/vms/7", "POST /api/v4/machine_drives") {
+		t.Fatalf("calls = %#v, want the VM record updated before the drive is created", calls)
+	}
+	poweredOn := false
+	for _, body := range actionBodies {
+		if strings.Contains(body, "hotplug") {
+			t.Fatalf("stopped VM hotplugged a device before boot: %s", body)
+		}
+		if strings.Contains(body, `"action":"poweron"`) {
+			poweredOn = true
+		}
+	}
+	if !poweredOn {
+		t.Fatalf("poweron action was not sent: %#v", actionBodies)
+	}
+}
