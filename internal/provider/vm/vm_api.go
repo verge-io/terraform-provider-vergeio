@@ -504,6 +504,15 @@ const (
 	deviceAttachInterval = time.Second
 )
 
+// deviceDetachTimeout is how long delete waits after one unplug for a drive
+// or NIC to leave the guest. On VergeOS 26.1 a guest stayed in hotplug for
+// several minutes, so this is a deadline rather than a few short retries.
+// The first status read is immediate. Tests shorten these.
+var (
+	deviceDetachTimeout  = 5 * time.Minute
+	deviceDetachInterval = 2 * time.Second
+)
+
 // deviceShouldAttach reports whether a newly created drive or NIC should be
 // hotplugged. A disabled device is meant to stay offline or down.
 func deviceShouldAttach(enabled types.Bool) bool {
@@ -547,6 +556,14 @@ func readVMPowerState(ctx context.Context, client *vergeio.Client, vmId types.St
 }
 
 func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
 	timer := time.NewTimer(d)
 	defer timer.Stop()
 	select {
@@ -580,6 +597,104 @@ func waitForStatus(ctx context.Context, read func() (string, error), want string
 		}
 	}
 	return last, fmt.Errorf("status is still %q", last)
+}
+
+// waitForStatusWithin polls until the device status matches want or the
+// deadline passes. The deadline is fixed when the wait starts. The first
+// read is immediate. A match returns the status and a nil error. A read
+// failure returns an empty status and that error. A timeout returns the
+// last status and an error.
+func waitForStatusWithin(ctx context.Context, read func() (string, error), want string, timeout, interval time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		if err := ctx.Err(); err != nil {
+			return last, err
+		}
+		status, err := read()
+		if err != nil {
+			return "", err
+		}
+		last = strings.TrimSpace(status)
+		if strings.EqualFold(last, want) {
+			return last, nil
+		}
+		if !time.Now().Before(deadline) {
+			return last, fmt.Errorf("status is still %q", last)
+		}
+		wait := interval
+		if interval > 0 {
+			if remaining := time.Until(deadline); remaining < wait {
+				wait = remaining
+			}
+		}
+		if err := sleepContext(ctx, wait); err != nil {
+			return last, err
+		}
+	}
+}
+
+// deviceUnplugInProgress reports a status that means an unplug is already
+// running. Sending hotplug again in that state returns 422.
+func deviceUnplugInProgress(status string) bool {
+	return strings.Contains(strings.ToLower(strings.TrimSpace(status)), "hotplug")
+}
+
+// unplugAlreadyInProgress reports the API error from a second unplug.
+func unplugAlreadyInProgress(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "already hotplug")
+}
+
+// sendUnplug sends the unplug action once. A device that is already
+// hotplugging is left to finish; the caller polls until it is detached.
+func sendUnplug(ctx context.Context, status string, send func() error) error {
+	if deviceUnplugInProgress(status) {
+		tflog.Debug(ctx, fmt.Sprintf("Device status %q means unplug is already in progress", strings.TrimSpace(status)))
+		return nil
+	}
+	if err := send(); err != nil {
+		if unplugAlreadyInProgress(err) {
+			tflog.Debug(ctx, fmt.Sprintf("Unplug is already in progress: %v", err))
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func detachLabel(name, id, idKind string) string {
+	name = strings.TrimSpace(name)
+	id = strings.TrimSpace(id)
+	switch {
+	case name != "" && id != "":
+		return fmt.Sprintf("%q (%s %s)", name, idKind, id)
+	case name != "":
+		return fmt.Sprintf("%q", name)
+	case id != "":
+		return fmt.Sprintf("%s %s", idKind, id)
+	default:
+		return "unknown"
+	}
+}
+
+// waitUntilDetached polls until the device reaches want. On timeout the
+// error names the device and the last status.
+func waitUntilDetached(ctx context.Context, read func() (string, error), want, kind, name, id, idKind string) error {
+	status, err := waitForStatusWithin(ctx, read, want, deviceDetachTimeout, deviceDetachInterval)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return ctx.Err()
+	}
+	label := detachLabel(name, id, idKind)
+	if status == "" {
+		return fmt.Errorf("%s %s was unplugged but its status could not be read: %w", kind, label, err)
+	}
+	return fmt.Errorf("%s %s stayed %q after unplug and did not reach %s before the timeout", kind, label, status, want)
 }
 
 // Update the VM.

@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
@@ -360,52 +359,13 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 
-	// Call the API to check the current power state
-	if err := r.networkApi.checkNetworkPowerState(ctx, &data); err != nil {
+	// Kill a running network once, then poll until it is stopped.
+	if err := r.networkApi.stopNetworkBeforeDelete(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
-			"Failed to check Power State before deletion:",
+			"Failed to stop Network before deletion:",
 			err.Error(),
 		)
 		return
-	}
-
-	// Call the API to check if the network is in a power state that can be deleted
-	for strings.ToLower(data.PowerState.ValueString()) != "stopped" {
-		Retries := 1
-
-		tflog.Debug(ctx, fmt.Sprintf("Current network power state is %v", data))
-
-		// Power the network off
-		if err := r.networkApi.killNetwork(ctx, &data); err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to kill Network before deletion:",
-				err.Error(),
-			)
-			return
-		}
-
-		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(1 * time.Second)
-
-		// Call the API to check if the network is in a power state that can be deleted
-		if err := r.networkApi.checkNetworkPowerState(ctx, &data); err != nil {
-			resp.Diagnostics.AddError(
-				"Failed to check Power State before deletion:",
-				err.Error(),
-			)
-			return
-		}
-
-		Retries += 1
-
-		if Retries > 5 {
-			resp.Diagnostics.AddError(
-				"Failed to kill Network before deletion:",
-				fmt.Sprintf("Failed to kill Network before deletion after %d retries", Retries),
-			)
-			return
-		}
-		continue
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Network state before deletion %v", data.PowerState.ValueString()))

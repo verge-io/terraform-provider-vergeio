@@ -452,53 +452,45 @@ func preserveDiskConfigFields(prior, current []*diskResourceModel) {
 	}
 }
 
-// Delete the Disk from the API.
+// deleteDisk unplugs a drive that is still attached, waits until it is
+// offline, and then deletes it. The unplug action is sent once. Sending it
+// again while the guest is still releasing the drive returns 422.
 func (da *DiskApi) deleteDisk(ctx context.Context, data *diskResourceModel, vmId types.String) error {
 
 	tflog.Debug(ctx, "Deleting the disk")
 
-	// VM API for hotplugging via VM Actions
-	vmApi := NewVMApi(da.client)
-
-	// Call the API to check if the vm is in a power state that can be deleted
-	var powerState string = ""
-
-	if err := da.checkDiskPowerState(ctx, data.Key.ValueString(), &powerState); err != nil {
+	key := data.Key.ValueString()
+	var powerState string
+	if err := da.checkDiskPowerState(ctx, key, &powerState); err != nil {
 		return fmt.Errorf("error checking disk power state %v", err)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Current disk power state is %v", powerState))
 
-	// Call the API to check if the vm is in a power state that can be deleted
-	for strings.ToLower(powerState) != "offline" {
-		Retries := 1
-
-		// Power the vm off
-		if err := vmApi.hotplugDrive(ctx, data.Key.ValueString(), vmId, true); err != nil {
-			return fmt.Errorf("failed to hotplug drive: %v", err)
+	if !strings.EqualFold(strings.TrimSpace(powerState), "offline") {
+		if err := sendUnplug(ctx, powerState, func() error {
+			return NewVMApi(da.client).hotplugDrive(ctx, key, vmId, true)
+		}); err != nil {
+			return fmt.Errorf("failed to unplug drive: %v", err)
 		}
 
-		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(2 * time.Second)
-
-		// Call the API to check if the vm is in a power state that can be deleted
-		if err := da.checkDiskPowerState(ctx, data.Key.ValueString(), &powerState); err != nil {
-			return fmt.Errorf("error checking disk power state %v", err)
+		name := ""
+		if !data.Name.IsNull() && !data.Name.IsUnknown() {
+			name = data.Name.ValueString()
 		}
-
-		Retries += 1
-
-		// We are only going to retry 5 times before giving up
-		if Retries > 5 {
-			return fmt.Errorf("failed to kill VM before deletion after %d retries", Retries)
+		if err := waitUntilDetached(ctx, func() (string, error) {
+			var current string
+			readErr := da.checkDiskPowerState(ctx, key, &current)
+			return current, readErr
+		}, "offline", "drive", name, key, "key"); err != nil {
+			return err
 		}
-		continue
 	}
 
 	// Call the Get API with the user id and Proceed with user deletion
 	_, err := da.client.Delete(ctx, fmt.Sprintf("%s/%s",
 		DiskEndpoint,
-		url.PathEscape(data.Key.ValueString())))
+		url.PathEscape(key)))
 
 	// error checking
 	if err != nil {

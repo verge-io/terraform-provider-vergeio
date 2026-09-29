@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"time"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
@@ -276,6 +278,83 @@ func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkR
 	tflog.Debug(ctx, "Network status read from API is: "+data.PowerState.ValueString())
 
 	return nil
+}
+
+// networkStopTimeout is how long Delete waits after one kill for the
+// network to report stopped. The kill is not repeated. Tests shorten these.
+var (
+	networkStopTimeout  = 2 * time.Minute
+	networkStopInterval = time.Second
+)
+
+// stopNetworkBeforeDelete kills a running network once, then polls until it
+// is stopped or networkStopTimeout elapses. A network that is already
+// stopped is left alone.
+func (nc *NetworkApi) stopNetworkBeforeDelete(ctx context.Context, data *NetworkResourceModel) error {
+	if data == nil {
+		return errors.New("missing network")
+	}
+	if err := nc.checkNetworkPowerState(ctx, data); err != nil {
+		return fmt.Errorf("failed to check power state before deletion: %w", err)
+	}
+	if strings.EqualFold(data.PowerState.ValueString(), "stopped") {
+		return nil
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Current network power state is %s", data.PowerState.ValueString()))
+	if err := nc.killNetwork(ctx, data); err != nil {
+		return fmt.Errorf("failed to kill network before deletion: %w", err)
+	}
+
+	deadline := time.Now().Add(networkStopTimeout)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := nc.checkNetworkPowerState(ctx, data); err != nil {
+			return fmt.Errorf("failed to check power state before deletion: %w", err)
+		}
+		state := strings.TrimSpace(data.PowerState.ValueString())
+		if strings.EqualFold(state, "stopped") {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("network %s stayed %q after stop and did not reach stopped before the timeout", networkStopLabel(data), state)
+		}
+		tflog.Debug(ctx, fmt.Sprintf("Network %s is still %s after stop", networkStopLabel(data), state))
+		wait := networkStopInterval
+		if networkStopInterval > 0 {
+			if remaining := time.Until(deadline); remaining < wait {
+				wait = remaining
+			}
+		}
+		if err := sleepContext(ctx, wait); err != nil {
+			return err
+		}
+	}
+}
+
+func networkStopLabel(data *NetworkResourceModel) string {
+	name := ""
+	id := ""
+	if data != nil {
+		if !data.Name.IsNull() && !data.Name.IsUnknown() {
+			name = strings.TrimSpace(data.Name.ValueString())
+		}
+		if !data.Id.IsNull() && !data.Id.IsUnknown() {
+			id = strings.TrimSpace(data.Id.ValueString())
+		}
+	}
+	switch {
+	case name != "" && id != "":
+		return fmt.Sprintf("%q (id %s)", name, id)
+	case name != "":
+		return fmt.Sprintf("%q", name)
+	case id != "":
+		return fmt.Sprintf("id %s", id)
+	default:
+		return "unknown"
+	}
 }
 
 // killNetwork Powers off a network.
