@@ -10,7 +10,9 @@ description: |-
 
 VM resource in VergeIO
 
-Setting `powerstate` to false on a running VM sends one ACPI `poweroff` and waits for the guest to stop. It does not cut power. The wait is `timeouts.update`, which defaults to 2 minutes. If the guest is still running then, apply fails and names the VM and its last status. Set `force_power_off` to kill the VM instead. Guests without ACPI support need `force_power_off`. Destroy still stops a running VM with `kill`.
+Setting `powerstate` to false on a running VM sends one ACPI `poweroff` and waits for the guest to stop. It does not cut power. The wait is `timeouts.update`, which defaults to 2 minutes. If the guest is still running then, apply fails and names the VM and its last status. Set `force_power_off` to kill the VM instead. Guests without ACPI support need `force_power_off` for that update.
+
+Destroying or replacing a running VM sends the same ACPI `poweroff` and waits `timeouts.delete`, which also defaults to 2 minutes. VergeOS suggests 60 to 120 seconds for a graceful shutdown. If the guest is still running when that wait ends, destroy sends `kill` and then deletes the VM. A guest that ignores ACPI stays running for the whole `timeouts.delete` wait before that kill. A Debian 12 generic cloud image, for example, logged the power-down event and was still running minutes later. Set `shutdown_on_destroy` to `kill` to cut power immediately, or to `graceful` to fail the destroy instead of killing. Replace, taint, and a change that forces a new VM all use this same delete.
 
 ## Example Usage
 
@@ -266,10 +268,15 @@ resource "vergeio_vm" "web-server" {
     - `virtio` Virtio
     - `none`   None (headless)
 - `powerstate` (Boolean) - Whether the VM is running. Default = False on create, which leaves a new VM stopped. On update, false sends one ACPI poweroff and waits until the guest stops. It does not hard-kill the VM. If the guest does not stop before `timeouts.update` (default 2 minutes), apply fails unless `force_power_off` is true. Omit `powerstate` to leave the current power unchanged.
-- `force_power_off` (Boolean) - Default = False. When a graceful poweroff times out, kill the VM. Guests without ACPI support need this set to true.
+- `force_power_off` (Boolean) - Default = False. When a graceful poweroff from `powerstate = false` times out, kill the VM. Guests without ACPI support need this set to true for that update. Destroy uses `shutdown_on_destroy` instead.
+- `shutdown_on_destroy` (String) - How destroy and replace stop a running VM. Default = `graceful_then_kill`.
+    - `graceful_then_kill` Send one ACPI `poweroff`, wait `timeouts.delete`, then `kill` if the guest is still running.
+    - `graceful` Send one ACPI `poweroff` and wait. Destroy fails if the guest does not stop, and the VM is left in place.
+    - `kill` Send `kill` immediately. This is the previous destroy behavior.
+  A guest without ACPI handling waits out the full `timeouts.delete` before the kill fallback. Shorten that timeout, or set this to `kill`, when the guest will not shut itself down.
 - `timeouts` (Block, Optional)
   - `update` (String) - How long to wait for a graceful ACPI poweroff when `powerstate` changes to false. A duration such as `90s` or `2m`. Default = 2 minutes.
-  - `delete` (String) - Accepted for a later graceful destroy. Destroy still sends `kill` and does not wait on this value.
+  - `delete` (String) - How long destroy and replace wait for a graceful ACPI poweroff before the `shutdown_on_destroy` fallback. A duration such as `90s` or `2m`. Default = 2 minutes. A guest that ignores ACPI uses this whole wait before `kill`. Ignored when `shutdown_on_destroy` is `kill`.
 - `cloudinit_datasource` (String), Default = None  
   Options:  
     - `nocloud`  
