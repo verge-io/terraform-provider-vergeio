@@ -190,7 +190,7 @@ func TestPublishedNetworkExampleUsesSchemaNames(t *testing.T) {
 			t.Errorf("network example still uses %s", name)
 		}
 	}
-	for _, name := range []string{"network ", "dhcp_stop"} {
+	for _, name := range []string{"network ", "dhcp_stop", "dnslist", "description", "domain", "rate_limit"} {
 		if !strings.Contains(text, name) {
 			t.Errorf("network example is missing %s", strings.TrimSpace(name))
 		}

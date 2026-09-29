@@ -25,7 +25,7 @@ terraform {
 
 ## Arguments that were never in the schema
 
-Product pages that show `network_address`, `dhcp_end`, or `dns_server_list` on `vergeio_network` do not match 2.x or 3.0. Both lines use `network` for the CIDR and `dhcp_stop` for the end of the DHCP range. There is no DNS server argument on the network resource. `vergeio_user` creates a user account. It does not manage storage.
+Product pages that show `network_address`, `dhcp_end`, or `dns_server_list` on `vergeio_network` do not match the provider. Both 2.x and 3.0 use `network` for the CIDR and `dhcp_stop` for the end of the DHCP range. 3.0 adds `description`, `domain`, `rate_limit`, and `dnslist`. `dnslist` is the API field for DNS servers handed to clients (a comma-separated list of addresses). It is not `dns_server_list`. 2.x has none of those four arguments. `vergeio_user` creates a user account. It does not manage storage.
 
 The 3.0 provider registers these objects:
 

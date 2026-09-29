@@ -141,6 +141,118 @@ func TestNetworkUpdateRequestKeepsFalseZeroAndEmpty(t *testing.T) {
 	requireAbsent(t, obj, "name")
 }
 
+func TestNetworkCreateRequestOmitsUnsetClientSettings(t *testing.T) {
+	data := &NetworkResourceModel{
+		Name:        types.StringValue("tf-acc-net"),
+		Description: types.StringNull(),
+		DNSList:     types.StringNull(),
+		Domain:      types.StringNull(),
+		RateLimit:   types.Int64Null(),
+	}
+
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireAbsent(t, obj, "description")
+	requireAbsent(t, obj, "dnslist")
+	requireAbsent(t, obj, "domain")
+	requireAbsent(t, obj, "rate_limit")
+}
+
+func TestNetworkCreateRequestSendsClientSettings(t *testing.T) {
+	data := &NetworkResourceModel{
+		Name:        types.StringValue("tf-acc-net"),
+		Description: types.StringValue("Internal production network"),
+		DNSList:     types.StringValue("8.8.8.8,8.8.4.4"),
+		Domain:      types.StringValue("example.local"),
+		RateLimit:   types.Int64Value(100),
+	}
+
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireString(t, obj, "description", "Internal production network")
+	requireString(t, obj, "dnslist", "8.8.8.8,8.8.4.4")
+	requireString(t, obj, "domain", "example.local")
+	requireNumber(t, obj, "rate_limit", 100)
+}
+
+func TestNetworkCreateRequestSendsExplicitRateLimitZero(t *testing.T) {
+	data := &NetworkResourceModel{
+		Name:      types.StringValue("tf-acc-net"),
+		RateLimit: types.Int64Value(0),
+	}
+
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireNumber(t, decodeJSON(t, marshalRequest(t, req)), "rate_limit", 0)
+}
+
+func TestNetworkUpdateRequestSendsChangedClientSettingsOnly(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:          types.StringValue("12"),
+		Name:        types.StringValue("tf-acc-net"),
+		Description: types.StringValue(""),
+		DNSList:     types.StringValue("1.1.1.1"),
+		Domain:      types.StringValue("example.local"),
+		RateLimit:   types.Int64Value(0),
+	}
+	state := &NetworkResourceModel{
+		Id:          types.StringValue("12"),
+		Name:        types.StringValue("tf-acc-net"),
+		Description: types.StringValue("old"),
+		DNSList:     types.StringValue("8.8.8.8,8.8.4.4"),
+		Domain:      types.StringValue("example.local"),
+		RateLimit:   types.Int64Value(100),
+	}
+
+	req, _, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireString(t, obj, "description", "")
+	requireString(t, obj, "dnslist", "1.1.1.1")
+	requireAbsent(t, obj, "domain")
+	requireNumber(t, obj, "rate_limit", 0)
+}
+
+func TestNetworkUpdateRequestOmitsUnsetClientSettings(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:          types.StringValue("12"),
+		Name:        types.StringValue("renamed"),
+		Description: types.StringNull(),
+		DNSList:     types.StringNull(),
+		Domain:      types.StringNull(),
+		RateLimit:   types.Int64Null(),
+	}
+	state := &NetworkResourceModel{
+		Id:          types.StringValue("12"),
+		Name:        types.StringValue("tf-acc-net"),
+		Description: types.StringValue("set in the UI"),
+		DNSList:     types.StringValue("8.8.8.8"),
+		Domain:      types.StringValue("example.local"),
+		RateLimit:   types.Int64Value(100),
+	}
+
+	req, _, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireString(t, obj, "name", "renamed")
+	requireAbsent(t, obj, "description")
+	requireAbsent(t, obj, "dnslist")
+	requireAbsent(t, obj, "domain")
+	requireAbsent(t, obj, "rate_limit")
+}
+
 func TestNetworkCreateRequestAcceptsBoolPowerState(t *testing.T) {
 	data := &NetworkResourceModel{
 		Name:       types.StringValue("tf-acc-net"),

@@ -42,6 +42,7 @@ type NetworkResource struct {
 type NetworkResourceModel struct {
 	Id                   types.String `tfsdk:"id"`
 	Name                 types.String `tfsdk:"name"`
+	Description          types.String `tfsdk:"description"`
 	Enabled              types.Bool   `tfsdk:"enabled"`
 	Default_Gateway      types.Int32  `tfsdk:"vnet_default_gateway"`
 	IPaddress            types.String `tfsdk:"ipaddress"`
@@ -51,6 +52,8 @@ type NetworkResourceModel struct {
 	DHCP_Sequential      types.Bool   `tfsdk:"dhcp_sequential"`
 	DynamicIP_Start      types.String `tfsdk:"dhcp_start"`
 	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
+	DNSList              types.String `tfsdk:"dnslist"`
+	Domain               types.String `tfsdk:"domain"`
 	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
 	PowerState           types.Bool   `tfsdk:"powerstate"`
 	RestartOnChange      types.Bool   `tfsdk:"restart_on_change"`
@@ -58,6 +61,7 @@ type NetworkResourceModel struct {
 	Type                 types.String `tfsdk:"type"`
 	VLAN_TAG             types.Int32  `tfsdk:"layer2_id"`
 	MTU                  types.Int32  `tfsdk:"mtu"`
+	RateLimit            types.Int64  `tfsdk:"rate_limit"`
 	Interface_Vnet       types.Int32  `tfsdk:"interface_vnet"`
 	IPaddress_Type       types.String `tfsdk:"ipaddress_type"`
 	Layer2_Type          types.String `tfsdk:"layer2_type"`
@@ -89,6 +93,11 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Unique network name",
 				Required:            true,
+			},
+			"description": schema.StringAttribute{
+				MarkdownDescription: "Network description. Omit to leave an existing description unchanged.",
+				Optional:            true,
+				Computed:            true,
 			},
 			"enabled": schema.BoolAttribute{
 				MarkdownDescription: "Network state",
@@ -132,6 +141,16 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			},
 			"dhcp_stop": schema.StringAttribute{
 				MarkdownDescription: "DHCP stop address",
+				Optional:            true,
+				Computed:            true,
+			},
+			"dnslist": schema.StringAttribute{
+				MarkdownDescription: "DNS servers handed to clients. The API field dnslist, a comma-separated list of addresses. Omit to leave the current list unchanged.",
+				Optional:            true,
+				Computed:            true,
+			},
+			"domain": schema.StringAttribute{
+				MarkdownDescription: "DNS domain name handed to DHCP clients. Omit to leave the current domain unchanged.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -185,6 +204,11 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.UseStateForUnknown(),
 				},
+			},
+			"rate_limit": schema.Int64Attribute{
+				MarkdownDescription: "Bandwidth cap in megabytes per second. 0 removes the cap. Omit to leave an existing cap unchanged.",
+				Optional:            true,
+				Computed:            true,
 			},
 			"interface_vnet": schema.Int32Attribute{
 				MarkdownDescription: "Key/ID of the physical network",
@@ -416,6 +440,7 @@ func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportSt
 type networkResourceModelV0 struct {
 	Id                   types.String `tfsdk:"id"`
 	Name                 types.String `tfsdk:"name"`
+	Description          types.String `tfsdk:"description"`
 	Enabled              types.Bool   `tfsdk:"enabled"`
 	Default_Gateway      types.Int32  `tfsdk:"vnet_default_gateway"`
 	IPaddress            types.String `tfsdk:"ipaddress"`
@@ -425,6 +450,8 @@ type networkResourceModelV0 struct {
 	DHCP_Sequential      types.Bool   `tfsdk:"dhcp_sequential"`
 	DynamicIP_Start      types.String `tfsdk:"dhcp_start"`
 	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
+	DNSList              types.String `tfsdk:"dnslist"`
+	Domain               types.String `tfsdk:"domain"`
 	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
 	PowerState           types.String `tfsdk:"powerstate"`
 	RestartOnChange      types.Bool   `tfsdk:"restart_on_change"`
@@ -432,6 +459,7 @@ type networkResourceModelV0 struct {
 	Type                 types.String `tfsdk:"type"`
 	VLAN_TAG             types.Int32  `tfsdk:"layer2_id"`
 	MTU                  types.Int32  `tfsdk:"mtu"`
+	RateLimit            types.Int64  `tfsdk:"rate_limit"`
 	Interface_Vnet       types.Int32  `tfsdk:"interface_vnet"`
 	IPaddress_Type       types.String `tfsdk:"ipaddress_type"`
 	Layer2_Type          types.String `tfsdk:"layer2_type"`
@@ -489,6 +517,7 @@ func networkModelFromV0(prior networkResourceModelV0) NetworkResourceModel {
 	return NetworkResourceModel{
 		Id:                   prior.Id,
 		Name:                 prior.Name,
+		Description:          prior.Description,
 		Enabled:              prior.Enabled,
 		Default_Gateway:      prior.Default_Gateway,
 		IPaddress:            prior.IPaddress,
@@ -498,12 +527,15 @@ func networkModelFromV0(prior networkResourceModelV0) NetworkResourceModel {
 		DHCP_Sequential:      prior.DHCP_Sequential,
 		DynamicIP_Start:      prior.DynamicIP_Start,
 		DynamicIP_Stop:       prior.DynamicIP_Stop,
+		DNSList:              prior.DNSList,
+		Domain:               prior.Domain,
 		On_Power_Loss:        prior.On_Power_Loss,
 		RestartOnChange:      prior.RestartOnChange,
 		NeedRestart:          prior.NeedRestart,
 		Type:                 prior.Type,
 		VLAN_TAG:             prior.VLAN_TAG,
 		MTU:                  prior.MTU,
+		RateLimit:            prior.RateLimit,
 		Interface_Vnet:       prior.Interface_Vnet,
 		IPaddress_Type:       prior.IPaddress_Type,
 		Layer2_Type:          prior.Layer2_Type,

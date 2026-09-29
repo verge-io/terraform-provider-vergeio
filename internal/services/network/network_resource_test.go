@@ -101,6 +101,23 @@ func TestNetworkResource_Schema(t *testing.T) {
 		t.Fatalf("restart_on_change default = %#v, diagnostics %v", defaultResp.PlanValue, defaultResp.Diagnostics)
 	}
 
+	for _, name := range []string{"description", "dnslist", "domain"} {
+		attr, ok := resp.Schema.Attributes[name].(schema.StringAttribute)
+		if !ok {
+			t.Fatalf("%s should be a string attribute", name)
+		}
+		if !attr.IsOptional() || !attr.IsComputed() || attr.IsRequired() {
+			t.Errorf("%s should be optional and computed", name)
+		}
+	}
+	rateLimit, ok := resp.Schema.Attributes["rate_limit"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatal("rate_limit should be an int64 attribute")
+	}
+	if !rateLimit.IsOptional() || !rateLimit.IsComputed() || rateLimit.IsRequired() {
+		t.Error("rate_limit should be optional and computed")
+	}
+
 	needRestartAttr, ok := resp.Schema.Attributes["need_restart"].(schema.BoolAttribute)
 	if !ok {
 		t.Fatal("need_restart should be a bool attribute")
