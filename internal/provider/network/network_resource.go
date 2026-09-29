@@ -12,9 +12,11 @@ import (
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -50,6 +52,8 @@ type NetworkResourceModel struct {
 	DynamicIP_Stop       types.String `tfsdk:"dhcp_stop"`
 	On_Power_Loss        types.String `tfsdk:"on_power_loss"`
 	PowerState           types.String `tfsdk:"powerstate"`
+	RestartOnChange      types.Bool   `tfsdk:"restart_on_change"`
+	NeedRestart          types.Bool   `tfsdk:"need_restart"`
 	Type                 types.String `tfsdk:"type"`
 	VLAN_TAG             types.Int32  `tfsdk:"layer2_id"`
 	MTU                  types.Int32  `tfsdk:"mtu"`
@@ -139,6 +143,16 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 			"powerstate": schema.StringAttribute{
 				MarkdownDescription: "Power state of the network. Read from the API as \"true\" or \"false\".",
 				Optional:            true,
+				Computed:            true,
+			},
+			"restart_on_change": schema.BoolAttribute{
+				MarkdownDescription: "Restart a running network after an update that VergeOS stages with need_restart, such as a DHCP range or address change. Defaults to true. Set to false to keep the network up until a maintenance window.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
+			"need_restart": schema.BoolAttribute{
+				MarkdownDescription: "Whether VergeOS has staged a change that is not live until the network restarts. True after an update when the network was not restarted.",
 				Computed:            true,
 			},
 			"type": schema.StringAttribute{
@@ -296,6 +310,17 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 			"Error Updating Network",
 			err.Error(),
 		)
+		return
+	}
+
+	// DHCP and address changes are staged. Restart a running network so the
+	// apply is not reported as live while need_restart is still set.
+	if err := r.restartAfterUpdate(ctx, &planData, &resp.Diagnostics); err != nil {
+		resp.Diagnostics.AddError(
+			"Error Restarting Network",
+			err.Error(),
+		)
+		return
 	}
 
 	// Read data into the model to get all the attributes
@@ -309,6 +334,20 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
+}
+
+// restartAfterUpdate restarts a running network when VergeOS staged the
+// update. When the restart is skipped, it warns so the apply output shows
+// that the change is not live yet.
+func (r *NetworkResource) restartAfterUpdate(ctx context.Context, data *NetworkResourceModel, diags *diag.Diagnostics) error {
+	notice, err := r.networkApi.reconcileStagedRestart(ctx, data)
+	if err != nil {
+		return err
+	}
+	if notice.Detail != "" {
+		diags.AddWarning(notice.Summary, notice.Detail)
+	}
+	return nil
 }
 
 func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
