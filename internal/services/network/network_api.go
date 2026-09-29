@@ -50,6 +50,7 @@ func (nc *NetworkApi) Name() string {
 type NetworkAPIResourceModel struct {
 	Id                   *string `json:"id,omitempty"`
 	Name                 *string `json:"name,omitempty"`
+	Description          *string `json:"description,omitempty"`
 	Enabled              *bool   `json:"enabled,omitempty"`
 	Default_Gateway      *int32  `json:"vnet_default_gateway,omitempty"`
 	IPaddress            *string `json:"ipaddress,omitempty"`
@@ -59,11 +60,14 @@ type NetworkAPIResourceModel struct {
 	DHCP_Sequential      *bool   `json:"dhcp_sequential,omitempty"`
 	DynamicIP_Start      *string `json:"dhcp_start,omitempty"`
 	DynamicIP_Stop       *string `json:"dhcp_stop,omitempty"`
+	DNSList              *string `json:"dnslist,omitempty"`
+	Domain               *string `json:"domain,omitempty"`
 	On_Power_Loss        *string `json:"on_power_loss,omitempty"`
 	PowerState           *bool   `json:"powerstate,omitempty"`
 	Type                 *string `json:"type,omitempty"`
 	VLAN_TAG             *int32  `json:"layer2_id,omitempty"`
 	MTU                  *int32  `json:"mtu,omitempty"`
+	RateLimit            *int64  `json:"rate_limit,omitempty"`
 	Interface_Vnet       *int32  `json:"interface_vnet,omitempty"`
 	IPaddress_Type       *string `json:"ipaddress_type,omitempty"`
 	Layer2_Type          *string `json:"layer2_type,omitempty"`
@@ -125,6 +129,7 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateRequest, error) {
 	apiData := NetworkAPIResourceModel{
 		Name:            vergeio.KnownString(data.Name),
+		Description:     vergeio.KnownString(data.Description),
 		Enabled:         vergeio.KnownBool(data.Enabled),
 		Default_Gateway: vergeio.KnownInt32(data.Default_Gateway),
 		IPaddress:       vergeio.KnownString(data.IPaddress),
@@ -134,11 +139,14 @@ func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateReq
 		DHCP_Sequential: vergeio.KnownBool(data.DHCP_Sequential),
 		DynamicIP_Start: vergeio.KnownString(data.DynamicIP_Start),
 		DynamicIP_Stop:  vergeio.KnownString(data.DynamicIP_Stop),
+		DNSList:         vergeio.KnownString(data.DNSList),
+		Domain:          vergeio.KnownString(data.Domain),
 		On_Power_Loss:   vergeio.KnownString(data.On_Power_Loss),
 		PowerState:      vergeio.KnownBool(data.PowerState),
 		Type:            vergeio.KnownString(data.Type),
 		VLAN_TAG:        vergeio.KnownInt32(data.VLAN_TAG),
 		MTU:             vergeio.KnownInt32(data.MTU),
+		RateLimit:       vergeio.KnownInt64(data.RateLimit),
 		Interface_Vnet:  vergeio.KnownInt32(data.Interface_Vnet),
 		IPaddress_Type:  vergeio.KnownString(data.IPaddress_Type),
 		Layer2_Type:     vergeio.KnownString(data.Layer2_Type),
@@ -159,6 +167,7 @@ func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateReq
 func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkResourceModel) (*vergeos.NetworkUpdateRequest, int, error) {
 	apiData := NetworkAPIResourceModel{
 		Name:            vergeio.ChangedString(planData.Name, stateData.Name),
+		Description:     vergeio.ChangedString(planData.Description, stateData.Description),
 		Enabled:         vergeio.ChangedBool(planData.Enabled, stateData.Enabled),
 		Default_Gateway: vergeio.ChangedInt32(planData.Default_Gateway, stateData.Default_Gateway),
 		IPaddress:       vergeio.ChangedString(planData.IPaddress, stateData.IPaddress),
@@ -168,10 +177,13 @@ func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkReso
 		DHCP_Sequential: vergeio.ChangedBool(planData.DHCP_Sequential, stateData.DHCP_Sequential),
 		DynamicIP_Start: vergeio.ChangedString(planData.DynamicIP_Start, stateData.DynamicIP_Start),
 		DynamicIP_Stop:  vergeio.ChangedString(planData.DynamicIP_Stop, stateData.DynamicIP_Stop),
+		DNSList:         vergeio.ChangedString(planData.DNSList, stateData.DNSList),
+		Domain:          vergeio.ChangedString(planData.Domain, stateData.Domain),
 		On_Power_Loss:   vergeio.ChangedString(planData.On_Power_Loss, stateData.On_Power_Loss),
 		PowerState:      vergeio.ChangedBool(planData.PowerState, stateData.PowerState),
 		VLAN_TAG:        vergeio.ChangedInt32(planData.VLAN_TAG, stateData.VLAN_TAG),
 		MTU:             vergeio.ChangedInt32(planData.MTU, stateData.MTU),
+		RateLimit:       vergeio.ChangedInt64(planData.RateLimit, stateData.RateLimit),
 		Interface_Vnet:  vergeio.ChangedInt32(planData.Interface_Vnet, stateData.Interface_Vnet),
 		IPaddress_Type:  vergeio.ChangedString(planData.IPaddress_Type, stateData.IPaddress_Type),
 		Layer2_Type:     vergeio.ChangedString(planData.Layer2_Type, stateData.Layer2_Type),
@@ -402,6 +414,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	// Some fields are still stored as the historical defaults. Mapping them
 	// from the SDK response is separate from sending explicit zero values.
 	data.Name = types.StringValue(network.Name)
+	data.Description = types.StringValue(network.Description)
 	data.Enabled = types.BoolValue(network.Enabled)
 	data.IPaddress = types.StringValue(network.IPAddress)
 	data.Network = types.StringValue(network.Network)
@@ -410,10 +423,13 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.DHCP_Sequential = types.BoolValue(network.DHCPSequential)
 	data.DynamicIP_Start = types.StringValue(network.DHCPStart)
 	data.DynamicIP_Stop = types.StringValue(network.DHCPStop)
+	data.DNSList = types.StringValue(network.DNSList)
+	data.Domain = types.StringValue(network.Domain)
 	data.On_Power_Loss = types.StringValue(network.OnPowerLoss)
 	data.Type = types.StringValue(network.Type)
 	data.VLAN_TAG = types.Int32Value(0)
 	data.MTU = types.Int32Value(1500)
+	data.RateLimit = types.Int64Value(network.RateLimit)
 	data.Interface_Vnet = types.Int32Value(0)
 	data.IPaddress_Type = types.StringValue("static")
 	data.Layer2_Type = types.StringValue("vlan")

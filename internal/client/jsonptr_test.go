@@ -78,6 +78,19 @@ func TestChangedStringSendsEmpty(t *testing.T) {
 	}
 }
 
+func TestKnownInt64KeepsZero(t *testing.T) {
+	got := KnownInt64(types.Int64Value(0))
+	if got == nil || *got != 0 {
+		t.Fatalf("explicit zero = %v, want 0", got)
+	}
+	if got := KnownInt64(types.Int64Null()); got != nil {
+		t.Fatalf("null int was set: %d", *got)
+	}
+	if got := KnownInt64(types.Int64Unknown()); got != nil {
+		t.Fatalf("unknown int was set: %d", *got)
+	}
+}
+
 func TestChangedInt32SendsZero(t *testing.T) {
 	got := ChangedInt32(types.Int32Value(0), types.Int32Value(5))
 	if got == nil || *got != 0 {
@@ -87,6 +100,19 @@ func TestChangedInt32SendsZero(t *testing.T) {
 		t.Fatalf("unchanged zero was sent: %d", *got)
 	}
 	if got := ChangedInt32(types.Int32Null(), types.Int32Value(5)); got != nil {
+		t.Fatalf("unset plan int was sent: %d", *got)
+	}
+}
+
+func TestChangedInt64SendsZero(t *testing.T) {
+	got := ChangedInt64(types.Int64Value(0), types.Int64Value(5))
+	if got == nil || *got != 0 {
+		t.Fatalf("zero replacing 5 = %v, want 0", got)
+	}
+	if got := ChangedInt64(types.Int64Value(0), types.Int64Value(0)); got != nil {
+		t.Fatalf("unchanged zero was sent: %d", *got)
+	}
+	if got := ChangedInt64(types.Int64Null(), types.Int64Value(5)); got != nil {
 		t.Fatalf("unset plan int was sent: %d", *got)
 	}
 }

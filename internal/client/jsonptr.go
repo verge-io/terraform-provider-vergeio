@@ -43,6 +43,16 @@ func KnownInt32(v types.Int32) *int32 {
 	return &n
 }
 
+// KnownInt64 returns a pointer when v is set, including 0.
+// Null and unknown values are omitted.
+func KnownInt64(v types.Int64) *int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	n := v.ValueInt64()
+	return &n
+}
+
 // ChangedBool returns a pointer when the plan value is set and differs from
 // state. Unset plan values are omitted so an update does not send false for
 // an attribute the configuration left alone.
@@ -80,6 +90,19 @@ func ChangedInt32(plan, state types.Int32) *int32 {
 		return nil
 	}
 	n := plan.ValueInt32()
+	return &n
+}
+
+// ChangedInt64 returns a pointer when the plan value is set and differs
+// from state, including a change to 0.
+func ChangedInt64(plan, state types.Int64) *int64 {
+	if plan.IsNull() || plan.IsUnknown() {
+		return nil
+	}
+	if !state.IsNull() && !state.IsUnknown() && state.ValueInt64() == plan.ValueInt64() {
+		return nil
+	}
+	n := plan.ValueInt64()
 	return &n
 }
 
