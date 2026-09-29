@@ -115,6 +115,8 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 	return []func() resource.Resource{
 		network.NewNetworkResource,
 		compute.NewVMResource,
+		compute.NewVMDriveResource,
+		compute.NewVMNICResource,
 		identity.NewUserResource,
 		identity.NewMemberResource,
 		tags.NewTagMemberResource,

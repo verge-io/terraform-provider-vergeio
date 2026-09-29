@@ -457,6 +457,31 @@ func (da *DiskApi) readDisksByMachine(ctx context.Context, machineID int32) ([]*
 	return disks, nil
 }
 
+// findDiskByName returns the drive with this name on the machine.
+// A nil disk and a nil error means the name is not in use. Two drives with
+// the same name is an error so create does not guess which one to adopt.
+func (da *DiskApi) findDiskByName(ctx context.Context, machineID int32, name string) (*diskResourceModel, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("drive name is empty")
+	}
+	disks, err := da.readDisksByMachine(ctx, machineID)
+	if err != nil {
+		return nil, err
+	}
+	var found *diskResourceModel
+	for _, disk := range disks {
+		if disk == nil || strings.TrimSpace(disk.Name.ValueString()) != name {
+			continue
+		}
+		if found != nil {
+			return nil, fmt.Errorf("more than one drive named %q on machine %d", name, machineID)
+		}
+		found = disk
+	}
+	return found, nil
+}
+
 // sortDrivesForState orders drives the way nested blocks are stored.
 func sortDrivesForState(drives []vergeos.VMDrive) {
 	sort.SliceStable(drives, func(i, j int) bool {

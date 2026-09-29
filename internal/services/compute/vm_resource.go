@@ -15,7 +15,6 @@ import (
 	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/shared"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -99,8 +98,9 @@ type VMResourceModel struct {
 	Advanced              types.String     `tfsdk:"advanced"`
 	WaitForGuestAgentInfo types.Int32      `tfsdk:"wait_for_guest_agent_info"`
 	// GuestAgentIp          types.String         `tfsdk:"guest_agent_ip"`
-	Disks                 []*diskResourceModel   `tfsdk:"vergeio_drive"`
-	NICs                  []*nicResourceModel    `tfsdk:"vergeio_nic"`
+	// BootDisk is the one drive this resource owns. Other drives and every NIC
+	// are vergeio_vm_drive and vergeio_vm_nic.
+	BootDisk              *bootDiskModel         `tfsdk:"boot_disk"`
 	Devices               []*deviceResourceModel `tfsdk:"vergeio_device"`
 	GuestAgentIPs         types.List             `tfsdk:"guest_agent_ips"`
 	NestedVirtualization  types.Bool             `tfsdk:"nested_virtualization"`
@@ -119,12 +119,14 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "VM resource in VergeIO",
-		// Version 3: drive preferred_tier is a number from 1 to 5.
+		// Version 4 drops inline vergeio_drive and vergeio_nic blocks.
+		// The VM keeps an optional boot_disk. Drives and NICs are separate resources.
+		// Version 3 stored drive preferred_tier as a number from 1 to 5.
 		// Version 2 stored preferred_tier as a string and stored cluster,
 		// preferred_node, and snapshot_profile as numbers.
 		// Version 1 stored those keys as strings and widened disksize to float.
 		// Version 0 stored disksize as an integer.
-		Version: 3,
+		Version: 4,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -409,200 +411,42 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					},
 				},
 			},
-			"vergeio_nic": schema.ListNestedBlock{
-				MarkdownDescription: "NICs for the VM. A NIC added while the VM is running is hotplugged and brought up. A NIC added in the same apply that powers the VM on is created before power-on. If hotplug is refused, apply fails and the VM must be power cycled before the guest sees the NIC.",
-				NestedObject: schema.NestedBlockObject{
-					Attributes: map[string]schema.Attribute{
-						"id": schema.StringAttribute{
-							MarkdownDescription: "NIC id assigned by VergeOS. Renaming the NIC keeps this id. Changing a configured id replaces the VM.",
-							Optional:            true,
-							Computed:            true,
-							PlanModifiers: []planmodifier.String{
-								// Computed ids become unknown on update unless copied
-								// from state. syncNICs pairs NICs by this id, so a
-								// rename must keep it in the plan.
-								stringplanmodifier.UseStateForUnknown(),
-								stringplanmodifier.RequiresReplaceIfConfigured(),
-							},
-						},
-						"machine": schema.Int32Attribute{
-							Optional: true,
-							Computed: true,
-							// The NIC stays on the same machine across an in-place VM update.
-							PlanModifiers: []planmodifier.Int32{
-								int32planmodifier.UseStateForUnknown(),
-							},
-						},
-						"name": schema.StringAttribute{
-							MarkdownDescription: "NIC name. Renaming the NIC updates it in place and keeps its id and MAC address.",
-							Optional:            true,
-							Computed:            true,
-						},
-						"description": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"interface": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"driver": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"model": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"vendor": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"port": schema.Int32Attribute{
-							Optional: true,
-							Computed: true,
-						},
-						"enabled": schema.BoolAttribute{
-							MarkdownDescription: "Whether the NIC is enabled. Omit this attribute to leave the VergeOS default, which is enabled. Set false to create the NIC disabled.",
-							Optional:            true,
-							Computed:            true,
-						},
-						"vnet": schema.Int32Attribute{
-							Optional: true,
-							Computed: true,
-						},
-						"macaddress": schema.StringAttribute{
-							MarkdownDescription: "MAC address. Renaming the NIC keeps this address.",
-							Optional:            true,
-							Computed:            true,
-							PlanModifiers: []planmodifier.String{
-								// Copies state only when configuration omits the address.
-								// A configured value, including an unknown one, is left alone.
-								stringplanmodifier.UseStateForUnknown(),
-							},
-						},
-						"ipaddress": schema.StringAttribute{
-							MarkdownDescription: "Address assigned when `assign_ipaddress` is true. Set it to request that address from the vNET. Omit it and VergeOS chooses the next free address. Null when no address is assigned.",
-							Optional:            true,
-							Computed:            true,
-						},
-						"assign_ipaddress": schema.BoolAttribute{
-							Optional: true,
-						},
-						"asset": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
-							},
+			"boot_disk": schema.SingleNestedBlock{
+				MarkdownDescription: "Boot disk owned by this VM. Set size, and source when the disk is cloned or imported from media. The provider matches an existing drive by name and adopts it instead of creating a second disk. Other drives belong to vergeio_vm_drive. Do not give a vergeio_vm_drive the same name. Changing media or source replaces the VM.",
+				Attributes: map[string]schema.Attribute{
+					"key": schema.StringAttribute{
+						MarkdownDescription: "Drive key assigned by VergeOS.",
+						Computed:            true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.UseStateForUnknown(),
 						},
 					},
-				},
-			},
-			// Nested blocks for drives
-			"vergeio_drive": schema.ListNestedBlock{
-				MarkdownDescription: "Drives for the VM. A drive added while the VM is running is hotplugged. A drive added in the same apply that powers the VM on is created before power-on. Interfaces that cannot be hotplugged, such as IDE, stay offline until the VM is power cycled, and apply fails with that error.",
-				NestedObject: schema.NestedBlockObject{
-					Attributes: map[string]schema.Attribute{
-						"key": schema.StringAttribute{
-							MarkdownDescription: "Drive key assigned by VergeOS. Renaming the drive keeps this key. Changing a configured key replaces the VM.",
-							Optional:            true,
-							Computed:            true,
-							PlanModifiers: []planmodifier.String{
-								// Computed keys become unknown on update unless copied
-								// from state. syncDisks pairs drives by this key, so a
-								// rename must keep it in the plan.
-								stringplanmodifier.UseStateForUnknown(),
-								stringplanmodifier.RequiresReplaceIfConfigured(),
-							},
+					"name": schema.StringAttribute{
+						MarkdownDescription: "Drive name used to adopt an existing disk. Defaults to boot. Set this to the current drive name when moving a single-disk VM off the old vergeio_drive block.",
+						Optional:            true,
+						Computed:            true,
+						Default:             stringdefault.StaticString("boot"),
+					},
+					"size": schema.Float64Attribute{
+						MarkdownDescription: "Boot disk size in GB. Supports fractional values.",
+						Optional:            true,
+						Computed:            true,
+					},
+					"source": schema.Int32Attribute{
+						MarkdownDescription: "Media source id used to clone or import the boot disk. Changing source replaces the VM.",
+						Optional:            true,
+						PlanModifiers: []planmodifier.Int32{
+							int32planmodifier.RequiresReplace(),
 						},
-						"machine": schema.Int32Attribute{
-							Computed: true,
-							Optional: true,
-							// The drive stays on the same machine across an in-place VM update.
-							PlanModifiers: []planmodifier.Int32{
-								int32planmodifier.UseStateForUnknown(),
-							},
+					},
+					"media": schema.StringAttribute{
+						MarkdownDescription: "Media type. Defaults to a new disk when omitted. Changing media replaces the VM.",
+						Optional:            true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
 						},
-						"name": schema.StringAttribute{
-							MarkdownDescription: "Drive name. Renaming the drive updates it in place and keeps its key.",
-							Required:            true,
-						},
-						"description": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"interface": schema.StringAttribute{
-							MarkdownDescription: "Drive interface. Must be one of the machine_drives interfaces VergeOS documents, including usb.",
-							Optional:            true,
-							Computed:            true,
-							Validators: []validator.String{
-								stringvalidator.OneOf(diskInterfaces()...),
-							},
-						},
-						"media": schema.StringAttribute{
-							MarkdownDescription: "Media type. Changing media replaces the VM, because an existing drive cannot change media.",
-							Optional:            true,
-							// Computed: true,
-							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.RequiresReplace(),
-							},
-							Validators: []validator.String{
-								// Validate string value must be one of the allowed values
-								stringvalidator.OneOf(getValidDiskMedia()...),
-							},
-						},
-						"media_source": schema.Int32Attribute{
-							MarkdownDescription: "Source used to create a cloned, imported, or CD-ROM drive. Changing media_source replaces the VM.",
-							Optional:            true,
-							// Computed: true,
-							PlanModifiers: []planmodifier.Int32{
-								int32planmodifier.RequiresReplace(),
-							},
-						},
-						"disksize": schema.Float64Attribute{
-							Optional: true,
-							Computed: true,
-						},
-						"preferred_tier": schema.Int32Attribute{
-							MarkdownDescription: "Storage tier from 1 to 5. VergeOS assigns the system default when this is omitted, and a later VM update does not move the drive.",
-							Optional:            true,
-							Computed:            true,
-							// VergeOS assigns the system default tier when this is omitted,
-							// and a later VM update does not move the drive.
-							PlanModifiers: []planmodifier.Int32{
-								int32planmodifier.UseStateForUnknown(),
-							},
-							Validators: []validator.Int32{
-								int32validator.OneOf(1, 2, 3, 4, 5),
-							},
-						},
-						"enabled": schema.BoolAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"readonly": schema.BoolAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"serial": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-						},
-						"asset": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
-							},
-						},
-						"orderid": schema.Int32Attribute{
-							Optional: true,
-							Computed: true,
-						},
-						"preserve_drive_format": schema.BoolAttribute{
-							Optional: true,
-							Computed: true,
+						Validators: []validator.String{
+							stringvalidator.OneOf(getValidDiskMedia()...),
 						},
 					},
 				},
@@ -776,14 +620,19 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 // snapshot_profile as strings. Version 1 widened disksize to float (JSON
 // numbers need no rewrite) and still stored those keys as strings. Version 2
 // stores those keys as numbers and preferred_tier as a string such as "4".
-// Version 3 stores preferred_tier as a number. Every prior version upgrades
-// straight to the current schema. Numeric strings are accepted by the number
-// decoder; blank strings become null so an unset key does not fail the upgrade.
+// Version 3 stores preferred_tier as a number and still nests drives and NICs.
+// Version 4 removes those nested blocks. The drives and NICs stay in VergeOS.
+// boot_disk is left null so the next apply adopts a configured boot disk by
+// name instead of deleting every drive that used to be inline. Every prior
+// version upgrades straight to the current schema. Numeric strings are
+// accepted by the number decoder; blank strings become null so an unset key
+// does not fail the upgrade. A preferred_tier that is not an integer still
+// fails the upgrade before the drive list is dropped.
 func (r *VMResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
 	upgrader := func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
-		tflog.Info(ctx, "Upgrading VM state to v3: numeric cluster, preferred_node, snapshot_profile, and drive preferred_tier")
+		tflog.Info(ctx, "Upgrading VM state to v4: numeric ids, then drop inline drives and NICs")
 
-		normalized, err := normalizeVMStateJSON(req.RawState.JSON)
+		normalized, err := upgradeVMStateJSON(req.RawState.JSON)
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error upgrading VM state",
@@ -809,7 +658,27 @@ func (r *VMResource) UpgradeState(ctx context.Context) map[int64]resource.StateU
 		0: {StateUpgrader: upgrader},
 		1: {StateUpgrader: upgrader},
 		2: {StateUpgrader: upgrader},
+		3: {StateUpgrader: upgrader},
 	}
+}
+
+// upgradeVMStateJSON normalizes prior VM state and removes the inline drive
+// and NIC lists. Those objects are not deleted in VergeOS. vergeio_vm_drive
+// and vergeio_vm_nic adopt them by name, and boot_disk adopts the one disk
+// the VM still owns.
+func upgradeVMStateJSON(raw []byte) ([]byte, error) {
+	normalized, err := normalizeVMStateJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(normalized, &state); err != nil {
+		return nil, err
+	}
+	delete(state, "vergeio_drive")
+	delete(state, "vergeio_nic")
+	state["boot_disk"] = json.RawMessage("null")
+	return json.Marshal(state)
 }
 
 // normalizeVMStateJSON rewrites prior VM state so it matches schema version 3.
@@ -953,16 +822,6 @@ func (r *VMResource) validateDiskInterface(ctx context.Context, diskInterface ty
 	return fmt.Errorf("disk interface '%s' is not supported by this VergeOS version", value)
 }
 
-// validateDrives validates all drives and their interfaces
-func (r *VMResource) validateDrives(ctx context.Context, drives []*diskResourceModel) error {
-	for i, drive := range drives {
-		if err := r.validateDiskInterface(ctx, drive.Interface); err != nil {
-			return fmt.Errorf("drive %d: %w", i, err)
-		}
-	}
-	return nil
-}
-
 // Configure the resource.
 func (r *VMResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	// Prevent panic if the provider has not been configured.
@@ -1002,16 +861,6 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		resp.Diagnostics.AddAttributeError(
 			path.Root("machine_type"),
 			"Invalid Machine Type",
-			err.Error(),
-		)
-		return
-	}
-
-	// Validate drives and their interfaces against VergeOS API
-	if err := r.validateDrives(ctx, data.Disks); err != nil {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("vergeio_drive"),
-			"Invalid Drive Interface",
 			err.Error(),
 		)
 		return
@@ -1065,38 +914,15 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	// Create disks
-	if data.Disks != nil {
-		for _, disk := range data.Disks {
-			disk.Machine = data.Machine
-
-			createError := r.diskApi.createDisk(ctx, disk)
-			if createError != nil {
-				tflog.Debug(ctx, fmt.Sprintf("Error creating disk %v", createError))
-				resp.Diagnostics.AddError(
-					"Error creating disk",
-					createError.Error(),
-				)
-				return
-			}
+	// Create the boot disk before devices and power-on so a new VM boots from it.
+	// NICs and extra drives are their own resources and hotplug when the VM is already running.
+	if data.BootDisk != nil {
+		boot, bootErr := r.syncBootDisk(ctx, data.BootDisk, nil, data.Machine, data.Id)
+		if bootErr != nil {
+			resp.Diagnostics.AddError("Error creating boot disk", bootErr.Error())
+			return
 		}
-	}
-
-	// Create NICs
-	if data.NICs != nil {
-		for _, nic := range data.NICs {
-			nic.Machine = data.Machine
-
-			createError := r.nicApi.createNIC(ctx, nic)
-			if createError != nil {
-				tflog.Debug(ctx, fmt.Sprintf("Error creating nic %v", createError))
-				resp.Diagnostics.AddError(
-					"Error creating nic",
-					createError.Error(),
-				)
-				return
-			}
-		}
+		data.BootDisk = boot
 	}
 
 	// Create devices
@@ -1215,11 +1041,9 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	data.CloudInitDataSource = plannedCloudInitDS
 	data.CloudInitFiles = plannedCloudInitFiles
 
-	// Store drives and NICs from the same read used after import, so the
-	// state written here matches a later refresh.
-	if err := r.readDrivesAndNICs(ctx, &data); err != nil {
+	if err := r.refreshBootDisk(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
-			"Error Fetching Drives and NICs",
+			"Error reading boot disk",
 			err.Error(),
 		)
 		return
@@ -1260,13 +1084,12 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		return
 	}
 
-	// Drives and NICs live in machine_drives and machine_nics, keyed by the
-	// VM's machine id. ImportState only sets id, so this is what puts the
-	// nested blocks back into state. Without it the next plan adds devices
-	// that already exist and apply fails the consistency check.
-	if err := r.readDrivesAndNICs(ctx, &data); err != nil {
+	// Import only sets id, so boot_disk stays empty until configuration adopts
+	// a drive by name. Refreshing here must not pull every drive on the VM
+	// into this resource.
+	if err := r.refreshBootDisk(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
-			"Error Fetching Drives and NICs",
+			"Error reading boot disk",
 			err.Error(),
 		)
 		return
@@ -1274,33 +1097,6 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-}
-
-// readDrivesAndNICs replaces nested drive and NIC blocks from the API.
-// Attributes that the device APIs do not return are copied from prior state.
-func (r *VMResource) readDrivesAndNICs(ctx context.Context, data *VMResourceModel) error {
-	if data.Machine.IsNull() || data.Machine.IsUnknown() {
-		return nil
-	}
-
-	priorDisks := data.Disks
-	priorNICs := data.NICs
-	machineID := data.Machine.ValueInt32()
-
-	disks, err := r.diskApi.readDisksByMachine(ctx, machineID)
-	if err != nil {
-		return err
-	}
-	nics, err := r.nicApi.readNICsByMachine(ctx, machineID)
-	if err != nil {
-		return err
-	}
-
-	preserveDiskConfigFields(priorDisks, disks)
-	preserveNICConfigFields(priorNICs, nics)
-	data.Disks = disks
-	data.NICs = nics
-	return nil
 }
 
 // Update a VM.
@@ -1324,16 +1120,6 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	// Validate drives and their interfaces against VergeOS API
-	if err := r.validateDrives(ctx, planData.Disks); err != nil {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("vergeio_drive"),
-			"Invalid Drive Interface",
-			err.Error(),
-		)
-		return
-	}
-
 	tflog.Debug(ctx, fmt.Sprintf("Updating VM %s", planData.Name.ValueString()))
 
 	// Read Terraform plan data into the model
@@ -1345,10 +1131,10 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating VM state %s", stateData.Id.ValueString()))
 
-	// Update VM attributes only. Power is applied after the drive and NIC
-	// sync so a VM started in this apply boots with the new devices.
-	// Drives and NICs created while the VM is already running are hotplugged
-	// inside the sync.
+	// Update VM attributes only. Power is applied after the boot disk
+	// sync so a VM started in this apply boots with that disk.
+	// Extra drives and NICs are separate resources. They hotplug when the
+	// VM is already running.
 	if updateError := r.vmApi.UpdateVM(ctx, &planData, &stateData); updateError != nil {
 		resp.Diagnostics.AddError(
 			"Error updating VM",
@@ -1357,39 +1143,27 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	// An empty nested list decodes to a nil slice. Sync still has to run so
-	// the first drive, NIC, or device can be added and the last one removed.
-	tflog.Debug(ctx, fmt.Sprintf("Updating the disk with the plan data %v", planData.Disks))
-	tflog.Debug(ctx, "Syncing disks ran")
-	diskErr := r.diskApi.syncDisks(ctx, &planData.Disks, &stateData.Disks, stateData.Machine, stateData.Id)
-	if diskErr != nil {
+	boot, bootErr := r.syncBootDisk(ctx, planData.BootDisk, stateData.BootDisk, stateData.Machine, stateData.Id)
+	if bootErr != nil {
 		resp.Diagnostics.AddError(
-			"Error syncing disks",
-			diskErr.Error(),
+			"Error syncing boot disk",
+			bootErr.Error(),
 		)
+		return
 	}
+	stateData.BootDisk = boot
 
-	nicErr := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id)
-	if nicErr != nil {
+	// Power on only after the boot disk exists. A failed sync skips
+	// the power change so the VM is not started without that disk.
+	if err := r.vmApi.applyPlannedPowerState(ctx, &planData, &stateData); err != nil {
 		resp.Diagnostics.AddError(
-			"Error syncing NICs",
-			nicErr.Error(),
+			"Error updating VM power state",
+			err.Error(),
 		)
+		return
 	}
-
-	// Power on only after the new drives and NICs exist. A failed sync skips
-	// the power change so the VM is not started without those devices.
-	if diskErr == nil && nicErr == nil {
-		if err := r.vmApi.applyPlannedPowerState(ctx, &planData, &stateData); err != nil {
-			resp.Diagnostics.AddError(
-				"Error updating VM power state",
-				err.Error(),
-			)
-			return
-		}
-		// UpdateVM used to wait here so a following read sees the VM running.
-		time.Sleep(5 * time.Second)
-	}
+	// UpdateVM used to wait here so a following read sees the VM running.
+	time.Sleep(5 * time.Second)
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating the devices with the plan data %v", planData.Devices))
 	tflog.Debug(ctx, "Syncing devices ran")
@@ -1430,9 +1204,9 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		}
 	}
 
-	if err := r.readDrivesAndNICs(ctx, &stateData); err != nil {
+	if err := r.refreshBootDisk(ctx, &stateData); err != nil {
 		resp.Diagnostics.AddError(
-			"Error Fetching Drives and NICs",
+			"Error reading boot disk",
 			err.Error(),
 		)
 		return

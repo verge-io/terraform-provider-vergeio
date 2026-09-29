@@ -140,22 +140,18 @@ func TestPartialVMForStateDropsUnknownNestedValues(t *testing.T) {
 		RAM:           types.Int32Value(2048),
 		GuestAgentIPs: types.ListUnknown(types.StringType),
 		MachineType:   types.StringUnknown(),
-		Disks: []*diskResourceModel{{
+		BootDisk: &bootDiskModel{
 			Name: types.StringValue("os"),
 			Key:  types.StringUnknown(),
-		}},
-		NICs: []*nicResourceModel{{
-			Name: types.StringValue("nic0"),
-			Id:   types.StringUnknown(),
-		}},
+		},
 	}
 
 	partial := partialVMForState(data)
-	if len(data.Disks) != 1 || len(data.NICs) != 1 {
+	if data.BootDisk == nil {
 		t.Fatal("partial state preparation changed the model create still uses")
 	}
-	if len(partial.Disks) != 0 || len(partial.NICs) != 0 || len(partial.Devices) != 0 {
-		t.Fatalf("partial nested blocks drives=%d nics=%d devices=%d", len(partial.Disks), len(partial.NICs), len(partial.Devices))
+	if partial.BootDisk != nil || len(partial.Devices) != 0 {
+		t.Fatalf("partial nested blocks boot=%v devices=%d", partial.BootDisk != nil, len(partial.Devices))
 	}
 	if partial.GuestAgentIPs.IsUnknown() || partial.MachineType.IsUnknown() {
 		t.Fatal("partial state still has unknown values")
@@ -175,8 +171,8 @@ func TestPartialVMForStateDropsUnknownNestedValues(t *testing.T) {
 	if got.Id.ValueString() != "7" || got.Name.ValueString() != "web" {
 		t.Fatalf("stored id %q name %q", got.Id.ValueString(), got.Name.ValueString())
 	}
-	if len(got.Disks) != 0 || len(got.NICs) != 0 {
-		t.Fatalf("stored drives=%d nics=%d, want none until they exist", len(got.Disks), len(got.NICs))
+	if got.BootDisk != nil {
+		t.Fatal("stored boot disk, want none until it exists")
 	}
 }
 
@@ -213,24 +209,24 @@ func TestFindVMByNameEscapesFilter(t *testing.T) {
 	}
 }
 
-func TestCreateStoresVMIdWhenNICFails(t *testing.T) {
+func TestCreateStoresVMIdWhenBootDiskFails(t *testing.T) {
 	ctx := t.Context()
 	const vmJSON = `{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":2048,"enabled":true,"powerstate":false}`
 	var calls []string
 	server := newVMCreateServer(t, &calls, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
-		if r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_nics" {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives" {
 			return http.StatusNotFound, `{"err":"error setting field"}`, true
 		}
 		return 0, "", false
 	}, vmJSON)
 	defer server.Close()
 
-	resp := createVM(t, ctx, server.URL, plannedVMWithNIC())
+	resp := createVM(t, ctx, server.URL, plannedVMWithBootDisk())
 	if !resp.Diagnostics.HasError() {
-		t.Fatal("expected NIC create to fail")
+		t.Fatal("expected boot disk create to fail")
 	}
 	detail := diagnosticText(resp.Diagnostics)
-	if !strings.Contains(detail, "Error creating nic") || !strings.Contains(detail, "machine_nics") {
+	if !strings.Contains(detail, "Error creating boot disk") || !strings.Contains(detail, "machine_drives") {
 		t.Fatalf("diagnostics = %s", detail)
 	}
 	if id := stateID(t, ctx, resp.State); id != "7" {
@@ -362,14 +358,12 @@ func plannedVM() VMResourceModel {
 	}
 }
 
-func plannedVMWithNIC() VMResourceModel {
+func plannedVMWithBootDisk() VMResourceModel {
 	plan := plannedVM()
-	plan.NICs = []*nicResourceModel{{
-		Name:      types.StringValue("nic0"),
-		Interface: types.StringValue("virtio"),
-		Enabled:   types.BoolValue(true),
-		VNET:      types.Int32Value(6),
-	}}
+	plan.BootDisk = &bootDiskModel{
+		Name: types.StringValue("os"),
+		Size: types.Float64Value(40),
+	}
 	return plan
 }
 

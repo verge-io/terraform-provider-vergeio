@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -55,13 +56,16 @@ func TestDiskInterfacesIncludeVergeOSValues(t *testing.T) {
 }
 
 func TestDriveInterfaceSchemaAllowsDocumentedValues(t *testing.T) {
-	vmResource := NewVMResource()
+	driveResource := NewVMDriveResource()
 	resp := &resource.SchemaResponse{}
-	vmResource.Schema(context.Background(), resource.SchemaRequest{}, resp)
+	driveResource.Schema(context.Background(), resource.SchemaRequest{}, resp)
 
-	attr := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "interface")
+	attr, ok := resp.Schema.Attributes["interface"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("vergeio_vm_drive.interface should be a string attribute")
+	}
 	if len(attr.Validators) == 0 {
-		t.Fatal("vergeio_drive.interface should validate against the documented interface list")
+		t.Fatal("vergeio_vm_drive.interface should validate against the documented interface list")
 	}
 
 	ctx := context.Background()
@@ -167,32 +171,20 @@ func TestDriveInterfaceDocsListAllowList(t *testing.T) {
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 	for _, rel := range []string{
-		filepath.Join("templates", "resources", "vm.md.tmpl"),
-		filepath.Join("docs", "resources", "vm.md"),
+		filepath.Join("templates", "resources", "vm_drive.md.tmpl"),
+		filepath.Join("docs", "resources", "vm_drive.md"),
 	} {
 		body, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)
 		}
-		section := driveDocSection(t, rel, string(body))
+		text := string(body)
 		for _, iface := range diskInterfaces() {
-			if !strings.Contains(section, "`"+iface+"`") {
+			if !strings.Contains(text, "`"+iface+"`") {
 				t.Errorf("%s drive docs missing `%s`", rel, iface)
 			}
 		}
 	}
-}
-
-func driveDocSection(t *testing.T, name, body string) string {
-	t.Helper()
-	const start = "### Nested Schema for `vergeio_drive`"
-	const end = "### Nested Schema for `vergeio_nic`"
-	from := strings.Index(body, start)
-	to := strings.Index(body, end)
-	if from < 0 || to < 0 || to <= from {
-		t.Fatalf("%s is missing the drive nested schema", name)
-	}
-	return body[from:to]
 }
 
 func validateDriveInterface(ctx context.Context, validators []validator.String, value string) string {

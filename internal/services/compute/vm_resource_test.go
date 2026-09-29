@@ -105,65 +105,21 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 	resp := &fwresource.SchemaResponse{}
 	vmResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
 
-	driveKey := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "key")
-	assertPlanModifiers(t, "vergeio_drive.key", driveKey.PlanModifiers,
-		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
-		stringplanmodifier.RequiresReplaceIfConfigured().Description(context.Background()),
-	)
-
-	driveMedia := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "media")
-	assertPlanModifiers(t, "vergeio_drive.media", driveMedia.PlanModifiers,
-		stringplanmodifier.RequiresReplace().Description(context.Background()),
-	)
-
-	driveSource := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_drive", "media_source")
-	if len(driveSource.PlanModifiers) != 1 {
-		t.Fatalf("vergeio_drive.media_source modifiers = %d, want 1", len(driveSource.PlanModifiers))
+	boot, ok := resp.Schema.Blocks["boot_disk"].(schema.SingleNestedBlock)
+	if !ok {
+		t.Fatal("boot_disk should be a single nested block")
 	}
-	got := driveSource.PlanModifiers[0].Description(context.Background())
-	want := int32planmodifier.RequiresReplace().Description(context.Background())
-	if got != want {
-		t.Errorf("vergeio_drive.media_source modifier %q, want %q", got, want)
+	bootKey, ok := boot.Attributes["key"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("boot_disk.key should be a string attribute")
 	}
-
-	nicID := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "id")
-	assertPlanModifiers(t, "vergeio_nic.id", nicID.PlanModifiers,
-		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
-		stringplanmodifier.RequiresReplaceIfConfigured().Description(context.Background()),
-	)
-	assertStringKeepsPriorState(t, "vergeio_drive.key", driveKey.PlanModifiers, "45", "46")
-	assertStringKeepsPriorState(t, "vergeio_nic.id", nicID.PlanModifiers, "98", "99")
-
-	nicMAC := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "macaddress")
-	assertPlanModifiers(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers,
+	assertPlanModifiers(t, "boot_disk.key", bootKey.PlanModifiers,
 		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
 	)
-	// An omitted MAC keeps the server-assigned address. A configured address,
-	// including one that is still unknown, is not replaced with state.
-	assertStringKeepsPriorState(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers, "f0:db:30:26:43:0c", "52:54:00:11:22:33")
-	assertStringLeavesUnknownConfig(t, "vergeio_nic.macaddress", nicMAC.PlanModifiers, "f0:db:30:26:43:0c")
+	assertStringKeepsPriorState(t, "boot_disk.key", bootKey.PlanModifiers, "45", "46")
 
 	keepState := stringplanmodifier.UseStateForUnknown().Description(context.Background())
 	keepStateInt := int32planmodifier.UseStateForUnknown().Description(context.Background())
-
-	driveMachine := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_drive", "machine")
-	assertInt32PlanModifiers(t, "vergeio_drive.machine", driveMachine.PlanModifiers, keepStateInt)
-	assertInt32KeepsPriorState(t, "vergeio_drive.machine", driveMachine.PlanModifiers, 66, 7)
-
-	driveTier := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_drive", "preferred_tier")
-	assertInt32PlanModifiers(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, keepStateInt)
-	assertInt32KeepsPriorState(t, "vergeio_drive.preferred_tier", driveTier.PlanModifiers, 4, 1)
-
-	driveAsset := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_drive", "asset")
-	assertPlanModifiers(t, "vergeio_drive.asset", driveAsset.PlanModifiers, keepState)
-	assertStringKeepsPriorState(t, "vergeio_drive.asset", driveAsset.PlanModifiers, "48", "49")
-
-	nicMachine := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_nic", "machine")
-	assertInt32PlanModifiers(t, "vergeio_nic.machine", nicMachine.PlanModifiers, keepStateInt)
-	assertInt32KeepsPriorState(t, "vergeio_nic.machine", nicMachine.PlanModifiers, 66, 7)
-
-	nicAsset := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "asset")
-	assertPlanModifiers(t, "vergeio_nic.asset", nicAsset.PlanModifiers, keepState)
 
 	deviceKey := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_device", "key")
 	assertPlanModifiers(t, "vergeio_device.key", deviceKey.PlanModifiers, keepState)
@@ -188,9 +144,6 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 	assertInt32StaysUnknownOnCreate(t, "machine", machineAttr.PlanModifiers)
 
 	// These can change on update, so an unrelated plan must keep them unknown.
-	if mods := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_nic", "ipaddress").PlanModifiers; len(mods) != 0 {
-		t.Fatalf("vergeio_nic.ipaddress has %d plan modifiers, want 0", len(mods))
-	}
 	if mods := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_device", "status").PlanModifiers; len(mods) != 0 {
 		t.Fatalf("vergeio_device.status has %d plan modifiers, want 0", len(mods))
 	}
@@ -201,6 +154,68 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 	if len(ips.PlanModifiers) != 0 {
 		t.Fatalf("guest_agent_ips has %d plan modifiers, want 0", len(ips.PlanModifiers))
 	}
+}
+
+func TestVMDriveAndNICResourcePlanModifiers(t *testing.T) {
+	ctx := context.Background()
+	driveResp := &fwresource.SchemaResponse{}
+	NewVMDriveResource().Schema(ctx, fwresource.SchemaRequest{}, driveResp)
+	nicResp := &fwresource.SchemaResponse{}
+	NewVMNICResource().Schema(ctx, fwresource.SchemaRequest{}, nicResp)
+
+	keepState := stringplanmodifier.UseStateForUnknown().Description(ctx)
+	keepStateInt := int32planmodifier.UseStateForUnknown().Description(ctx)
+	replace := stringplanmodifier.RequiresReplace().Description(ctx)
+
+	driveID := resourceStringAttr(t, driveResp.Schema.Attributes, "id")
+	assertPlanModifiers(t, "vergeio_vm_drive.id", driveID.PlanModifiers, keepState)
+	assertStringKeepsPriorState(t, "vergeio_vm_drive.id", driveID.PlanModifiers, "45", "46")
+
+	driveMedia := resourceStringAttr(t, driveResp.Schema.Attributes, "media")
+	assertPlanModifiers(t, "vergeio_vm_drive.media", driveMedia.PlanModifiers, replace)
+
+	driveSource, ok := driveResp.Schema.Attributes["media_source"].(schema.Int32Attribute)
+	if !ok {
+		t.Fatal("vergeio_vm_drive.media_source should be an int32 attribute")
+	}
+	if len(driveSource.PlanModifiers) != 1 || driveSource.PlanModifiers[0].Description(ctx) != int32planmodifier.RequiresReplace().Description(ctx) {
+		t.Fatal("vergeio_vm_drive.media_source should require replace")
+	}
+
+	driveTier, ok := driveResp.Schema.Attributes["preferred_tier"].(schema.Int32Attribute)
+	if !ok {
+		t.Fatal("vergeio_vm_drive.preferred_tier should be an int32 attribute")
+	}
+	assertInt32PlanModifiers(t, "vergeio_vm_drive.preferred_tier", driveTier.PlanModifiers, keepStateInt)
+	assertInt32KeepsPriorState(t, "vergeio_vm_drive.preferred_tier", driveTier.PlanModifiers, 4, 1)
+
+	driveAsset := resourceStringAttr(t, driveResp.Schema.Attributes, "asset")
+	assertPlanModifiers(t, "vergeio_vm_drive.asset", driveAsset.PlanModifiers, keepState)
+	assertStringKeepsPriorState(t, "vergeio_vm_drive.asset", driveAsset.PlanModifiers, "48", "49")
+
+	nicMAC := resourceStringAttr(t, nicResp.Schema.Attributes, "macaddress")
+	assertPlanModifiers(t, "vergeio_vm_nic.macaddress", nicMAC.PlanModifiers, keepState)
+	// An omitted MAC keeps the server-assigned address. A configured address,
+	// including one that is still unknown, is not replaced with state.
+	assertStringKeepsPriorState(t, "vergeio_vm_nic.macaddress", nicMAC.PlanModifiers, "f0:db:30:26:43:0c", "52:54:00:11:22:33")
+	assertStringLeavesUnknownConfig(t, "vergeio_vm_nic.macaddress", nicMAC.PlanModifiers, "f0:db:30:26:43:0c")
+
+	nicAsset := resourceStringAttr(t, nicResp.Schema.Attributes, "asset")
+	assertPlanModifiers(t, "vergeio_vm_nic.asset", nicAsset.PlanModifiers, keepState)
+
+	ip := resourceStringAttr(t, nicResp.Schema.Attributes, "ipaddress")
+	if len(ip.PlanModifiers) != 0 {
+		t.Fatalf("vergeio_vm_nic.ipaddress has %d plan modifiers, want 0", len(ip.PlanModifiers))
+	}
+}
+
+func resourceStringAttr(t *testing.T, attrs map[string]schema.Attribute, name string) schema.StringAttribute {
+	t.Helper()
+	attr, ok := attrs[name].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("%s is not a string attribute", name)
+	}
+	return attr
 }
 
 func nestedStringAttr(t *testing.T, blocks map[string]schema.Block, blockName, attrName string) schema.StringAttribute {

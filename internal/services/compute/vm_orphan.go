@@ -286,8 +286,7 @@ func partialVMForState(data *VMResourceModel) VMResourceModel {
 	partial.GuestAgent = knownBool(data.GuestAgent)
 	partial.Advanced = knownString(data.Advanced)
 	partial.WaitForGuestAgentInfo = knownInt32(data.WaitForGuestAgentInfo)
-	partial.Disks = nil
-	partial.NICs = nil
+	partial.BootDisk = nil
 	partial.Devices = nil
 	partial.GuestAgentIPs = knownStringList(data.GuestAgentIPs)
 	partial.NestedVirtualization = knownBool(data.NestedVirtualization)

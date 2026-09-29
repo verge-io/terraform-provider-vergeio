@@ -133,8 +133,9 @@ resource "vergeio_vm" "test" {
 `, vmName, body))
 }
 
-// TestAccVMResource_DriveAndNIC imports a VM that already has a drive and a NIC.
-// ImportStateVerify fails if Read does not put those blocks back into state.
+// TestAccVMResource_DriveAndNIC creates a VM with a boot disk and a NIC resource.
+// The NIC imports by its own id. The VM import ignores boot_disk because import
+// only has the VM id and does not guess which drive is the boot disk.
 func TestAccVMResource_DriveAndNIC(t *testing.T) {
 	vmName := acctest.Name("vm")
 	networkName := acctest.Name("network")
@@ -150,15 +151,11 @@ func TestAccVMResource_DriveAndNIC(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testAccCheckVMExists("vergeio_vm.test"),
 					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.#", "1"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.name", "os"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.interface", "virtio-scsi"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.disksize", "5"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.orderid", "0"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.#", "1"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.name", "nic0"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.interface", "virtio"),
-					resource.TestCheckResourceAttrPair("vergeio_vm.test", "vergeio_nic.0.vnet", "vergeio_network.test", "id"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "boot_disk.name", "os"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "boot_disk.size", "5"),
+					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "name", "nic0"),
+					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "interface", "virtio"),
+					resource.TestCheckResourceAttrPair("vergeio_vm_nic.test", "vnet", "vergeio_network.test", "id"),
 				),
 			},
 			{
@@ -170,9 +167,18 @@ func TestAccVMResource_DriveAndNIC(t *testing.T) {
 				},
 			},
 			{
-				ResourceName:      "vergeio_vm.test",
+				ResourceName:            "vergeio_vm.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"boot_disk"},
+			},
+			{
+				ResourceName:      "vergeio_vm_nic.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{
+					"assign_ipaddress",
+				},
 			},
 			{
 				ResourceName:      "vergeio_network.test",
@@ -396,7 +402,39 @@ func testAccVMConsolePassConfig(vmName, password string) string {
 }
 
 func testAccVMWithDriveAndNICConfig(vmName, networkName string) string {
-	return testAccVMWithNamedDriveAndNICConfig(vmName, networkName, "os", "nic0")
+	if err := acctest.RequirePrefix(vmName); err != nil {
+		panic(err)
+	}
+	if err := acctest.RequirePrefix(networkName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_network" "test" {
+  name       = %q
+  type       = "internal"
+  enabled    = true
+  powerstate = false
+}
+
+resource "vergeio_vm" "test" {
+  name      = %q
+  enabled   = true
+  cpu_cores = 2
+  ram       = 2048
+
+  boot_disk {
+    name = "os"
+    size = 5
+  }
+}
+
+resource "vergeio_vm_nic" "test" {
+  vm_id     = vergeio_vm.test.id
+  name      = "nic0"
+  interface = "virtio"
+  vnet      = tonumber(vergeio_network.test.id)
+}
+`, networkName, vmName))
 }
 
 // TestAccVMResource_RenameDriveAndNIC renames a drive and a NIC. Both stay
@@ -419,11 +457,11 @@ func TestAccVMResource_RenameDriveAndNIC(t *testing.T) {
 				Config: created,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					testAccCheckVMExists("vergeio_vm.test"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.name", "os"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.name", "nic0"),
-					testAccCaptureResourceAttr("vergeio_vm.test", "vergeio_drive.0.key", &driveKey),
-					testAccCaptureResourceAttr("vergeio_vm.test", "vergeio_nic.0.id", &nicID),
-					testAccCaptureResourceAttr("vergeio_vm.test", "vergeio_nic.0.macaddress", &nicMAC),
+					resource.TestCheckResourceAttr("vergeio_vm_drive.test", "name", "os"),
+					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "name", "nic0"),
+					testAccCaptureResourceAttr("vergeio_vm_drive.test", "id", &driveKey),
+					testAccCaptureResourceAttr("vergeio_vm_nic.test", "id", &nicID),
+					testAccCaptureResourceAttr("vergeio_vm_nic.test", "macaddress", &nicMAC),
 				),
 			},
 			{
@@ -438,15 +476,16 @@ func TestAccVMResource_RenameDriveAndNIC(t *testing.T) {
 				Config: renamed,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectResourceAction("vergeio_vm_drive.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectResourceAction("vergeio_vm_nic.test", plancheck.ResourceActionUpdate),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.name", "os-renamed"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.name", "lan"),
-					testAccExpectCapturedAttr("vergeio_vm.test", "vergeio_drive.0.key", &driveKey),
-					testAccExpectCapturedAttr("vergeio_vm.test", "vergeio_nic.0.id", &nicID),
-					testAccExpectCapturedAttr("vergeio_vm.test", "vergeio_nic.0.macaddress", &nicMAC),
+					resource.TestCheckResourceAttr("vergeio_vm_drive.test", "name", "os-renamed"),
+					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "name", "lan"),
+					testAccExpectCapturedAttr("vergeio_vm_drive.test", "id", &driveKey),
+					testAccExpectCapturedAttr("vergeio_vm_nic.test", "id", &nicID),
+					testAccExpectCapturedAttr("vergeio_vm_nic.test", "macaddress", &nicMAC),
 				),
 			},
 			{
@@ -523,19 +562,21 @@ resource "vergeio_vm" "test" {
   enabled   = true
   cpu_cores = 2
   ram       = 2048
+}
 
-  vergeio_drive {
-    name      = %q
-    disksize  = 5
-    interface = "virtio-scsi"
-    orderid   = 0
-  }
+resource "vergeio_vm_drive" "test" {
+  vm_id     = vergeio_vm.test.id
+  name      = %q
+  disksize  = 5
+  interface = "virtio-scsi"
+  orderid   = 0
+}
 
-  vergeio_nic {
-    name      = %q
-    interface = "virtio"
-    vnet      = tonumber(vergeio_network.test.id)
-  }
+resource "vergeio_vm_nic" "test" {
+  vm_id     = vergeio_vm.test.id
+  name      = %q
+  interface = "virtio"
+  vnet      = tonumber(vergeio_network.test.id)
 }
 `, networkName, vmName, driveName, nicName))
 }
