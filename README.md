@@ -52,21 +52,13 @@ provider "vergeio" {
 **Prerequisites:**
 
 - [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.10
-- [Go](https://golang.org/doc/install) >= 1.23
-
-**Note for ARM devices:** If you are building on an ARM-based system (like Apple M1/M2 or ARM Linux), you'll need to modify line 7 in the Makefile. Change `GOARCH=linux_amd64` to `GOARCH=darwin_arm64` before running `make install`.
-
-1. Clone the repository
-2. Enter the repository directory
-3. Build the provider
+- [Go](https://golang.org/doc/install) >= 1.27
 
 ```
-# Build the provider
-go build -o terraform-provider-vergeio
-
-# Install the provider
-make install
+go install .
 ```
+
+Point Terraform at that binary with a `dev_overrides` entry for `vergeio/cloud/vergeio`. The directory is the Go bin path, not a hand-built plugin cache. `CONTRIBUTING.md` has the CLI configuration and the GoReleaser release flow.
 
 ### Test sample configuration
 

@@ -40,7 +40,7 @@ jobs:
           terraform version
       - name: Docs
         run: |
-          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name vergeio
+          make generate
           git diff --exit-code
 
   # The unit suite does not launch a Terraform CLI. This job still runs it with
