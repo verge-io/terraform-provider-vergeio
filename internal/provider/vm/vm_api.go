@@ -488,8 +488,17 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 		return nil
 	}
 
-	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; powering off")
-	if err := va.killVM(ctx, planData); err != nil {
+	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; requesting a graceful poweroff")
+	timeout, err := shutdownTimeoutFromPlan(planData)
+	if err != nil {
+		return err
+	}
+	force := false
+	if !planData.ForcePowerOff.IsNull() && !planData.ForcePowerOff.IsUnknown() {
+		force = planData.ForcePowerOff.ValueBool()
+	}
+	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
+	if err := va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force); err != nil {
 		return err
 	}
 	stateData.PowerState = types.BoolValue(false)
@@ -878,6 +887,18 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 // value saved after apply is the planned one.
 func usePlannedConsolePass(state, plan *VMResourceModel) {
 	state.ConsolePass = plan.ConsolePass
+}
+
+// usePlannedShutdownSettings copies provider-only power settings onto the
+// model readVM refreshes. The API does not return them.
+func usePlannedShutdownSettings(state, plan *VMResourceModel) {
+	state.ForcePowerOff = plan.ForcePowerOff
+	if plan.Timeouts == nil {
+		state.Timeouts = nil
+		return
+	}
+	copied := *plan.Timeouts
+	state.Timeouts = &copied
 }
 
 // applyVM copies an API VM onto the resource model.
