@@ -20,11 +20,7 @@ import (
 var _ vergeio.IClient = &MediasourceApi{}
 
 func NewMediasourceApi(c *vergeio.Client) *MediasourceApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &MediasourceApi{
 		name:   "Mediasource Api",
 		client: c,

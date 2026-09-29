@@ -84,11 +84,7 @@ const (
 var _ vergeio.IClient = &NICApi{}
 
 func NewNICApi(c *vergeio.Client) *NICApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &NICApi{
 		name:   "NIC Api",
 		client: c,

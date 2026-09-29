@@ -17,11 +17,7 @@ import (
 var _ vergeio.IClient = &VersionApi{}
 
 func NewVersionApi(c *vergeio.Client) *VersionApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &VersionApi{
 		name:   "Version Api",
 		client: c,

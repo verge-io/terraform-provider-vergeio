@@ -16,6 +16,29 @@ Resources and data sources live in `internal/services/<domain>`, one file per ob
 
 Examples live under `examples/resources/<type>` and `examples/data-sources/<type>`. Every resource example includes `import.sh`. `docs/` is written by `make generate` and is not edited by hand.
 
+## Provider configuration
+
+Every provider argument is optional. `Configure` reads the environment when an argument is omitted. A value in the provider block wins over the environment variable for the same setting, including an explicit empty string.
+
+| Argument | Environment variable |
+| --- | --- |
+| `host` | `VERGEOS_HOST` |
+| `username` | `VERGEOS_USERNAME` |
+| `password` | `VERGEOS_PASSWORD` |
+| `api_key` | `VERGEOS_API_KEY` |
+| `insecure` | `VERGEOS_INSECURE` |
+| `timeout` | `VERGEOS_TIMEOUT` (seconds) |
+
+`VERGEOS_VERIFY_SSL=false` means the same thing as `VERGEOS_INSECURE=true`, so one environment file can be shared with the Ansible collection and govergeos. When `insecure` is omitted and both variables are set, they must agree.
+
+Authentication is an API key or both a username and password. The API key is sent as a bearer token through the internal client and through govergeos `WithAPIKey`. When both are set, the API key is used. The provider reads these variables itself and passes explicit govergeos options. It does not call `WithEnvConfig`.
+
+`Configure` returns before the first API request when `host` is missing or when neither form of authentication is complete. That diagnostic names each missing value. An invalid timeout, or a Boolean environment variable that is not true or false, also fails during configuration.
+
+`timeout` is a positive number of seconds. The default is 60. It is applied to the internal HTTP client and to the govergeos client.
+
+Acceptance tests use a separate set of variables, `TF_ACC_VERGEIO_HOST`, `TF_ACC_VERGEIO_USERNAME`, and `TF_ACC_VERGEIO_PASSWORD`. Those are not the provider fallbacks.
+
 ## Tests
 
 Unit tests do not need a VergeOS system or any lab secret:

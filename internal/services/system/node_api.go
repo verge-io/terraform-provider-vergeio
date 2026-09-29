@@ -17,11 +17,7 @@ import (
 var _ vergeio.IClient = &NodeApi{}
 
 func NewNodeApi(c *vergeio.Client) *NodeApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &NodeApi{
 		name:   "Node Api",
 		client: c,

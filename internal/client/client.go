@@ -32,15 +32,29 @@ type IClient interface {
 	Name() string
 }
 
-// Client is the base internal Client to talk to the Verge.IO API. This should be a username and password and host.
+// Client is the base internal Client to talk to the Verge.IO API.
+// Authentication is an API key, sent as a bearer token, or a username and
+// password. When both are set, the API key is used.
 type Client struct {
 	name       string
 	Username   string
 	Password   string
+	APIKey     string
 	Host       string
 	Insecure   bool
 	httpClient *http.Client
 	FieldCache *FieldCache
+}
+
+// ClientConfig is the connection settings for NewClientWithConfig.
+// A zero Timeout uses DefaultTimeout.
+type ClientConfig struct {
+	Host     string
+	Username string
+	Password string
+	APIKey   string
+	Insecure bool
+	Timeout  time.Duration
 }
 
 // Name returns the name of the client.
@@ -53,26 +67,43 @@ func (c *Client) serverURL(endpoint string) string {
 	return EnsureHTTPSPrefix(c.Host) + "/" + endpoint
 }
 
-// NewClient returns a new Verge.IO client.
+// NewClient returns a new Verge.IO client that authenticates with a username
+// and password. The HTTP timeout is DefaultTimeout.
 func NewClient(host string,
 	username string,
 	password string,
 	insecure bool,
 ) *Client {
-	return &Client{
-		name:     "Base Client",
+	return NewClientWithConfig(ClientConfig{
 		Host:     host,
 		Username: username,
 		Password: password,
 		Insecure: insecure,
+	})
+}
+
+// NewClientWithConfig returns a new Verge.IO client. An API key is sent as a
+// bearer token and takes precedence over username and password.
+func NewClientWithConfig(cfg ClientConfig) *Client {
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	return &Client{
+		name:     "Base Client",
+		Host:     cfg.Host,
+		Username: cfg.Username,
+		Password: cfg.Password,
+		APIKey:   cfg.APIKey,
+		Insecure: cfg.Insecure,
 		httpClient: &http.Client{
 			Transport: &http.Transport{
 				MaxIdleConns:        100,
 				MaxIdleConnsPerHost: 20,
 				IdleConnTimeout:     90 * time.Second,
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: insecure},
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: cfg.Insecure},
 			},
-			Timeout: DefaultTimeout,
+			Timeout: timeout,
 		},
 	}
 }
@@ -141,7 +172,7 @@ func (c *Client) Do(ctx context.Context, method string, endpoint string, payload
 		return nil, err
 	}
 
-	req.SetBasicAuth(c.Username, c.Password)
+	c.setAuth(req)
 	qs := req.URL.Query()
 	if method == "GET" {
 		log.Printf("[DEBUG] params %#v", params)
@@ -202,6 +233,16 @@ func (c *Client) Do(ctx context.Context, method string, endpoint string, payload
 
 	}
 	return resp, err
+}
+
+// setAuth adds the request credential. An API key is a bearer token and is
+// used instead of username and password when both are configured.
+func (c *Client) setAuth(req *http.Request) {
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		return
+	}
+	req.SetBasicAuth(c.Username, c.Password)
 }
 
 // Get is just a helper method to do but with a GET verb.

@@ -24,11 +24,7 @@ import (
 var _ vergeio.IClient = &MemberApi{}
 
 func NewMemberApi(c *vergeio.Client) *MemberApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &MemberApi{
 		name:   "Member Api",
 		client: c,

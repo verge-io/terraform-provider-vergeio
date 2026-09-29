@@ -18,11 +18,7 @@ import (
 var _ vergeio.IClient = &GroupsApi{}
 
 func NewGroupsApi(c *vergeio.Client) *GroupsApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &GroupsApi{
 		name:   "Group Api",
 		client: c,

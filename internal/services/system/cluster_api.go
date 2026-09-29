@@ -18,11 +18,7 @@ import (
 var _ vergeio.IClient = &ClusterApi{}
 
 func NewClusterApi(c *vergeio.Client) *ClusterApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &ClusterApi{
 		name:   "Cluster Api",
 		client: c,

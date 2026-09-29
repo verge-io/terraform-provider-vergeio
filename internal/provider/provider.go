@@ -39,7 +39,9 @@ type vergeioProviderModel struct {
 	Host     types.String `tfsdk:"host"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
+	APIKey   types.String `tfsdk:"api_key"`
 	Insecure types.Bool   `tfsdk:"insecure"`
+	Timeout  types.Int64  `tfsdk:"timeout"`
 }
 
 func (p *vergeioProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -49,22 +51,32 @@ func (p *vergeioProvider) Metadata(ctx context.Context, req provider.MetadataReq
 
 func (p *vergeioProvider) Schema(ctx context.Context, req provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		MarkdownDescription: "Connects to a VergeOS system. Every argument is optional and falls back to a VERGEOS_* environment variable. A value in the provider block takes precedence over the environment.",
 		Attributes: map[string]schema.Attribute{
 			"host": schema.StringAttribute{
-				MarkdownDescription: "Host Address of VergeOS",
-				Required:            true,
+				MarkdownDescription: "VergeOS hostname or IP address, with or without an https:// prefix. If omitted, the provider uses VERGEOS_HOST.",
+				Optional:            true,
 			},
 			"username": schema.StringAttribute{
-				MarkdownDescription: "Username",
-				Required:            true,
+				MarkdownDescription: "Username for password authentication. If omitted, the provider uses VERGEOS_USERNAME. Required unless api_key is set.",
+				Optional:            true,
 			},
 			"password": schema.StringAttribute{
-				MarkdownDescription: "Password",
-				Required:            true,
+				MarkdownDescription: "Password for password authentication. If omitted, the provider uses VERGEOS_PASSWORD. Required unless api_key is set.",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"api_key": schema.StringAttribute{
+				MarkdownDescription: "API key sent as a bearer token. If omitted, the provider uses VERGEOS_API_KEY. When set, it is used instead of username and password.",
+				Optional:            true,
 				Sensitive:           true,
 			},
 			"insecure": schema.BoolAttribute{
-				MarkdownDescription: "Allow insecure connections",
+				MarkdownDescription: "Skip TLS certificate verification. If omitted, the provider uses VERGEOS_INSECURE, or VERGEOS_VERIFY_SSL when that is false. Defaults to false.",
+				Optional:            true,
+			},
+			"timeout": schema.Int64Attribute{
+				MarkdownDescription: "HTTP request timeout in seconds. If omitted, the provider uses VERGEOS_TIMEOUT, or 60 when that is unset.",
 				Optional:            true,
 			},
 		},
@@ -80,17 +92,17 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 		return
 	}
 
-	// Configuration values are now available.
-	// if data.Endpoint.IsNull() { /* ... */ }
+	// Provider values win over the environment. Missing host or credentials
+	// fail here, before the first API request.
+	cfg, diags := resolveProviderConfig(data)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
-	// Build the HTTP client once here. NewClient applies the timeout and
-	// connection settings. Do does not create a client on first use.
-	client := vergeio.NewClient(
-		data.Host.ValueString(),
-		data.Username.ValueString(),
-		data.Password.ValueString(),
-		data.Insecure.ValueBool(),
-	)
+	// Build the HTTP client once here. NewClientWithConfig applies the timeout
+	// and connection settings. Do does not create a client on first use.
+	client := vergeio.NewClientWithConfig(cfg)
 
 	// Initialize field cache for session-based caching
 	client.FieldCache = vergeio.NewFieldCache(client)

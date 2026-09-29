@@ -25,11 +25,7 @@ import (
 var _ vergeio.IClient = &UserApi{}
 
 func NewUserApi(c *vergeio.Client) *UserApi {
-	sdk, _ := vergeos.NewClient(
-		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithCredentials(c.Username, c.Password),
-		vergeos.WithInsecureTLS(c.Insecure),
-	)
+	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
 	return &UserApi{
 		name:   "User Api",
 		client: c,

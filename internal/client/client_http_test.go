@@ -29,6 +29,68 @@ func TestNewClientSetsTimeout(t *testing.T) {
 	}
 }
 
+func TestDoUsesBasicAuthWithoutAPIKey(t *testing.T) {
+	var user, pass string
+	var ok bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, pass, ok = r.BasicAuth()
+		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"response":"ok"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "user", "pass", true)
+	resp, err := client.Get(context.Background(), "api/v4/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
+	if !ok || user != "user" || pass != "pass" {
+		t.Fatalf("basic auth = %q %q ok=%v", user, pass, ok)
+	}
+}
+
+func TestDoUsesBearerTokenWhenAPIKeySet(t *testing.T) {
+	var auth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth = r.Header.Get("Authorization")
+		if _, _, ok := r.BasicAuth(); ok {
+			t.Error("basic auth was sent with an API key")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"response":"ok"}`))
+	}))
+	defer server.Close()
+
+	client := NewClientWithConfig(ClientConfig{
+		Host:     server.URL,
+		Username: "user",
+		Password: "pass",
+		APIKey:   "token-value",
+		Insecure: true,
+	})
+	resp, err := client.Get(context.Background(), "api/v4/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Error(err)
+	}
+	if auth != "Bearer token-value" {
+		t.Fatalf("Authorization = %q", auth)
+	}
+	if client.Timeout() != DefaultTimeout {
+		t.Fatalf("Timeout() = %s, want %s", client.Timeout(), DefaultTimeout)
+	}
+}
+
 func TestDoTimesOut(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
