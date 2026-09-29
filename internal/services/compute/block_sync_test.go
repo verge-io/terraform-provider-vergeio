@@ -190,8 +190,9 @@ func TestDiskNeedsUpdateTreatsUnknownAndNullAsUnchanged(t *testing.T) {
 		OrderId:             types.Int32Value(1),
 		PreserveDriveFormat: types.BoolValue(true),
 	}
-	// An unrelated VM update leaves Optional+Computed drive fields unknown.
-	// ValueString/ValueBool/ValueInt32 would read those as "", false, or 0.
+	// Unknown Optional+Computed fields must not be read as "", false, or 0.
+	// The schema keeps machine, asset, and preferred_tier, and sync still
+	// treats a leftover unknown value as unchanged.
 	unknown := &diskResourceModel{
 		Key:                 state.Key,
 		Name:                state.Name,
