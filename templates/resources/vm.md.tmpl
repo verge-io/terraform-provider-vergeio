@@ -348,6 +348,7 @@ Optional:
   - `vmxnet3` (VMware Paravirtualized Ethernet v3)
 - `macaddress` (String) - MAC address. Renaming the NIC keeps this address.
 - `vnet` (Number) - Key (ID) of the vNET the resource will attach to.
+- `ipaddress` (String) - Address to reserve when `assign_ipaddress` is true. Set a value to request that address; omit it and VergeOS assigns the next free address. Null when no address is assigned.
 - `assign_ipaddress` (Boolean) - To assign an IP address to a NIC, `assign_ipaddress` must be true and `vnet` must point to a vNET with DHCP enabled
 
 <a id="nestedblock--vergeio_device"></a>
