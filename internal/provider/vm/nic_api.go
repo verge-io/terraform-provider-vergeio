@@ -432,18 +432,22 @@ func nicBlockName(nic *nicResourceModel) string {
 // Name is included so a rename is an update of the existing id. The MAC is
 // sent only when the configuration changes it; a rename leaves it out, so
 // the platform keeps the address.
+// A null or unknown plan value is not a change. Optional+Computed attributes
+// are unknown on an update that does not set them, and ValueString, ValueBool,
+// and ValueInt32 read those as "", false, or 0. Comparing the zero values
+// would PUT every NIC on any VM change.
 func nicNeedsUpdate(plan, state *nicResourceModel) bool {
-	return plan.Name.ValueString() != state.Name.ValueString() ||
-		plan.Description.ValueString() != state.Description.ValueString() ||
-		plan.Interface.ValueString() != state.Interface.ValueString() ||
-		plan.Driver.ValueString() != state.Driver.ValueString() ||
-		plan.Model.ValueString() != state.Model.ValueString() ||
-		plan.Vendor.ValueString() != state.Vendor.ValueString() ||
-		plan.Port.ValueInt32() != state.Port.ValueInt32() ||
-		plan.VNET.ValueInt32() != state.VNET.ValueInt32() ||
-		plan.MAC.ValueString() != state.MAC.ValueString() ||
-		plan.Asset.ValueString() != state.Asset.ValueString() ||
-		plan.Enabled.ValueBool() != state.Enabled.ValueBool()
+	return vergeio.ChangedString(plan.Name, state.Name) != nil ||
+		vergeio.ChangedString(plan.Description, state.Description) != nil ||
+		vergeio.ChangedString(plan.Interface, state.Interface) != nil ||
+		vergeio.ChangedString(plan.Driver, state.Driver) != nil ||
+		vergeio.ChangedString(plan.Model, state.Model) != nil ||
+		vergeio.ChangedString(plan.Vendor, state.Vendor) != nil ||
+		vergeio.ChangedInt32(plan.Port, state.Port) != nil ||
+		vergeio.ChangedInt32(plan.VNET, state.VNET) != nil ||
+		vergeio.ChangedString(plan.MAC, state.MAC) != nil ||
+		vergeio.ChangedString(plan.Asset, state.Asset) != nil ||
+		vergeio.ChangedBool(plan.Enabled, state.Enabled) != nil
 }
 
 // Update, Create, Delete the NIC in the API.

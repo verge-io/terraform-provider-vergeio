@@ -72,3 +72,52 @@ func TestSyncNICsRenamePutsInPlace(t *testing.T) {
 		t.Fatalf("calls = %#v, want PUT then GET of NIC 98", calls)
 	}
 }
+
+func TestSyncNICsUnrelatedVMUpdateDoesNotRewrite(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	api := &NICApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	stateNIC := &nicResourceModel{
+		Id:          types.StringValue("98"),
+		Machine:     types.Int32Value(68),
+		Name:        types.StringValue("nic0"),
+		Description: types.StringValue("lan"),
+		Interface:   types.StringValue("virtio"),
+		Driver:      types.StringValue("virtio"),
+		Model:       types.StringValue("virtio"),
+		Vendor:      types.StringValue("redhat"),
+		Port:        types.Int32Value(1),
+		Enabled:     types.BoolValue(true),
+		VNET:        types.Int32Value(6),
+		MAC:         types.StringValue("52:54:00:11:22:33"),
+		Asset:       types.StringValue("nic-asset"),
+	}
+	planNIC := &nicResourceModel{
+		Id:          stateNIC.Id,
+		Name:        stateNIC.Name,
+		Interface:   stateNIC.Interface,
+		VNET:        stateNIC.VNET,
+		MAC:         stateNIC.MAC,
+		Description: types.StringUnknown(),
+		Driver:      types.StringUnknown(),
+		Model:       types.StringUnknown(),
+		Vendor:      types.StringUnknown(),
+		Port:        types.Int32Unknown(),
+		Enabled:     types.BoolUnknown(),
+		Asset:       types.StringUnknown(),
+		Machine:     types.Int32Unknown(),
+	}
+	plan := []*nicResourceModel{planNIC}
+	state := []*nicResourceModel{stateNIC}
+
+	if err := api.syncNICs(t.Context(), &plan, &state, types.Int32Value(68), types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	if state[0].Id.ValueString() != "98" || state[0].MAC.ValueString() != "52:54:00:11:22:33" || !state[0].Enabled.ValueBool() {
+		t.Fatalf("untouched NIC state changed: id %q mac %q enabled %v", state[0].Id.ValueString(), state[0].MAC.ValueString(), state[0].Enabled.ValueBool())
+	}
+}
