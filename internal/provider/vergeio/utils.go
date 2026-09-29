@@ -6,7 +6,7 @@ package vergeio
 import (
 	"strconv"
 	"strings"
-	
+
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -67,15 +67,15 @@ func StringToInt32(planValue types.String, stateValue types.String, defaultValue
 	} else {
 		stringValue = planValue.ValueString()
 	}
-	
+
 	if stringValue == "" {
 		return defaultValue
 	}
-	
+
 	if intValue, err := strconv.Atoi(stringValue); err == nil {
 		return int32(intValue)
 	}
-	
+
 	return defaultValue
 }
 
