@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -361,16 +362,25 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"id": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
+							MarkdownDescription: "NIC id assigned by VergeOS. Renaming the NIC keeps this id. Changing a configured id replaces the VM.",
+							Optional:            true,
+							Computed:            true,
+							PlanModifiers: []planmodifier.String{
+								// Computed ids become unknown on update unless copied
+								// from state. syncNICs pairs NICs by this id, so a
+								// rename must keep it in the plan.
+								stringplanmodifier.UseStateForUnknown(),
+								stringplanmodifier.RequiresReplaceIfConfigured(),
+							},
 						},
 						"machine": schema.Int32Attribute{
 							Optional: true,
 							Computed: true,
 						},
 						"name": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
+							MarkdownDescription: "NIC name. Renaming the NIC updates it in place and keeps its id and MAC address.",
+							Optional:            true,
+							Computed:            true,
 						},
 						"description": schema.StringAttribute{
 							Optional: true,
@@ -405,8 +415,12 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Computed: true,
 						},
 						"macaddress": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
+							MarkdownDescription: "MAC address. Renaming the NIC keeps this address.",
+							Optional:            true,
+							Computed:            true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.UseStateForUnknown(),
+							},
 						},
 						"ipaddress": schema.StringAttribute{
 							MarkdownDescription: "IP address assigned to nic. For this attribute to be set, `assign_ip_address` must be set to `true` and vent id should be set to an Internal Vnet.",
@@ -428,15 +442,24 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"key": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
+							MarkdownDescription: "Drive key assigned by VergeOS. Renaming the drive keeps this key. Changing a configured key replaces the VM.",
+							Optional:            true,
+							Computed:            true,
+							PlanModifiers: []planmodifier.String{
+								// Computed keys become unknown on update unless copied
+								// from state. syncDisks pairs drives by this key, so a
+								// rename must keep it in the plan.
+								stringplanmodifier.UseStateForUnknown(),
+								stringplanmodifier.RequiresReplaceIfConfigured(),
+							},
 						},
 						"machine": schema.Int32Attribute{
 							Computed: true,
 							Optional: true,
 						},
 						"name": schema.StringAttribute{
-							Required: true,
+							MarkdownDescription: "Drive name. Renaming the drive updates it in place and keeps its key.",
+							Required:            true,
 						},
 						"description": schema.StringAttribute{
 							Optional: true,
@@ -448,16 +471,24 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							// Note: Dynamic validation performed in Create/Update methods
 						},
 						"media": schema.StringAttribute{
-							Optional: true,
+							MarkdownDescription: "Media type. Changing media replaces the VM, because an existing drive cannot change media.",
+							Optional:            true,
 							// Computed: true,
+							PlanModifiers: []planmodifier.String{
+								stringplanmodifier.RequiresReplace(),
+							},
 							Validators: []validator.String{
 								// Validate string value must be one of the allowed values
 								stringvalidator.OneOf(getValidDiskMedia()...),
 							},
 						},
 						"media_source": schema.Int32Attribute{
-							Optional: true,
+							MarkdownDescription: "Source used to create a cloned, imported, or CD-ROM drive. Changing media_source replaces the VM.",
+							Optional:            true,
 							// Computed: true,
+							PlanModifiers: []planmodifier.Int32{
+								int32planmodifier.RequiresReplace(),
+							},
 						},
 						"disksize": schema.Float64Attribute{
 							Optional: true,

@@ -412,105 +412,77 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 	return nil
 }
 
+// nicBlockID is the NIC id stored in state. An empty id means the block has
+// no id yet and pairBlocks may match it by name.
+func nicBlockID(nic *nicResourceModel) string {
+	if nic == nil || nic.Id.IsNull() || nic.Id.IsUnknown() {
+		return ""
+	}
+	return nic.Id.ValueString()
+}
+
+func nicBlockName(nic *nicResourceModel) string {
+	if nic == nil {
+		return ""
+	}
+	return nic.Name.ValueString()
+}
+
+// nicNeedsUpdate reports a difference the NIC update API can PUT.
+// Name is included so a rename is an update of the existing id. The MAC is
+// sent only when the configuration changes it; a rename leaves it out, so
+// the platform keeps the address.
+func nicNeedsUpdate(plan, state *nicResourceModel) bool {
+	return plan.Name.ValueString() != state.Name.ValueString() ||
+		plan.Description.ValueString() != state.Description.ValueString() ||
+		plan.Interface.ValueString() != state.Interface.ValueString() ||
+		plan.Driver.ValueString() != state.Driver.ValueString() ||
+		plan.Model.ValueString() != state.Model.ValueString() ||
+		plan.Vendor.ValueString() != state.Vendor.ValueString() ||
+		plan.Port.ValueInt32() != state.Port.ValueInt32() ||
+		plan.VNET.ValueInt32() != state.VNET.ValueInt32() ||
+		plan.MAC.ValueString() != state.MAC.ValueString() ||
+		plan.Asset.ValueString() != state.Asset.ValueString() ||
+		plan.Enabled.ValueBool() != state.Enabled.ValueBool()
+}
+
 // Update, Create, Delete the NIC in the API.
 // This method is called from VM update method.
 func (na *NICApi) syncNICs(ctx context.Context, planData *[]*nicResourceModel, stateData *[]*nicResourceModel, machine types.Int32, vmId types.String) error {
+	plan := *planData
+	state := *stateData
+	updates, creates, deletes := pairBlocks(plan, state, nicBlockID, nicBlockName)
 
 	tflog.Debug(ctx, "Syncing NICs: Starting deletion")
-
-	var stateToBeDeleted []string // List of disks to be deleted
-
-	// Delete the nics that are not in the plan
-	for _, state := range *stateData {
-		found := false
-		for _, plan := range *planData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if err := na.deleteNIC(ctx, state, vmId); err != nil {
-				return fmt.Errorf("failed to delete nic: %v", err)
-			}
-			stateToBeDeleted = append(stateToBeDeleted, state.Name.ValueString())
-		}
-	}
-
-	// Delete the nic that are not in the state
-	for _, name := range stateToBeDeleted {
-		for i, state := range *stateData {
-			if state.Name.ValueString() == name {
-				*stateData = append((*stateData)[:i], (*stateData)[i+1:]...)
-				break
-			}
+	for _, old := range deletes {
+		if err := na.deleteNIC(ctx, old, vmId); err != nil {
+			return fmt.Errorf("failed to delete nic: %v", err)
 		}
 	}
 
 	tflog.Debug(ctx, "Syncing NICs: Starting updation")
-
-	// Compare the plan data with the state data and update
-	for _, plan := range *planData {
-		for _, state := range *stateData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				if plan.Description.ValueString() != state.Description.ValueString() ||
-					plan.Interface.ValueString() != state.Interface.ValueString() ||
-					plan.Driver.ValueString() != state.Driver.ValueString() ||
-					plan.Model.ValueString() != state.Model.ValueString() ||
-					plan.Vendor.ValueString() != state.Vendor.ValueString() ||
-					plan.Port.ValueInt32() != state.Port.ValueInt32() ||
-					plan.VNET.ValueInt32() != state.VNET.ValueInt32() ||
-					plan.MAC.ValueString() != state.MAC.ValueString() ||
-					plan.Asset.ValueString() != state.Asset.ValueString() ||
-					plan.Enabled.ValueBool() != state.Enabled.ValueBool() {
-					if err := na.updateNIC(ctx, plan, state); err != nil {
-						return fmt.Errorf("failed to update nic: %v", err)
-					}
-				}
-			}
+	for _, pair := range updates {
+		if !nicNeedsUpdate(pair.plan, pair.state) {
+			continue
+		}
+		if err := na.updateNIC(ctx, pair.plan, pair.state); err != nil {
+			return fmt.Errorf("failed to update nic: %v", err)
 		}
 	}
 
 	tflog.Debug(ctx, "Syncing NICs: Starting insertion")
-
-	// Create the nics that are not in the state
-	for i, plan := range *planData {
-		found := false
-		for _, state := range *stateData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				found = true
-				break
-			}
+	for _, created := range creates {
+		created.Machine = machine
+		if err := na.createNIC(ctx, created); err != nil {
+			return fmt.Errorf("failed to create nic: %v", err)
 		}
-		if !found {
-			plan.Machine = machine
-			if err := na.createNIC(ctx, plan); err != nil {
-				return fmt.Errorf("failed to create nic: %v", err)
-			}
-			if err := na.readNIC(ctx, plan); err != nil {
-				return fmt.Errorf("failed to read disk during the sync: %v", err)
-			}
-			// insert plan in the stateData in a particular order
-			na.insertNICInState(i, plan, stateData) // insert nic in the stateData in a particular order na.insertDiskInState(i, plan, stateData)
+		if err := na.readNIC(ctx, created); err != nil {
+			return fmt.Errorf("failed to read disk during the sync: %v", err)
 		}
 	}
+
+	*stateData = syncedOrder(plan, updates)
 	return nil
-}
-
-// Manually insert plan in the stateData in a particular order.
-func (na *NICApi) insertNICInState(insertAt int, planData *nicResourceModel, stateData *[]*nicResourceModel) {
-	// If it's at the end ten just append
-	if insertAt >= len(*stateData) {
-		*stateData = append(*stateData, planData)
-	} else {
-		// insert plan in the stateData in a particular order
-		for i := range *stateData {
-			if i == insertAt {
-				*stateData = append((*stateData)[:i], append([]*nicResourceModel{planData}, (*stateData)[i:]...)...)
-				break
-			}
-		}
-	}
 }
 
 // to get the power status of the nic.

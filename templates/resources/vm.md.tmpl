@@ -288,9 +288,14 @@ resource "vergeio_vm" "web-server" {
 
 ### Nested Schema for `vergeio_drive`
 
+Required:
+
+- `name` (String) - Drive name. Renaming the drive updates it in place and keeps its key.
+
 Optional:
 
 - `asset` (String)
+- `key` (String) - Drive key assigned by VergeOS. A rename keeps the same key. Changing a key that is set in configuration replaces the VM.
 - `description` (String)
 - `disksize` (Number) - Size in GB (supports fractional values, e.g., 8.5). Formatted in 1024 based GB. Ex: 1024GB = 1TB
 - `enabled` (Boolean) - Default = True
@@ -304,13 +309,13 @@ Optional:
 	- `mptsas1068`            (LSI SAS 1608)
 	- `virtio-scsi`           (Virtio-SCSI, **Default**)
 	- `virtio-scsi-dedicated` (Virtio-SCSI Dedicated Controller)
-  - `media` (String) - Media type of the resource
+  - `media` (String) - Media type of the resource. Changing media replaces the VM, because an existing drive cannot change media.
 	- `cdrom`   (CD-Rom)
 	- `disk`    (New Disk, **Default**)
 	- `import`  (Import drive from media images)
 	- `clone`   (Clone an existing VM disk)
 	- `efidisk` (Create a new EFI Disk)
-- `media_source` (Number) - ID of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom.
+- `media_source` (Number) - ID of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom. Changing media_source replaces the VM.
 - `orderid` (Number) - Sets the ID for the disk order on the Virtual Machine
 - `preferred_tier` (String) - Tier to assign the resource to. If one is not specified the default tier in the system settings will be used.
 - `preserve_drive_format` (Boolean) - Default = False
@@ -323,6 +328,8 @@ Optional:
 Optional:
 
 - `asset` (String)
+- `name` (String) - NIC name. Renaming the NIC updates it in place and keeps its id and MAC address.
+- `id` (String) - NIC id assigned by VergeOS. A rename keeps the same id. Changing an id that is set in configuration replaces the VM.
 - `description` (String)
 - `enabled` (Boolean) - Default = True
 - `interface` (String)
@@ -333,7 +340,7 @@ Optional:
   - `e1000e`  (Intel e1000e)
   - `igb`     (Intel 82576)
   - `vmxnet3` (VMware Paravirtualized Ethernet v3)
-- `macaddress` (String)
+- `macaddress` (String) - MAC address. Renaming the NIC keeps this address.
 - `vnet` (Number) - Key (ID) of the vNET the resource will attach to.
 - `assign_ipaddress` (Boolean) - To assign an IP address to a NIC, `assign_ipaddress` must be true and `vnet` must point to a vNET with DHCP enabled
 

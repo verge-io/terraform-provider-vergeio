@@ -496,108 +496,99 @@ func (da *DiskApi) deleteDisk(ctx context.Context, data *diskResourceModel, vmId
 	return nil
 }
 
+// diskBlockID is the drive key stored in state. An empty id means the block
+// has no key yet and pairBlocks may match it by name.
+func diskBlockID(disk *diskResourceModel) string {
+	if disk == nil || disk.Key.IsNull() || disk.Key.IsUnknown() {
+		return ""
+	}
+	return disk.Key.ValueString()
+}
+
+func diskBlockName(disk *diskResourceModel) string {
+	if disk == nil {
+		return ""
+	}
+	return disk.Name.ValueString()
+}
+
+// diskNeedsRecreate reports a change the drive update API cannot apply.
+// media and media_source are create-time fields. The schema marks them
+// RequiresReplace so the plan shows a VM replacement. syncDisks still
+// refuses the change so an update cannot delete the drive and create an
+// empty one.
+func diskNeedsRecreate(plan, state *diskResourceModel) bool {
+	if plan == nil || state == nil {
+		return false
+	}
+	if !plan.Media.IsUnknown() && !plan.Media.Equal(state.Media) {
+		return true
+	}
+	if !plan.MediaSource.IsUnknown() && !plan.MediaSource.Equal(state.MediaSource) {
+		return true
+	}
+	return false
+}
+
+// diskNeedsUpdate reports a difference the drive update API can PUT.
+// Name is included so a rename is an update of the existing key.
+func diskNeedsUpdate(plan, state *diskResourceModel) bool {
+	return plan.Name.ValueString() != state.Name.ValueString() ||
+		plan.Description.ValueString() != state.Description.ValueString() ||
+		plan.Interface.ValueString() != state.Interface.ValueString() ||
+		math.Abs(plan.DiskSize.ValueFloat64()-state.DiskSize.ValueFloat64()) > 0.001 ||
+		plan.PreferredTier.ValueString() != state.PreferredTier.ValueString() ||
+		plan.Enabled.ValueBool() != state.Enabled.ValueBool() ||
+		plan.ReadOnly.ValueBool() != state.ReadOnly.ValueBool() ||
+		plan.Serial.ValueString() != state.Serial.ValueString() ||
+		plan.Asset.ValueString() != state.Asset.ValueString() ||
+		plan.OrderId.ValueInt32() != state.OrderId.ValueInt32() ||
+		plan.PreserveDriveFormat.ValueBool() != state.PreserveDriveFormat.ValueBool()
+}
+
 // Update, Create, Delete the Disk in the API.
 // This method is called from VM update method.
 func (da *DiskApi) syncDisks(ctx context.Context, planData *[]*diskResourceModel, stateData *[]*diskResourceModel, machineId types.Int32, vmId types.String) error {
+	plan := *planData
+	state := *stateData
+	updates, creates, deletes := pairBlocks(plan, state, diskBlockID, diskBlockName)
 
-	tflog.Debug(ctx, "Syncing disks: Starting deletion")
-
-	// Delete the disks that are not in the plan
-	var stateToBeDeleted []string // List of disks to be deleted
-
-	for _, state := range *stateData {
-		found := false
-		for _, plan := range *planData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				found = true
-				break
-			}
-		}
-		if !found {
-			if err := da.deleteDisk(ctx, state, vmId); err != nil {
-				return fmt.Errorf("failed to delete disk: %v", err)
-			}
-			stateToBeDeleted = append(stateToBeDeleted, state.Name.ValueString())
+	for _, pair := range updates {
+		if diskNeedsRecreate(pair.plan, pair.state) {
+			return fmt.Errorf("drive %q: changing media or media_source replaces the VM; refusing to delete and recreate the drive", pair.plan.Name.ValueString())
 		}
 	}
 
-	// Delete the disk record that are not in the state
-	for _, name := range stateToBeDeleted {
-		for i, state := range *stateData {
-			if state.Name.ValueString() == name {
-				*stateData = append((*stateData)[:i], (*stateData)[i+1:]...)
-				break
-			}
+	tflog.Debug(ctx, "Syncing disks: Starting deletion")
+	for _, old := range deletes {
+		if err := da.deleteDisk(ctx, old, vmId); err != nil {
+			return fmt.Errorf("failed to delete disk: %v", err)
 		}
 	}
 
 	tflog.Debug(ctx, "Syncing disks: Starting updation")
-
-	// Compare the plan data with the state data and update
-	for _, plan := range *planData {
-		for _, state := range *stateData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				if plan.Description.ValueString() != state.Description.ValueString() ||
-					plan.Interface.ValueString() != state.Interface.ValueString() ||
-					plan.Media.ValueString() != state.Media.ValueString() ||
-					plan.MediaSource.ValueInt32() != state.MediaSource.ValueInt32() ||
-					math.Abs(plan.DiskSize.ValueFloat64()-state.DiskSize.ValueFloat64()) > 0.001 ||
-					plan.PreferredTier.ValueString() != state.PreferredTier.ValueString() ||
-					plan.Enabled.ValueBool() != state.Enabled.ValueBool() ||
-					plan.ReadOnly.ValueBool() != state.ReadOnly.ValueBool() ||
-					plan.Serial.ValueString() != state.Serial.ValueString() ||
-					plan.Asset.ValueString() != state.Asset.ValueString() ||
-					plan.OrderId.ValueInt32() != state.OrderId.ValueInt32() ||
-					plan.PreserveDriveFormat.ValueBool() != state.PreserveDriveFormat.ValueBool() {
-					if err := da.updateDisk(ctx, plan, state); err != nil {
-						return fmt.Errorf("failed to update disk: %v", err)
-					}
-				}
-			}
+	for _, pair := range updates {
+		if !diskNeedsUpdate(pair.plan, pair.state) {
+			continue
+		}
+		if err := da.updateDisk(ctx, pair.plan, pair.state); err != nil {
+			return fmt.Errorf("failed to update disk: %v", err)
 		}
 	}
 
 	tflog.Debug(ctx, "Syncing disks: Starting insertion")
-
-	// Create the disks that are not in the state
-	for i, plan := range *planData {
-		found := false
-		for _, state := range *stateData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				found = true
-				break
-			}
+	for _, created := range creates {
+		created.Machine = machineId
+		if err := da.createDisk(ctx, created); err != nil {
+			return fmt.Errorf("failed to create disk: %v", err)
 		}
-		if !found {
-			plan.Machine = machineId
-			if err := da.createDisk(ctx, plan); err != nil {
-				return fmt.Errorf("failed to create disk: %v", err)
-			}
-			if err := da.readDisk(ctx, plan); err != nil {
-				return fmt.Errorf("failed to read disk during the sync: %v", err)
-			}
-			// insert plan in the stateData in a particular order
-			da.insertDiskInState(i, plan, stateData)
+		if err := da.readDisk(ctx, created); err != nil {
+			return fmt.Errorf("failed to read disk during the sync: %v", err)
 		}
 	}
 
+	*stateData = syncedOrder(plan, updates)
 	return nil
-}
-
-// Manually insert plan in the stateData in a particular order.
-func (da *DiskApi) insertDiskInState(insertAt int, planData *diskResourceModel, stateData *[]*diskResourceModel) {
-	// If it's at the end ten just append
-	if insertAt >= len(*stateData) {
-		*stateData = append(*stateData, planData)
-	} else {
-		// insert plan in the stateData in a particular order
-		for i := range *stateData {
-			if i == insertAt {
-				*stateData = append((*stateData)[:i], append([]*diskResourceModel{planData}, (*stateData)[i:]...)...)
-				break
-			}
-		}
-	}
 }
 
 // Check the power state of the disk

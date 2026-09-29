@@ -371,6 +371,114 @@ func testAccVMConsolePassConfig(vmName, password string) string {
 }
 
 func testAccVMWithDriveAndNICConfig(vmName, networkName string) string {
+	return testAccVMWithNamedDriveAndNICConfig(vmName, networkName, "os", "nic0")
+}
+
+// TestAccVMResource_RenameDriveAndNIC renames a drive and a NIC. Both stay
+// the same API objects: the drive key and the NIC id and MAC do not change,
+// and the following plan is empty.
+func TestAccVMResource_RenameDriveAndNIC(t *testing.T) {
+	vmName := acctest.Name("vm")
+	networkName := acctest.Name("network")
+	created := testAccVMWithNamedDriveAndNICConfig(vmName, networkName, "os", "nic0")
+	renamed := testAccVMWithNamedDriveAndNICConfig(vmName, networkName, "os-renamed", "lan")
+
+	var driveKey, nicID, nicMAC string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMAndNetworkDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: created,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.name", "os"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.name", "nic0"),
+					testAccCaptureResourceAttr("vergeio_vm.test", "vergeio_drive.0.key", &driveKey),
+					testAccCaptureResourceAttr("vergeio_vm.test", "vergeio_nic.0.id", &nicID),
+					testAccCaptureResourceAttr("vergeio_vm.test", "vergeio_nic.0.macaddress", &nicMAC),
+				),
+			},
+			{
+				Config: created,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: renamed,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_drive.0.name", "os-renamed"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_nic.0.name", "lan"),
+					testAccExpectCapturedAttr("vergeio_vm.test", "vergeio_drive.0.key", &driveKey),
+					testAccExpectCapturedAttr("vergeio_vm.test", "vergeio_nic.0.id", &nicID),
+					testAccExpectCapturedAttr("vergeio_vm.test", "vergeio_nic.0.macaddress", &nicMAC),
+				),
+			},
+			{
+				Config: renamed,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccCaptureResourceAttr(resourceName, attr string, dest *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		value, err := testAccResourceAttr(s, resourceName, attr)
+		if err != nil {
+			return err
+		}
+		if value == "" {
+			return fmt.Errorf("%s %s is empty", resourceName, attr)
+		}
+		*dest = value
+		return nil
+	}
+}
+
+func testAccExpectCapturedAttr(resourceName, attr string, want *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		if want == nil || *want == "" {
+			return fmt.Errorf("captured %s is empty", attr)
+		}
+		got, err := testAccResourceAttr(s, resourceName, attr)
+		if err != nil {
+			return err
+		}
+		if got != *want {
+			return fmt.Errorf("%s %s = %q, want %q", resourceName, attr, got, *want)
+		}
+		return nil
+	}
+}
+
+func testAccResourceAttr(s *terraform.State, resourceName, attr string) (string, error) {
+	rs, ok := s.RootModule().Resources[resourceName]
+	if !ok {
+		return "", fmt.Errorf("resource not found: %s", resourceName)
+	}
+	value, ok := rs.Primary.Attributes[attr]
+	if !ok {
+		return "", fmt.Errorf("%s has no attribute %s", resourceName, attr)
+	}
+	return value, nil
+}
+
+func testAccVMWithNamedDriveAndNICConfig(vmName, networkName, driveName, nicName string) string {
 	if err := acctest.RequirePrefix(vmName); err != nil {
 		panic(err)
 	}
@@ -392,17 +500,17 @@ resource "vergeio_vm" "test" {
   ram       = 2048
 
   vergeio_drive {
-    name      = "os"
+    name      = %q
     disksize  = 5
     interface = "virtio-scsi"
     orderid   = 0
   }
 
   vergeio_nic {
-    name      = "nic0"
+    name      = %q
     interface = "virtio"
     vnet      = tonumber(vergeio_network.test.id)
   }
 }
-`, networkName, vmName))
+`, networkName, vmName, driveName, nicName))
 }
