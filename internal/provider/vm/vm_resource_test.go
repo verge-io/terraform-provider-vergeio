@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
@@ -63,6 +65,28 @@ func TestVMResource_Schema(t *testing.T) {
 		t.Error("enabled attribute should exist")
 	} else if !enabledAttr.IsOptional() {
 		t.Error("enabled should be optional")
+	}
+
+	// powerstate is optional and computed. When configuration omits it, the
+	// plan must keep the prior state instead of becoming unknown.
+	if powerAttr, ok := resp.Schema.Attributes["powerstate"]; !ok {
+		t.Error("powerstate attribute should exist")
+	} else {
+		boolAttr, ok := powerAttr.(schema.BoolAttribute)
+		if !ok {
+			t.Fatal("powerstate should be a bool attribute")
+		}
+		if !boolAttr.Optional || !boolAttr.Computed {
+			t.Error("powerstate should be optional and computed")
+		}
+		if len(boolAttr.PlanModifiers) != 1 {
+			t.Fatalf("powerstate should have one plan modifier, got %d", len(boolAttr.PlanModifiers))
+		}
+		got := boolAttr.PlanModifiers[0].Description(context.Background())
+		want := boolplanmodifier.UseStateForUnknown().Description(context.Background())
+		if got != want {
+			t.Errorf("powerstate plan modifier description %q, want UseStateForUnknown %q", got, want)
+		}
 	}
 
 	// Check schema description

@@ -3,11 +3,14 @@ package vm_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
 	"terraform-provider-vergeio/internal/acctest"
 )
@@ -167,6 +170,127 @@ func testAccCheckVMAndNetworkDestroy(s *terraform.State) error {
 		_, err := client.Networks.Get(ctx, id)
 		return err
 	})
+}
+
+// TestAccVMResource_OmittedPowerStatePreservesExternalPowerOn creates a VM
+// that never sets powerstate, powers it on outside Terraform, then changes
+// an unrelated attribute. The VM must still be running afterward.
+func TestAccVMResource_OmittedPowerStatePreservesExternalPowerOn(t *testing.T) {
+	vmName := acctest.Name("vm")
+	created := testAccVMResourceConfig(vmName, `
+  enabled     = true
+  cpu_cores   = 2
+  ram         = 2048
+  description = "v1"
+`)
+	updated := testAccVMResourceConfig(vmName, `
+  enabled     = true
+  cpu_cores   = 2
+  ram         = 2048
+  description = "v2"
+`)
+
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: created,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "description", "v1"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "false"),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				PreConfig: func() {
+					if err := testAccPowerOnVMOutsideTerraform(vmID); err != nil {
+						t.Fatalf("power on VM outside Terraform: %v", err)
+					}
+				},
+				Config: updated,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("powerstate"), knownvalue.Bool(true)),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("description"), knownvalue.StringExact("v2")),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "description", "v2"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "true"),
+					testAccCheckVMPower("vergeio_vm.test", true),
+				),
+			},
+		},
+	})
+}
+
+func testAccCaptureVMID(resourceName string, id *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource not found: %s", resourceName)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("no ID is set")
+		}
+		*id = rs.Primary.ID
+		return nil
+	}
+}
+
+func testAccPowerOnVMOutsideTerraform(id string) error {
+	vmID, err := strconv.Atoi(id)
+	if err != nil {
+		return fmt.Errorf("vm id %q: %w", id, err)
+	}
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if err := client.VMs.PowerOn(ctx, vmID); err != nil {
+		return err
+	}
+	vm, err := client.VMs.Get(ctx, vmID)
+	if err != nil {
+		return err
+	}
+	if !vm.PowerState {
+		return fmt.Errorf("vm %s is not running after power on", id)
+	}
+	return nil
+}
+
+func testAccCheckVMPower(resourceName string, running bool) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource not found: %s", resourceName)
+		}
+		vmID, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil {
+			return fmt.Errorf("vm id %q: %w", rs.Primary.ID, err)
+		}
+		client, err := acctest.SDKClient()
+		if err != nil {
+			return err
+		}
+		vm, err := client.VMs.Get(context.Background(), vmID)
+		if err != nil {
+			return err
+		}
+		if vm.PowerState != running {
+			return fmt.Errorf("vm %s powerstate = %v, want %v", rs.Primary.ID, vm.PowerState, running)
+		}
+		return nil
+	}
 }
 
 func testAccVMWithDriveAndNICConfig(vmName, networkName string) string {
