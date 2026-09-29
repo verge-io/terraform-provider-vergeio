@@ -66,10 +66,17 @@ type diskAPIPowerStatus struct {
 	PowerState string `json:"powerstate,omitempty"`
 }
 
-// List of valid disk interfaces.
-// getValidDiskInterfaces returns hardcoded list - DEPRECATED
-// Use GetDiskInterfacesFromAPI for dynamic API-based validation
-func getValidDiskInterfaces() []string {
+// diskInterfaces is the plan-time allow-list for a drive interface.
+// It is the machine_drives interface enum current VergeOS reports at
+// GET /api/v4/machine_drives/$table (fields.interface.list): the original
+// controllers plus nvme, usb, cifs, nfs, vsan, pflash, direct, and tpm_state.
+//
+// The schema validator uses this list because it is built before the provider
+// client exists, so it cannot read the live system. The VM drive docs list
+// the same values. Create and update still call GetDiskInterfacesFromAPI and
+// reject a value the connected VergeOS version does not offer. Add a new
+// interface here and in templates/resources/vm.md.tmpl when VergeOS adds one.
+func diskInterfaces() []string {
 	return []string{
 		"virtio",
 		"ide",
@@ -80,6 +87,14 @@ func getValidDiskInterfaces() []string {
 		"mptsas1068",
 		"virtio-scsi",
 		"virtio-scsi-dedicated",
+		"nvme",
+		"usb",
+		"cifs",
+		"nfs",
+		"vsan",
+		"pflash",
+		"direct",
+		"tpm_state",
 	}
 }
 

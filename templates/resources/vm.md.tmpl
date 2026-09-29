@@ -315,7 +315,7 @@ Optional:
 - `description` (String)
 - `disksize` (Number) - Size in GB (supports fractional values, e.g., 8.5). Formatted in 1024 based GB. Ex: 1024GB = 1TB
 - `enabled` (Boolean) - Default = True
-- `interface` (String)
+- `interface` (String) - Drive interface. The allow-list matches the machine_drives interfaces current VergeOS reports, including `usb`. Apply also checks the connected system, so a cluster that does not offer a value rejects it.
 	- `virtio`                (Virtio Legacy)
 	- `ide`                   (IDE) Only available on the i440x machine type. Cannot be hotplugged; adding an IDE drive to a running VM fails the apply until the VM is power cycled.
 	- `ahci`                  (SATA) Only available on the Q35 machine type
@@ -325,6 +325,14 @@ Optional:
 	- `mptsas1068`            (LSI SAS 1608)
 	- `virtio-scsi`           (Virtio-SCSI, **Default**)
 	- `virtio-scsi-dedicated` (Virtio-SCSI Dedicated Controller)
+	- `nvme`                  (NVMe)
+	- `usb`                   (USB)
+	- `cifs`                  (CIFS pass-through)
+	- `nfs`                   (NFS pass-through)
+	- `vsan`                  (vSAN pass-through)
+	- `pflash`                (pflash)
+	- `direct`                (Direct)
+	- `tpm_state`             (TPM state)
   - `media` (String) - Media type of the resource. Changing media replaces the VM, because an existing drive cannot change media.
 	- `cdrom`   (CD-Rom)
 	- `disk`    (New Disk, **Default**)
