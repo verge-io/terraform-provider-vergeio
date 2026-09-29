@@ -1183,38 +1183,31 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
+	// An empty nested list decodes to a nil slice. Sync still has to run so
+	// the first drive, NIC, or device can be added and the last one removed.
 	tflog.Debug(ctx, fmt.Sprintf("Updating the disk with the plan data %v", planData.Disks))
-	// update disks
-	if planData.Disks != nil && stateData.Disks != nil {
-		tflog.Debug(ctx, "Syncing disks ran")
-		if err := r.diskApi.syncDisks(ctx, &planData.Disks, &stateData.Disks, stateData.Machine, stateData.Id); err != nil {
-			resp.Diagnostics.AddError(
-				"Error syncing disks",
-				err.Error(),
-			)
-		}
+	tflog.Debug(ctx, "Syncing disks ran")
+	if err := r.diskApi.syncDisks(ctx, &planData.Disks, &stateData.Disks, stateData.Machine, stateData.Id); err != nil {
+		resp.Diagnostics.AddError(
+			"Error syncing disks",
+			err.Error(),
+		)
 	}
 
-	// update NICs
-	if planData.NICs != nil && stateData.NICs != nil {
-		if err := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id); err != nil {
-			resp.Diagnostics.AddError(
-				"Error syncing NICs",
-				err.Error(),
-			)
-		}
+	if err := r.nicApi.syncNICs(ctx, &planData.NICs, &stateData.NICs, stateData.Machine, stateData.Id); err != nil {
+		resp.Diagnostics.AddError(
+			"Error syncing NICs",
+			err.Error(),
+		)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating the devices with the plan data %v", planData.Devices))
-	// update devices
-	if planData.Devices != nil && stateData.Devices != nil {
-		tflog.Debug(ctx, "Syncing devices ran")
-		if err := r.deviceApi.syncDevices(ctx, &planData.Devices, &stateData.Devices, stateData.Machine); err != nil {
-			resp.Diagnostics.AddError(
-				"Error syncing devices",
-				err.Error(),
-			)
-		}
+	tflog.Debug(ctx, "Syncing devices ran")
+	if err := r.deviceApi.syncDevices(ctx, &planData.Devices, &stateData.Devices, stateData.Machine); err != nil {
+		resp.Diagnostics.AddError(
+			"Error syncing devices",
+			err.Error(),
+		)
 	}
 
 	// readVM refreshes prior state. console_pass is not in the API response,
