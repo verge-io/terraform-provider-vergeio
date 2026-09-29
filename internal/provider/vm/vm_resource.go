@@ -235,9 +235,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"console_pass": schema.StringAttribute{
-				MarkdownDescription: "Console pass",
+				MarkdownDescription: "Console password. The API does not return this value, so Terraform stores the configured value.",
 				Optional:            true,
 				Computed:            true,
+				Sensitive:           true,
 			},
 			"usb_tablet": schema.BoolAttribute{
 				MarkdownDescription: "USB tablet",
@@ -1184,6 +1185,12 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			)
 		}
 	}
+
+	// readVM refreshes prior state. console_pass is not in the API response,
+	// so the planned value has to be on the model before that read. Leaving
+	// the previous password in place would fail the apply consistency check
+	// whenever the configuration changes it.
+	usePlannedConsolePass(&stateData, &planData)
 
 	// Read the VM from the API to get all the data.
 	if readError := r.vmApi.readVM(ctx, &stateData); readError != nil {
