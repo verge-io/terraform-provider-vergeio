@@ -355,6 +355,12 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	// Same source VMs use: the API powerstate bool. The network schema stores
 	// it as the strings "true" and "false", which is what configurations set.
 	data.PowerState = types.StringValue(networkPowerStateString(network.PowerState))
+	data.NeedRestart = types.BoolValue(network.NeedRestart)
+	// restart_on_change is not a VergeOS field. Keep an explicit setting and
+	// fill the default when state has never stored one, such as after import.
+	if data.RestartOnChange.IsNull() || data.RestartOnChange.IsUnknown() {
+		data.RestartOnChange = types.BoolValue(true)
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 

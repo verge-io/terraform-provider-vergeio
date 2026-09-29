@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
@@ -70,6 +72,31 @@ func TestNetworkResource_Schema(t *testing.T) {
 		t.Error("powerstate attribute should exist")
 	} else if !powerAttr.IsOptional() || !powerAttr.IsComputed() {
 		t.Error("powerstate should be optional and computed")
+	}
+
+	restartAttr, ok := resp.Schema.Attributes["restart_on_change"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatal("restart_on_change should be a bool attribute")
+	}
+	if !restartAttr.IsOptional() || !restartAttr.IsComputed() {
+		t.Error("restart_on_change should be optional and computed")
+	}
+	def := restartAttr.Default
+	if def == nil {
+		t.Fatal("restart_on_change should default to true")
+	}
+	defaultResp := &defaults.BoolResponse{}
+	def.DefaultBool(context.Background(), defaults.BoolRequest{}, defaultResp)
+	if defaultResp.Diagnostics.HasError() || defaultResp.PlanValue.IsNull() || !defaultResp.PlanValue.ValueBool() {
+		t.Fatalf("restart_on_change default = %#v, diagnostics %v", defaultResp.PlanValue, defaultResp.Diagnostics)
+	}
+
+	needRestartAttr, ok := resp.Schema.Attributes["need_restart"].(schema.BoolAttribute)
+	if !ok {
+		t.Fatal("need_restart should be a bool attribute")
+	}
+	if !needRestartAttr.IsComputed() || needRestartAttr.IsOptional() || needRestartAttr.IsRequired() {
+		t.Error("need_restart should be computed only")
 	}
 
 	// Check schema description
