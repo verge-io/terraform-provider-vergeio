@@ -533,9 +533,12 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Computed: true,
 						},
 						"interface": schema.StringAttribute{
-							Optional: true,
-							Computed: true,
-							// Note: Dynamic validation performed in Create/Update methods
+							MarkdownDescription: "Drive interface. Must be one of the machine_drives interfaces VergeOS documents, including usb.",
+							Optional:            true,
+							Computed:            true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(diskInterfaces()...),
+							},
 						},
 						"media": schema.StringAttribute{
 							MarkdownDescription: "Media type. Changing media replaces the VM, because an existing drive cannot change media.",
