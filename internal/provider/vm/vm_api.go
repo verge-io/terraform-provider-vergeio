@@ -951,6 +951,11 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 	data.NestedVirtualization = types.BoolValue(vm.NestedVirtualization)
 	data.DisableHypervisor = types.BoolValue(vm.DisableHypervisor)
 	data.PowerState = types.BoolValue(vm.PowerState)
+	// force_power_off is not a VergeOS field. Keep an explicit setting and
+	// fill the default when state has never stored one, such as after import.
+	if data.ForcePowerOff.IsNull() || data.ForcePowerOff.IsUnknown() {
+		data.ForcePowerOff = types.BoolValue(false)
+	}
 
 	if vm.CloudInitFiles != nil {
 		for _, file := range vm.CloudInitFiles {

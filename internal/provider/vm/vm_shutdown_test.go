@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/defaults"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	vergeos "github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 )
@@ -237,6 +238,22 @@ func TestShutdownTimeoutFromPlan(t *testing.T) {
 	}
 	if got != 90*time.Second {
 		t.Fatalf("configured timeout = %s, want 90s", got)
+	}
+}
+
+func TestApplyVMDefaultsForcePowerOff(t *testing.T) {
+	t.Parallel()
+
+	data := &VMResourceModel{}
+	applyVM(data, &vergeos.VM{Name: "web"})
+	if data.ForcePowerOff.IsNull() || data.ForcePowerOff.IsUnknown() || data.ForcePowerOff.ValueBool() {
+		t.Fatalf("force_power_off = %#v, want false after import", data.ForcePowerOff)
+	}
+
+	data.ForcePowerOff = types.BoolValue(true)
+	applyVM(data, &vergeos.VM{Name: "web"})
+	if data.ForcePowerOff.IsNull() || !data.ForcePowerOff.ValueBool() {
+		t.Fatalf("force_power_off = %#v, want an explicit true kept", data.ForcePowerOff)
 	}
 }
 
