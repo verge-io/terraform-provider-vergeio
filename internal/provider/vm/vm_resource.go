@@ -177,7 +177,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed: true,
 			},
 			"cpu_cores": schema.Int32Attribute{
-				MarkdownDescription: "CPU cores",
+				MarkdownDescription: "CPU cores. When omitted on create, the VM is created with 1 core.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -187,7 +187,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"ram": schema.Int32Attribute{
-				MarkdownDescription: "RAM",
+				MarkdownDescription: "RAM in MiB. When omitted on create, the VM is created with 1024 MiB.",
 				Optional:            true,
 				Computed:            true,
 			},

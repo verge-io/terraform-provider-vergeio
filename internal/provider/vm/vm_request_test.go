@@ -1,9 +1,13 @@
 package vm
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/verge-io/govergeos"
 )
 
 func TestVMCreateBodyKeepsFalseZeroAndEmpty(t *testing.T) {
@@ -120,6 +124,146 @@ func TestVMConsolePassSentOnlyWhenSetOrChanged(t *testing.T) {
 	updated := jsonObject(t, vmUpdateModel(rotated, same))
 	requireString(t, updated, "console_pass", "console-secret-rotated")
 	requireAbsent(t, updated, "name")
+}
+
+func TestVMCreateFillsPlatformCPUAndRAMDefaults(t *testing.T) {
+	cases := []struct {
+		name     string
+		cores    types.Int32
+		ram      types.Int32
+		wantCore float64
+		wantRAM  float64
+	}{
+		{
+			name:     "both omitted",
+			cores:    types.Int32Null(),
+			ram:      types.Int32Null(),
+			wantCore: 1,
+			wantRAM:  1024,
+		},
+		{
+			name:     "both unknown",
+			cores:    types.Int32Unknown(),
+			ram:      types.Int32Unknown(),
+			wantCore: 1,
+			wantRAM:  1024,
+		},
+		{
+			name:     "ram omitted",
+			cores:    types.Int32Value(4),
+			ram:      types.Int32Null(),
+			wantCore: 4,
+			wantRAM:  1024,
+		},
+		{
+			name:     "cpu omitted",
+			cores:    types.Int32Unknown(),
+			ram:      types.Int32Value(8192),
+			wantCore: 1,
+			wantRAM:  8192,
+		},
+		{
+			name:     "explicit values",
+			cores:    types.Int32Value(2),
+			ram:      types.Int32Value(2048),
+			wantCore: 2,
+			wantRAM:  2048,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := &VMResourceModel{
+				Name:     types.StringValue("vm"),
+				CPUCores: tc.cores,
+				RAM:      tc.ram,
+			}
+			model := jsonObject(t, vmCreateModel(data))
+			requireNumber(t, model, "cpu_cores", tc.wantCore)
+			requireNumber(t, model, "ram", tc.wantRAM)
+
+			req, err := vmCreateRequest(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if req.Name != "vm" {
+				t.Fatalf("name = %q, want vm", req.Name)
+			}
+			if req.CPUCores != int(tc.wantCore) {
+				t.Fatalf("cpu_cores = %d, want %v", req.CPUCores, tc.wantCore)
+			}
+			if req.RAM != int(tc.wantRAM) {
+				t.Fatalf("ram = %d, want %v", req.RAM, tc.wantRAM)
+			}
+		})
+	}
+}
+
+func TestVMCreateRejectsNonPositiveCPUAndRAM(t *testing.T) {
+	cases := []struct {
+		name  string
+		cores types.Int32
+		ram   types.Int32
+		field string
+	}{
+		{name: "zero cores", cores: types.Int32Value(0), ram: types.Int32Value(1024), field: "cpu_cores"},
+		{name: "negative cores", cores: types.Int32Value(-2), ram: types.Int32Value(1024), field: "cpu_cores"},
+		{name: "zero ram", cores: types.Int32Value(1), ram: types.Int32Value(0), field: "ram"},
+		{name: "negative ram", cores: types.Int32Value(1), ram: types.Int32Value(-1), field: "ram"},
+	}
+
+	// Validation runs before the client is used.
+	svc := &vergeos.VMService{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := vmCreateRequest(&VMResourceModel{
+				Name:     types.StringValue("vm"),
+				CPUCores: tc.cores,
+				RAM:      tc.ram,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = svc.Create(context.Background(), req)
+			var validation *vergeos.ValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("Create error = %v, want validation error", err)
+			}
+			if validation.Field != tc.field {
+				t.Fatalf("validation field = %q, want %q", validation.Field, tc.field)
+			}
+			if !strings.Contains(validation.Message, "must be positive") {
+				t.Fatalf("validation message = %q, want must be positive", validation.Message)
+			}
+		})
+	}
+}
+
+func TestVMUpdateOmitsUnsetCPUAndRAM(t *testing.T) {
+	plan := &VMResourceModel{
+		Id:       types.StringValue("9"),
+		Name:     types.StringValue("vm"),
+		CPUCores: types.Int32Null(),
+		RAM:      types.Int32Unknown(),
+	}
+	state := &VMResourceModel{
+		Id:       types.StringValue("9"),
+		Name:     types.StringValue("vm"),
+		CPUCores: types.Int32Value(4),
+		RAM:      types.Int32Value(4096),
+	}
+
+	model := jsonObject(t, vmUpdateModel(plan, state))
+	requireAbsent(t, model, "cpu_cores")
+	requireAbsent(t, model, "ram")
+
+	req, _, err := vmUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsonObject(t, req)
+	requireAbsent(t, body, "cpu_cores")
+	requireAbsent(t, body, "ram")
 }
 
 func TestVMCreateOmitsUnsetBool(t *testing.T) {

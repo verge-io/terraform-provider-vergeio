@@ -288,8 +288,20 @@ type VMPowerState struct {
 	PowerState *bool `json:"powerstate,omitempty"`
 }
 
+// VergeOS creates a VM with one core and 1024 MiB when cpu_cores and ram
+// are omitted. Provider v2.7.8 left those fields out and the platform
+// applied these values. govergeos v0.3.0 stores both as plain ints, so an
+// omitted field arrives as 0 and Create rejects it. Create fills the same
+// platform defaults. An explicit value, including 0 or a negative number,
+// is sent unchanged. Updates still omit an unset value.
+const (
+	defaultVMCPUCores int32 = 1
+	defaultVMRAM      int32 = 1024
+)
+
 // vmCreateModel is the provider create body. Nil pointers are omitted.
-// An explicit false, 0, or "" is set.
+// An explicit false, 0, or "" is set. cpu_cores and ram use the VergeOS
+// defaults when the plan leaves them unset.
 func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 	apiData := VMAPIResourceModel{
 		Name:                 vergeio.KnownString(data.Name),
@@ -300,9 +312,9 @@ func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 		AllowHotplug:         vergeio.KnownBool(data.AllowHotplug),
 		DisablePowercycle:    vergeio.KnownBool(data.DisablePowercycle),
 		OnPowerLoss:          vergeio.KnownString(data.OnPowerLoss),
-		CPUCores:             vergeio.KnownInt32(data.CPUCores),
+		CPUCores:             int32OrDefault(data.CPUCores, defaultVMCPUCores),
 		CPUType:              vergeio.KnownString(data.CPUType),
-		RAM:                  vergeio.KnownInt32(data.RAM),
+		RAM:                  int32OrDefault(data.RAM, defaultVMRAM),
 		Console:              vergeio.KnownString(data.Console),
 		Display:              vergeio.KnownString(data.Display),
 		Video:                vergeio.KnownString(data.Video),
@@ -339,9 +351,20 @@ func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 	return apiData
 }
 
+// int32OrDefault returns the planned value when it is known, including 0
+// and negative numbers. Null and unknown values use fallback.
+func int32OrDefault(v types.Int32, fallback int32) *int32 {
+	if v.IsNull() || v.IsUnknown() {
+		n := fallback
+		return &n
+	}
+	return vergeio.KnownInt32(v)
+}
+
 // vmCreateRequest builds the SDK create body from known plan values.
-// Null and unknown attributes are left unset. An explicit false, 0, or ""
-// is sent. Power state is not part of this body.
+// Null and unknown attributes are left unset, except cpu_cores and ram,
+// which use the VergeOS defaults. An explicit false, 0, or "" is sent.
+// Power state is not part of this body.
 func vmCreateRequest(data *VMResourceModel) (*vergeos.VMCreateRequest, error) {
 	return decodeVMRequest[vergeos.VMCreateRequest](vmCreateModel(data))
 }
