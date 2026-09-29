@@ -172,7 +172,7 @@ resource "vergeio_vm" "web-server" {
     - `spice`  Spice
     - `serial` Serial Console
     - `none`   None
-- `console_pass` (String) - Depends on `console_pass_enabled`
+- `console_pass` (String, Sensitive) - Depends on `console_pass_enabled`
 - `console_pass_enabled` (Boolean) - Default = False
 - `cpu_cores` (Number) - Default = 1
 - `cpu_type` (String) -  Default = Cluster CPU type

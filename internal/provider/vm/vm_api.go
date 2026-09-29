@@ -679,25 +679,21 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 	return nil
 }
 
-// Read the VM from the API.
-func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
+// usePlannedConsolePass copies the planned console password onto the model
+// that readVM will refresh. The API does not return console_pass, so the
+// value saved after apply is the planned one.
+func usePlannedConsolePass(state, plan *VMResourceModel) {
+	state.ConsolePass = plan.ConsolePass
+}
 
-	tflog.Debug(ctx, "Reading the vm data")
-
-	// Call the SDK API to get the VM
-	vmID, err := strconv.Atoi(data.Id.ValueString())
-	if err != nil {
-		return fmt.Errorf("invalid VM ID: %v", err)
-	}
-
-	vm, err := va.sdk.VMs.Get(ctx, vmID)
-	if err != nil {
-		return err
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
-
-	// save into the resource model
+// applyVM copies an API VM onto the resource model.
+// console_pass is a hidden password and is absent from the response. A known
+// value already on data is kept: the planned value during apply, or prior
+// state during refresh. Copying the missing field would store "" and the next
+// plan would replace the VM, deleting its disks. An unset value is unknown
+// during apply; store null so the result is known. The attribute changes only
+// when configuration changes that stored value.
+func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 	data.Machine = types.Int32Value(int32(vm.Machine))
 	data.Name = types.StringValue(vm.Name)
 	data.Cluster = types.Int32Value(int32(vm.Cluster.Int()))
@@ -723,7 +719,9 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	data.RTCBase = types.StringValue(vm.RTCBase)
 	data.BootOrder = types.StringValue(vm.BootOrder)
 	data.ConsolePassEnabled = types.BoolValue(vm.ConsolePassEnabled)
-	data.ConsolePass = types.StringValue(vm.ConsolePass)
+	if data.ConsolePass.IsNull() || data.ConsolePass.IsUnknown() {
+		data.ConsolePass = types.StringNull()
+	}
 	data.USBTablet = types.BoolValue(vm.USBTablet)
 	data.UEFI = types.BoolValue(vm.UEFI)
 	data.SecureBoot = types.BoolValue(vm.SecureBoot)
@@ -747,6 +745,27 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 			})
 		}
 	}
+}
+
+// Read the VM from the API.
+func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
+
+	tflog.Debug(ctx, "Reading the vm data")
+
+	// Call the SDK API to get the VM
+	vmID, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid VM ID: %v", err)
+	}
+
+	vm, err := va.sdk.VMs.Get(ctx, vmID)
+	if err != nil {
+		return err
+	}
+
+	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
+
+	applyVM(data, vm)
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 

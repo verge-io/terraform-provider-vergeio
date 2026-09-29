@@ -89,6 +89,39 @@ func TestVMUpdateBodyKeepsFalseZeroAndEmpty(t *testing.T) {
 	requireAbsent(t, body, "powerstate")
 }
 
+func TestVMConsolePassSentOnlyWhenSetOrChanged(t *testing.T) {
+	withPass := &VMResourceModel{
+		Name:               types.StringValue("vm"),
+		ConsolePassEnabled: types.BoolValue(true),
+		ConsolePass:        types.StringValue("console-secret"),
+	}
+	created := jsonObject(t, vmCreateModel(withPass))
+	requireString(t, created, "console_pass", "console-secret")
+	requireBool(t, created, "console_pass_enabled", true)
+
+	unset := &VMResourceModel{
+		Name:        types.StringValue("vm"),
+		ConsolePass: types.StringUnknown(),
+	}
+	requireAbsent(t, jsonObject(t, vmCreateModel(unset)), "console_pass")
+
+	same := &VMResourceModel{
+		Id:          types.StringValue("9"),
+		Name:        types.StringValue("vm"),
+		ConsolePass: types.StringValue("console-secret"),
+	}
+	requireAbsent(t, jsonObject(t, vmUpdateModel(same, same)), "console_pass")
+
+	rotated := &VMResourceModel{
+		Id:          types.StringValue("9"),
+		Name:        types.StringValue("vm"),
+		ConsolePass: types.StringValue("console-secret-rotated"),
+	}
+	updated := jsonObject(t, vmUpdateModel(rotated, same))
+	requireString(t, updated, "console_pass", "console-secret-rotated")
+	requireAbsent(t, updated, "name")
+}
+
 func TestVMCreateOmitsUnsetBool(t *testing.T) {
 	data := &VMResourceModel{
 		Name:      types.StringValue("vm"),

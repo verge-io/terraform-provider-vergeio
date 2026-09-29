@@ -293,6 +293,83 @@ func testAccCheckVMPower(resourceName string, running bool) resource.TestCheckFu
 	}
 }
 
+// TestAccVMResource_ConsolePass creates a VM with a console password.
+// The API does not return console_pass. The second plan must be empty, and
+// changing the password must update the VM in place. A replacement deletes
+// the VM's drives.
+func TestAccVMResource_ConsolePass(t *testing.T) {
+	vmName := acctest.Name("vm")
+	original := testAccVMConsolePassConfig(vmName, "console-secret")
+	rotated := testAccVMConsolePassConfig(vmName, "console-secret-rotated")
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: original,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "console_pass_enabled", "true"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "console_pass", "console-secret"),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				Config: original,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: rotated,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "console_pass", "console-secret-rotated"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "console_pass_enabled", "true"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_vm.test"]
+						if !ok {
+							return fmt.Errorf("resource not found: vergeio_vm.test")
+						}
+						if rs.Primary.ID != vmID {
+							return fmt.Errorf("vm id changed from %s to %s", vmID, rs.Primary.ID)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				Config: rotated,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccVMConsolePassConfig(vmName, password string) string {
+	return testAccVMResourceConfig(vmName, fmt.Sprintf(`
+  enabled              = true
+  cpu_cores            = 2
+  ram                  = 2048
+  console_pass_enabled = true
+  console_pass         = %q
+`, password))
+}
+
 func testAccVMWithDriveAndNICConfig(vmName, networkName string) string {
 	if err := acctest.RequirePrefix(vmName); err != nil {
 		panic(err)
