@@ -18,7 +18,6 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-
 var _ vergeio.IClient = &TagsApi{}
 
 func NewTagsApi(c *vergeio.Client) *TagsApi {
@@ -288,44 +287,6 @@ func (ta *TagsApi) readTagMember(ctx context.Context, data *TagMemberResourceMod
 	data.Member = types.StringValue(tagMemberAPIResp.Member)
 
 	tflog.Debug(ctx, "Successfully read tag member from API")
-
-	return nil
-}
-
-// Update tag member.
-func (ta *TagsApi) updateTagMember(ctx context.Context, data *TagMemberResourceModel) error {
-	tflog.Debug(ctx, fmt.Sprintf("Updating tag member with ID %s", data.Id.ValueString()))
-
-	// Prepare payload
-	payload := TagMemberAPIModel{
-		Tag:    int(data.TagId.ValueInt32()),
-		Member: data.Member.ValueString(),
-	}
-
-	// Encode the API data
-	encodedBuffer := new(bytes.Buffer)
-	if err := json.NewEncoder(encodedBuffer).Encode(payload); err != nil {
-		return fmt.Errorf("failed to marshal tag member payload: %w", err)
-	}
-
-	// Convert to SDK request format
-	var req vergeos.TagMemberUpdateRequest
-	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
-		return fmt.Errorf("failed to convert API data: %v", err)
-	}
-
-	// Call the SDK API
-	id, _ := strconv.Atoi(data.Id.ValueString())
-	_, err := ta.sdk.TagMembers.Update(ctx, id, &req)
-	if err != nil {
-		// Check if this is a version compatibility issue or resource not found
-		if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("tag member not found")
-		}
-		return err
-	}
-
-	tflog.Debug(ctx, "Successfully updated tag member")
 
 	return nil
 }

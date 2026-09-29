@@ -92,45 +92,6 @@ func (nc *MemberApi) createMember(ctx context.Context, data *MemberResourceModel
 	return nil
 }
 
-// updateMember updates an existing member.
-func (nc *MemberApi) updateMember(ctx context.Context, planData *MemberResourceModel, stateData *MemberResourceModel) error {
-
-	// Prepare the API data packet from the plan
-	apiData := MemberAPIResourceModel{
-		Id:     planData.Id.ValueString(),
-		Group:  vergeio.Int32ToNil(planData.Group, stateData.Group, 0),
-		Member: vergeio.StringToNil(planData.Member, stateData.Member, ""),
-	}
-
-	// Encode the API data
-	encodedBuffer := new(bytes.Buffer)
-	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for VM Item")
-	}
-
-	// Convert to SDK request format
-	var req vergeos.MemberUpdateRequest
-	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
-		return fmt.Errorf("failed to convert API data: %v", err)
-	}
-
-	// Call the SDK API
-	id, _ := strconv.Atoi(planData.Id.ValueString())
-	_, err := nc.sdk.Members.Update(ctx, id, &req)
-	if err != nil {
-		return err
-	}
-
-	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
-
-	// Read data into the model to get all the attributes
-	if readDataError := nc.readMember(ctx, planData); readDataError != nil {
-		return fmt.Errorf("error Fetching Data %v", readDataError)
-	}
-
-	return nil
-}
-
 // Read the Member (Vnet) from the API.
 func (nc *MemberApi) readMember(ctx context.Context, data *MemberResourceModel) error {
 

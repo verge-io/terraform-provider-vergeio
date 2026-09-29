@@ -13,6 +13,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -53,14 +56,18 @@ func (r *MemberResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 			},
 			"group": schema.Int32Attribute{
-				MarkdownDescription: "Group id",
-				Optional:            true,
-				Computed:            true,
+				MarkdownDescription: "Key (ID) of the group to add the member to. Changing group replaces the membership, because VergeOS does not allow a membership to be updated in place.",
+				Required:            true,
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.RequiresReplace(),
+				},
 			},
 			"member": schema.StringAttribute{
-				MarkdownDescription: "Unique member name",
-				Optional:            true,
-				Computed:            true,
+				MarkdownDescription: "Object to add in format 'object_type/object_id' (e.g., 'users/123', 'vms/456'). Changing member replaces the membership, because VergeOS does not allow a membership to be updated in place.",
+				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 		},
 	}
@@ -149,31 +156,13 @@ func (r *MemberResource) Read(ctx context.Context, req resource.ReadRequest, res
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
+// Update is not supported. group and member require replacement, so Terraform
+// destroys and recreates the membership instead of calling this method.
 func (r *MemberResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var planData, stateData MemberResourceModel
-
-	// Read Terraform plan data into the model
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Read Terraform plan data into the model
-	resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// call the API
-	if err := r.memberApi.updateMember(ctx, &planData, &stateData); err != nil { // call the API
-		resp.Diagnostics.AddError("Error Updating member", err.Error())
-		return
-	}
-
-	// Save updated data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
+	resp.Diagnostics.AddError(
+		"Member Update Not Supported",
+		"Changing group or member replaces the membership. VergeOS does not allow a membership to be updated in place.",
+	)
 }
 
 func (r *MemberResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
