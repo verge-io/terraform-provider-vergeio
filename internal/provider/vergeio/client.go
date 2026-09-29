@@ -42,7 +42,7 @@ func (c *Client) Name() string {
 
 // serverURL returns the server URL using host and endpoint.
 func (c *Client) serverURL(endpoint string) string {
-	return "https://" + c.Host + "/" + endpoint
+	return EnsureHTTPSPrefix(c.Host) + "/" + endpoint
 }
 
 // NewClient returns a new Verge.IO client.

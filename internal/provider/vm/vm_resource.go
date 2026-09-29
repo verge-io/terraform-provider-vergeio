@@ -4,8 +4,11 @@
 package vm
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +55,7 @@ type VMResourceModel struct {
 	Id                    types.String    `tfsdk:"id"`
 	Machine               types.Int32     `tfsdk:"machine"`
 	Name                  types.String    `tfsdk:"name"`
-	Cluster               types.String    `tfsdk:"cluster"`
+	Cluster               types.Int32     `tfsdk:"cluster"`
 	Description           types.String    `tfsdk:"description"`
 	Enabled               types.Bool      `tfsdk:"enabled"`
 	MachineType           types.String    `tfsdk:"machine_type"`
@@ -77,8 +80,8 @@ type VMResourceModel struct {
 	SecureBoot            types.Bool      `tfsdk:"secure_boot"`
 	SerialPort            types.Bool      `tfsdk:"serial_port"`
 	BootDelay             types.Int32     `tfsdk:"boot_delay"`
-	PreferredNode         types.String    `tfsdk:"preferred_node"`
-	SnapshotProfile       types.String    `tfsdk:"snapshot_profile"`
+	PreferredNode         types.Int32     `tfsdk:"preferred_node"`
+	SnapshotProfile       types.Int32     `tfsdk:"snapshot_profile"`
 	CloudInitDataSource   types.String    `tfsdk:"cloudinit_datasource"`
 	HAGroup               types.String    `tfsdk:"ha_group"`
 	CloudInitFiles        []CloudInitFile `tfsdk:"cloudinit_files"`
@@ -107,7 +110,10 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "VM resource in VergeIO",
-		Version:             1,
+		// Version 2: cluster, preferred_node, and snapshot_profile are numbers.
+		// Version 1 stored those keys as strings and widened disksize to float.
+		// Version 0 stored disksize as an integer.
+		Version: 2,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -257,17 +263,17 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Optional:            true,
 				Computed:            true,
 			},
-			"preferred_node": schema.StringAttribute{
+			"preferred_node": schema.Int32Attribute{
 				MarkdownDescription: "Preferred node",
 				Optional:            true,
 				Computed:            true,
 			},
-			"snapshot_profile": schema.StringAttribute{
+			"snapshot_profile": schema.Int32Attribute{
 				MarkdownDescription: "Snapshot profile",
 				Optional:            true,
 				Computed:            true,
 			},
-			"cluster": schema.StringAttribute{
+			"cluster": schema.Int32Attribute{
 				MarkdownDescription: "Cluster",
 				Optional:            true,
 				Computed:            true,
@@ -625,33 +631,89 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 }
 
 // UpgradeState handles state migrations between schema versions.
-// Version 0→1: disksize in vergeio_drive changed from Int64 to Float64
-// to support fractional GB sizes (e.g., 8.5 GB imported disks).
+//
+// Version 0 stored disksize as an integer and cluster, preferred_node, and
+// snapshot_profile as strings. Version 1 widened disksize to float (JSON
+// numbers need no rewrite) and still stored those keys as strings. Version 2
+// stores the keys as numbers. Both prior versions upgrade straight to the
+// current schema. Numeric strings are accepted by the number decoder; blank
+// strings become null so an unset key does not fail the upgrade.
 func (r *VMResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
-	return map[int64]resource.StateUpgrader{
-		0: {
-			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
-				tflog.Info(ctx, "Upgrading VM state from v0 to v1: disksize changed from int64 to float64")
+	upgrader := func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+		tflog.Info(ctx, "Upgrading VM state to v2: disksize float and numeric cluster, preferred_node, snapshot_profile")
 
-				// Get the v1 schema's tftypes type definition
-				newSchemaType := resp.State.Schema.Type().TerraformType(ctx)
+		normalized, err := normalizeVMStateJSON(req.RawState.JSON)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error upgrading VM state",
+				fmt.Sprintf("Failed to normalize state: %s", err),
+			)
+			return
+		}
 
-				// Re-parse the raw JSON state using the new schema type.
-				// JSON numbers are untyped, so integer 60 parses as float64 60.0
-				// without any manual transformation needed.
-				newStateValue, err := tftypes.ValueFromJSON(req.RawState.JSON, newSchemaType)
-				if err != nil {
-					resp.Diagnostics.AddError(
-						"Error upgrading VM state from v0 to v1",
-						fmt.Sprintf("Failed to parse state: %s", err),
-					)
-					return
-				}
+		newSchemaType := resp.State.Schema.Type().TerraformType(ctx)
+		newStateValue, err := tftypes.ValueFromJSON(normalized, newSchemaType)
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error upgrading VM state",
+				fmt.Sprintf("Failed to parse state: %s", err),
+			)
+			return
+		}
 
-				resp.State.Raw = newStateValue
-			},
-		},
+		resp.State.Raw = newStateValue
 	}
+
+	return map[int64]resource.StateUpgrader{
+		0: {StateUpgrader: upgrader},
+		1: {StateUpgrader: upgrader},
+	}
+}
+
+// normalizeVMStateJSON rewrites prior VM state so it matches schema version 2.
+// cluster, preferred_node, and snapshot_profile may be JSON strings. A blank
+// string becomes null; a decimal integer string becomes a JSON number.
+func normalizeVMStateJSON(raw []byte) ([]byte, error) {
+	var state map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return nil, err
+	}
+
+	for _, key := range []string{"cluster", "preferred_node", "snapshot_profile"} {
+		rawVal, ok := state[key]
+		if !ok {
+			continue
+		}
+		converted, err := numericIDOrNull(rawVal)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		state[key] = converted
+	}
+
+	return json.Marshal(state)
+}
+
+func numericIDOrNull(raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return json.RawMessage("null"), nil
+	}
+	if trimmed[0] != '"' {
+		return json.RawMessage(trimmed), nil
+	}
+
+	var s string
+	if err := json.Unmarshal(trimmed, &s); err != nil {
+		return nil, err
+	}
+	if s == "" {
+		return json.RawMessage("null"), nil
+	}
+	if _, err := strconv.ParseInt(s, 10, 32); err != nil {
+		return nil, fmt.Errorf("cannot convert %q to an integer id", s)
+	}
+	return json.RawMessage(s), nil
 }
 
 // validateMachineType validates that the machine_type value is supported by the VergeOS API

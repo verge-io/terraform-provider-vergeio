@@ -9,32 +9,38 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"strconv"
 
 	"terraform-provider-vergeio/internal/provider/vergeio"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
 )
 
-// User API endpoint.
-const (
-	UserEndpoint = vergeio.APIEndpoint + "/users"
-)
+// User API endpoint - DEPRECATED: SDK handles endpoints internally
+// Keeping temporarily for reference during transition
 
 // IClient interface.
 var _ vergeio.IClient = &UserApi{}
 
 func NewUserApi(c *vergeio.Client) *UserApi {
+	sdk, _ := vergeos.NewClient(
+		vergeos.WithBaseURL(vergeio.EnsureHTTPSPrefix(c.Host)),
+		vergeos.WithCredentials(c.Username, c.Password),
+		vergeos.WithInsecureTLS(c.Insecure),
+	)
 	return &UserApi{
 		name:   "User Api",
 		client: c,
+		sdk:    sdk,
 	}
 }
 
 type UserApi struct {
 	name   string
 	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *UserApi) Name() string {
@@ -77,27 +83,19 @@ func (nc *UserApi) createUser(ctx context.Context, data *UserResourceModel) erro
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// Time to call the API
-	apiResp, err := nc.client.Post(UserEndpoint, encodedBuffer)
-	// error checking
+	// Time to call the SDK API - convert to SDK request
+	var req vergeos.UserCreateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	user, err := nc.sdk.Users.Create(ctx, &req)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 201 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	// Decode the API response
-	var userAPIResp vergeio.VergeResponse
-	if err := json.NewDecoder(apiResp.Body).Decode(&userAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
-	}
-
-	// Fill the data.id with the new user id from the API
-	data.Id = types.StringValue(userAPIResp.Key)
+	// Fill the data.id with the new user key from the API  
+	data.Id = types.StringValue(fmt.Sprintf("%d", user.Key.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a user with Id %v", data.Id.ValueString()))
 
 	return nil
@@ -122,31 +120,31 @@ func (nc *UserApi) updateUser(ctx context.Context, planData *UserResourceModel, 
 	// Encode the API data
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
-		return errors.New("invalid format received for VM Item")
+		return errors.New("invalid format received for User Item")
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Encoded buffer for update user %v", encodedBuffer.String()))
 
-	// Time to call the API
-	apiResp, err := nc.client.Put(fmt.Sprintf("%s/%s",
-		UserEndpoint,
-		url.PathEscape(stateData.Id.ValueString()),
-	), encodedBuffer)
-	// error checking
+	// Convert to SDK request
+	var req vergeos.UserUpdateRequest
+	if err := json.Unmarshal(encodedBuffer.Bytes(), &req); err != nil {
+		return fmt.Errorf("failed to convert API data: %v", err)
+	}
+
+	// Parse user ID
+	userIDInt, err := strconv.Atoi(stateData.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid user ID format: %v", err)
+	}
+
+	// Call SDK API
+	_, err = nc.sdk.Users.Update(ctx, userIDInt, &req)
 	if err != nil {
 		return err
-	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
-
-	defer apiResp.Body.Close()
 
 	return nil
 }
@@ -156,33 +154,34 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 
 	tflog.Debug(ctx, "Reading the user data")
 
-	// Call the Get API with the user id and get the fields we need
-	// most fields are not returned by default
-	apiResp, err := nc.client.Get(fmt.Sprintf("%s/%s",
-		UserEndpoint,
-		url.PathEscape(data.Id.ValueString()),
-	), &vergeio.Options{Fields: "$key,auth_source,name,remote_name,enabled,displayname,email,type,change_password"})
+	// Parse user ID
+	userIDInt, err := strconv.Atoi(data.Id.ValueString())
+	if err != nil {
+		return fmt.Errorf("invalid user ID format: %v", err)
+	}
 
-	// error checking
+	// Call SDK API to get specific user
+	user, err := nc.sdk.Users.Get(ctx, userIDInt)
 	if err != nil {
 		return err
 	}
-	if apiResp == nil {
-		return errors.New("missing response from the API")
-	}
-	if apiResp.StatusCode != 200 {
-		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
-	}
 
-	tflog.Debug(ctx, fmt.Sprintf("read the resource %v", apiResp.Body))
+	tflog.Debug(ctx, fmt.Sprintf("Read the user %v", user))
 
-	// Decode the API response
-	var userAPIResp UserAPIResourceModel
-	if err := json.NewDecoder(apiResp.Body).Decode(&userAPIResp); err != nil {
-		return errors.New("invalid format received for Item")
+	// Convert SDK response to API model for field mapping consistency
+	userAPIResp := UserAPIResourceModel{
+		Name:           user.Name,
+		Enabled:        user.Enabled,
+		DisplayName:    user.DisplayName,
+		Email:          user.Email,
+		AuthSource:     int32(user.AuthSource),
+		RemoteName:     user.RemoteName,
+		Type:           user.Type,
+		ChangePassword: user.ChangePassword,
 	}
 
 	// save into the resource model
+	data.Id = types.StringValue(fmt.Sprintf("%d", user.Key.Int()))
 	data.Name = types.StringValue(userAPIResp.Name)
 	data.Enabled = types.BoolValue(userAPIResp.Enabled)
 	data.DisplayName = types.StringValue(userAPIResp.DisplayName)
@@ -190,8 +189,13 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 	data.AuthSource = types.Int32Value(userAPIResp.AuthSource)
 	data.RemoteName = types.StringValue(userAPIResp.RemoteName)
 	data.Type = types.StringValue(userAPIResp.Type)
-	// data.Password = types.StringValue(userAPIResp.Password)
-	// data.ChangePassword = types.BoolValue(userAPIResp.ChangePassword)
+	// Password not returned for security reasons - preserve planned value if it exists
+	if data.Password.IsNull() || data.Password.IsUnknown() {
+		// For new resources, password is not readable from API
+		data.Password = types.StringNull()
+	}
+	// ChangePassword defaults to false after creation since API doesn't return this field
+	data.ChangePassword = types.BoolValue(false)
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
@@ -203,17 +207,19 @@ func (nc *UserApi) deleteUser(ctx context.Context, data *UserResourceModel) erro
 
 	tflog.Debug(ctx, "Deleting the user data")
 
-	// Call the Get API with the user id and Proceed with user deletion
-	_, err := nc.client.Delete(fmt.Sprintf("%s/%s",
-		UserEndpoint,
-		url.PathEscape(data.Id.ValueString())))
-
-	// error checking
+	// Parse user ID
+	userIDInt, err := strconv.Atoi(data.Id.ValueString())
 	if err != nil {
-		return errors.New("Error deleting the user: " + err.Error())
+		return fmt.Errorf("invalid user ID format: %v", err)
 	}
 
-	tflog.Debug(ctx, "Data was successfully converted to a resource")
+	// Call SDK API to delete user
+	err = nc.sdk.Users.Delete(ctx, userIDInt)
+	if err != nil {
+		return fmt.Errorf("error deleting the user: %w", err)
+	}
+
+	tflog.Debug(ctx, "User was successfully deleted")
 
 	return nil
 }
