@@ -24,12 +24,11 @@ resource "vergeio_vm" "web-server" {
     orderid        = 0
   }
 
-  # NIC
+  # NIC. Omit enabled to leave the VergeOS default, which is enabled.
   vergeio_nic {
     name             = "Web Server Network"
     description      = "NIC for Web Server"
     interface        = "virtio"
-    enabled          = true
     assign_ipaddress = true
   }
 }

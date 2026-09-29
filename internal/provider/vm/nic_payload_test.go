@@ -10,9 +10,10 @@ import (
 )
 
 // TestNICCreatePayloadOmitsUnsetFields locks the contract behind the disabled
-// NIC bug: a create built from a plan that does not set optional attributes
-// must not send those fields. ValueBool() on an unset bool is false, and a
-// JSON bool without omitempty would override the platform default.
+// NIC bug (issue 52): a create built from a plan that does not set optional
+// attributes must not send those fields. ValueBool() on an unset bool is
+// false, and a JSON bool without omitempty would override the platform
+// default. An omitted enabled leaves VergeOS's default, which is enabled.
 func TestNICCreatePayloadOmitsUnsetFields(t *testing.T) {
 	data := &nicResourceModel{
 		Name:      types.StringValue("nic0"),

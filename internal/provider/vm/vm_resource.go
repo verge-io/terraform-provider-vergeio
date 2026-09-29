@@ -451,8 +451,9 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Computed: true,
 						},
 						"enabled": schema.BoolAttribute{
-							Optional: true,
-							Computed: true,
+							MarkdownDescription: "Whether the NIC is enabled. Omit this attribute to leave the VergeOS default, which is enabled. Set false to create the NIC disabled.",
+							Optional:            true,
+							Computed:            true,
 						},
 						"vnet": schema.Int32Attribute{
 							Optional: true,

@@ -73,12 +73,11 @@ resource "vergeio_vm" "web-server" {
     description    = "EFI Disk"
     media          = "efidisk"
   }   
-  # NIC
+  # NIC. Omit enabled to leave the VergeOS default, which is enabled.
   vergeio_nic {
     name             = "Web Server Network"
     description      = "NIC for Web Server"
     interface        = "virtio"
-    enabled          = true
     vnet             = 6
     assign_ipaddress = true
   }
@@ -350,7 +349,7 @@ Optional:
 - `name` (String) - NIC name. Renaming the NIC updates it in place and keeps its id and MAC address.
 - `id` (String) - NIC id assigned by VergeOS. A rename keeps the same id. Changing an id that is set in configuration replaces the VM.
 - `description` (String)
-- `enabled` (Boolean) - Default = True
+- `enabled` (Boolean) - Omit this attribute to leave the VergeOS default, which is enabled. Set false to create the NIC disabled.
 - `interface` (String)
   - `virtio`  (Virtio, **Default**)
   - `e1000`   (Intel)
