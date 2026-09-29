@@ -167,8 +167,9 @@ func testAccCheckUserDestroy(s *terraform.State) error {
 }
 
 // testAccCheckUserLogin posts {"login","password"} to /api/sys/tokens with no
-// Authorization header. 200 with a $key means that password is the stored
-// credential. 401 means it is not.
+// Authorization header. A 2xx response with a $key means that password is the
+// stored credential. VergeOS returns 201 Created for a new token. Any other
+// status means the password was rejected.
 //
 // GET /api/v4 with basic auth is not used. On the lab, that check still
 // returned 200 for the password from the previous step after a rotation,
@@ -224,25 +225,34 @@ func testAccUserLoginRejected(username, password string) (bool, int, error) {
 		return false, resp.StatusCode, err
 	}
 
-	switch resp.StatusCode {
-	case http.StatusUnauthorized:
-		return true, resp.StatusCode, nil
-	case http.StatusOK:
-		var parsed struct {
-			Key any `json:"$key"`
-		}
-		if err := json.Unmarshal(respBody, &parsed); err != nil {
-			return false, resp.StatusCode, fmt.Errorf("login as %s: status 200 without a token", username)
-		}
-		token, ok := tokenKey(parsed.Key)
-		if !ok {
-			return false, resp.StatusCode, fmt.Errorf("login as %s: status 200 without a token", username)
-		}
-		testAccDeleteLoginToken(client, endpoint, token)
-		return false, resp.StatusCode, nil
-	default:
-		return false, resp.StatusCode, fmt.Errorf("login as %s: unexpected status %d", username, resp.StatusCode)
+	rejected, token, err := tokenLoginOutcome(resp.StatusCode, respBody)
+	if err != nil {
+		return false, resp.StatusCode, fmt.Errorf("login as %s: %w", username, err)
 	}
+	if !rejected {
+		testAccDeleteLoginToken(client, endpoint, token)
+	}
+	return rejected, resp.StatusCode, nil
+}
+
+// tokenLoginOutcome classifies a POST /api/sys/tokens response.
+// Any 2xx with a $key is a successful login. VergeOS uses 201 Created.
+// Every other status is a rejected login.
+func tokenLoginOutcome(status int, body []byte) (bool, string, error) {
+	if status < 200 || status >= 300 {
+		return true, "", nil
+	}
+	var parsed struct {
+		Key any `json:"$key"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false, "", fmt.Errorf("status %d without a token", status)
+	}
+	token, ok := tokenKey(parsed.Key)
+	if !ok {
+		return false, "", fmt.Errorf("status %d without a token", status)
+	}
+	return false, token, nil
 }
 
 func tokenKey(v any) (string, bool) {
