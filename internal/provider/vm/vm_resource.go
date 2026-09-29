@@ -891,8 +891,8 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	// Write logs using the tflog package
-	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
+	// Log the id only. The model includes console_pass.
+	tflog.Debug(ctx, fmt.Sprintf("created a vm resource %s", data.Id.ValueString()))
 
 	// Create disks
 	if data.Disks != nil {
@@ -1163,7 +1163,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Updateing the VM with the plan data %v", planData))
+	tflog.Debug(ctx, fmt.Sprintf("Updating VM %s", planData.Name.ValueString()))
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
@@ -1172,7 +1172,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Updateing the VM with the state data %v", stateData))
+	tflog.Debug(ctx, fmt.Sprintf("Updating VM state %s", stateData.Id.ValueString()))
 
 	// Update the VM
 	if updateError := r.vmApi.UpdateVM(ctx, &planData, &stateData); updateError != nil {
@@ -1265,7 +1265,7 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 		return
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("Deleting VM %v", data))
+	tflog.Debug(ctx, fmt.Sprintf("Deleting VM %s", data.Id.ValueString()))
 
 	// make sure the VM is in a power state that can be deleted
 	var currentPowerState *bool
