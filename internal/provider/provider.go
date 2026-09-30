@@ -13,6 +13,7 @@ import (
 	"terraform-provider-vergeio/internal/services/storage"
 	"terraform-provider-vergeio/internal/services/system"
 	"terraform-provider-vergeio/internal/services/tags"
+	"terraform-provider-vergeio/internal/services/tenant"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/function"
@@ -123,6 +124,9 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		identity.NewUserResource,
 		identity.NewMemberResource,
 		tags.NewTagMemberResource,
+		tenant.NewTenantResource,
+		tenant.NewTenantNodeResource,
+		tenant.NewTenantStorageResource,
 	}
 }
 
@@ -138,6 +142,7 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		compute.NewCloudinitFileDataSource,
 		system.NewResourceGroupsDataSource,
 		tags.NewTagsDataSource,
+		tenant.NewTenantsDataSource,
 	}
 }
 
