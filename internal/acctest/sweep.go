@@ -12,7 +12,9 @@ import (
 
 // Sweep deletes acceptance-test leftovers whose names start with ResourcePrefix.
 // Tag memberships and group memberships are removed when they point at those
-// objects. Objects outside the prefix are left alone.
+// objects. A tag category with the prefix is deleted last. VergeOS then
+// deletes every tag in that category and every assignment of those tags.
+// Objects outside the prefix are left alone.
 func Sweep(ctx context.Context) error {
 	client, err := SDKClient()
 	if err != nil {
@@ -155,6 +157,7 @@ func Sweep(ctx context.Context) error {
 	}
 
 	record(sweepTenants(ctx, client))
+	record(sweepTags(ctx, client))
 
 	if len(errs) > 0 {
 		return fmt.Errorf("sweep deleted with %d error(s): %w", len(errs), errorsJoin(errs))
@@ -225,8 +228,118 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 		}
 	}
 
+	tags, err := client.Tags.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		tags = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tags: %w", err)
+	}
+	for _, tag := range tags {
+		if HasPrefix(tag.Name) {
+			left = append(left, fmt.Sprintf("tag %s (%d)", tag.Name, tag.Key.Int()))
+		}
+	}
+
+	categories, err := client.TagCategories.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		categories = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tag categories: %w", err)
+	}
+	for _, category := range categories {
+		if HasPrefix(category.Name) {
+			left = append(left, fmt.Sprintf("tag category %s (%d)", category.Name, category.Key.Int()))
+		}
+	}
+
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
+	}
+	return nil
+}
+
+// sweepTags removes prefixed tags and tag categories. Members of those tags
+// are removed first. Deleting a prefixed category cascades to any tag still
+// in it and to every assignment of those tags.
+func sweepTags(ctx context.Context, client *vergeos.Client) error {
+	categories, err := client.TagCategories.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tag categories endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tag categories: %w", err)
+	}
+	tags, err := client.Tags.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tags endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tags: %w", err)
+	}
+
+	categoryIDs := map[int]string{}
+	for _, category := range categories {
+		if !HasPrefix(category.Name) {
+			continue
+		}
+		categoryIDs[category.Key.Int()] = category.Name
+	}
+	ownedTags := map[int]string{}
+	prefixedTags := map[int]string{}
+	for _, tag := range tags {
+		id := tag.Key.Int()
+		if HasPrefix(tag.Name) {
+			prefixedTags[id] = tag.Name
+			ownedTags[id] = tag.Name
+		}
+		if _, ok := categoryIDs[tag.Category.Int()]; ok {
+			ownedTags[id] = tag.Name
+		}
+	}
+	if len(categoryIDs) == 0 && len(prefixedTags) == 0 {
+		return nil
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	tagMembers, err := client.TagMembers.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tag members endpoint unavailable, skipping")
+		tagMembers = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tag members: %w", err)
+	}
+	for _, tagMember := range tagMembers {
+		if _, ok := ownedTags[tagMember.Tag.Int()]; !ok {
+			continue
+		}
+		id := tagMember.Key.Int()
+		log.Printf("[SWEEP] deleting tag member %d (tag %d)", id, tagMember.Tag.Int())
+		record(ignoreNotFound(client.TagMembers.Delete(ctx, id), "tag member", id))
+	}
+	for id, name := range prefixedTags {
+		log.Printf("[SWEEP] deleting tag %d (%s)", id, name)
+		record(ignoreNotFound(client.Tags.Delete(ctx, id), "tag", id))
+	}
+	for id, name := range categoryIDs {
+		log.Printf("[SWEEP] deleting tag category %d (%s); this also deletes its tags and their assignments", id, name)
+		record(ignoreNotFound(client.TagCategories.Delete(ctx, id), "tag category", id))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tags: %w", errorsJoin(errs))
 	}
 	return nil
 }

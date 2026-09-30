@@ -125,6 +125,8 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		identity.NewGroupResource,
 		identity.NewMemberResource,
 		identity.NewPermissionResource,
+		tags.NewTagCategoryResource,
+		tags.NewTagResource,
 		tags.NewTagMemberResource,
 		tenant.NewTenantResource,
 		tenant.NewTenantNodeResource,
