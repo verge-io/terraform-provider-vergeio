@@ -20,6 +20,7 @@ import (
 // An empty nested list decodes to a nil slice. Update has to sync those
 // slices anyway, or the API is left unchanged and the next plan repeats.
 func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
+	shortenPowerWaits(t)
 	const vmJSON = `{"$key":7,"machine":1,"name":"vm","cpu_cores":1,"ram":512,"enabled":true,"powerstate":false}`
 	const driveJSON = `{"$key":"46","machine":1,"name":"os","interface":"virtio","disksize":1073741824,"enabled":true,"powerstate":"offline"}`
 	const nicJSON = `{"machine":1,"name":"lan","interface":"virtio","enabled":true,"vnet":6,"macaddress":"52:54:00:aa:bb:cc"}`
@@ -207,6 +208,7 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 // a stopped VM and adds a drive and a NIC. The devices have to be created
 // before poweron, or the guest boots without them and they stay offline.
 func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
+	shortenPowerWaits(t)
 	const stoppedVM = `{"$key":7,"machine":1,"name":"vm","cpu_cores":1,"ram":512,"enabled":true,"powerstate":false}`
 	const runningVM = `{"$key":7,"machine":1,"name":"vm","cpu_cores":1,"ram":512,"enabled":true,"powerstate":true}`
 	const driveJSON = `{"$key":"99","machine":1,"name":"data","interface":"virtio","disksize":1073741824,"enabled":true}`

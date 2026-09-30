@@ -214,6 +214,10 @@ func TestPowerStatusAcceptsAliasAndFullVM(t *testing.T) {
 	if !ok || !gotRun || gotStatus != "running" {
 		t.Fatalf("nested status = %v %q ok=%v", gotRun, gotStatus, ok)
 	}
+	gotRun, gotStatus, ok = (vmPowerStatusBody{PowerState: &running, Machine: []byte(`{"status":{"status":"stopped","running":false}}`)}).powerStatus()
+	if !ok || gotRun || gotStatus != "stopped" {
+		t.Fatalf("stale powerstate column = %v %q ok=%v", gotRun, gotStatus, ok)
+	}
 	if _, _, ok = (vmPowerStatusBody{}).powerStatus(); ok {
 		t.Fatal("empty payload should not report a power state")
 	}
@@ -407,6 +411,9 @@ func TestGracefulPowerOffPostsPoweroffAndPolls(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
 			statusReads++
 			payload := `{"status":"running","running":true}`
@@ -445,6 +452,9 @@ func TestGracefulPowerOffTimeoutDoesNotKill(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"running","running":true}`))
@@ -494,6 +504,9 @@ func TestGracefulPowerOffForcePostsKill(t *testing.T) {
 		mu.Unlock()
 
 		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
 			payload := `{"status":"running","running":true}`
 			if kills > 0 {
@@ -526,4 +539,22 @@ func shortenShutdownPoll(t *testing.T) {
 	orig := gracefulShutdownInterval
 	t.Cleanup(func() { gracefulShutdownInterval = orig })
 	gracefulShutdownInterval = 0
+}
+
+// shortenPowerWaits removes the pauses around VM power changes.
+// The tests that call it are not parallel: the durations are package state.
+func shortenPowerWaits(t *testing.T) {
+	t.Helper()
+	shortenShutdownPoll(t)
+	origInterval := powerOnInterval
+	origSettle := powerOnSettle
+	origUpdate := vmUpdateSettle
+	t.Cleanup(func() {
+		powerOnInterval = origInterval
+		powerOnSettle = origSettle
+		vmUpdateSettle = origUpdate
+	})
+	powerOnInterval = 0
+	powerOnSettle = 0
+	vmUpdateSettle = 0
 }
