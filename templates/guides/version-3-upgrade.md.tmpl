@@ -31,7 +31,7 @@ The 3.0 provider registers these objects:
 
 | Kind | Names |
 | --- | --- |
-| Resources | `vergeio_group`, `vergeio_member`, `vergeio_network`, `vergeio_permission`, `vergeio_tag`, `vergeio_tag_category`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_user`, `vergeio_vm`, `vergeio_vm_drive`, `vergeio_vm_nic` |
+| Resources | `vergeio_group`, `vergeio_member`, `vergeio_network`, `vergeio_permission`, `vergeio_snapshot_profile`, `vergeio_tag`, `vergeio_tag_category`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_user`, `vergeio_vm`, `vergeio_vm_drive`, `vergeio_vm_nic` |
 | Data sources | `vergeio_cloudinit_files`, `vergeio_clusters`, `vergeio_groups`, `vergeio_mediasources`, `vergeio_networks`, `vergeio_nodes`, `vergeio_resource_groups`, `vergeio_tags`, `vergeio_tenants`, `vergeio_users`, `vergeio_version`, `vergeio_vms` |
 
 Devices stay nested on `vergeio_vm`. Drives and NICs do not.
@@ -90,6 +90,8 @@ resource "vergeio_vm_drive" "data" {
 ```
 
 Outputs and modules that pass the VM data source `preferred_tier` or NIC `vnet` into a string argument need a number argument instead.
+
+`vergeio_vm.snapshot_profile` is the profile key. `vergeio_snapshot_profile` creates that profile. Set `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`.
 
 ## Drives and NICs
 

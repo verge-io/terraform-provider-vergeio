@@ -287,7 +287,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"snapshot_profile": schema.Int32Attribute{
-				MarkdownDescription: "Snapshot profile",
+				MarkdownDescription: "Key of a snapshot profile. Set this to tonumber(vergeio_snapshot_profile.example.id). Omit to leave the current profile unchanged.",
 				Optional:            true,
 				Computed:            true,
 			},

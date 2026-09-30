@@ -143,6 +143,9 @@ func Sweep(ctx context.Context) error {
 		log.Printf("[SWEEP] deleting vm %d (%s)", id, name)
 		record(deleteVM(ctx, client, id))
 	}
+	// Profiles are removed after VMs. A VM that still references a profile
+	// can make the profile delete fail.
+	record(sweepSnapshotProfiles(ctx, client))
 	for id, name := range networkIDs {
 		log.Printf("[SWEEP] deleting network %d (%s)", id, name)
 		record(deleteNetwork(ctx, client, id))
@@ -228,6 +231,20 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 		}
 	}
 
+	profiles, err := client.SnapshotProfiles.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		profiles = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify snapshot profiles: %w", err)
+	}
+	for _, profile := range profiles {
+		if HasPrefix(profile.Name) {
+			left = append(left, fmt.Sprintf("snapshot profile %s (%d)", profile.Name, profile.Key.Int()))
+		}
+	}
+
 	tags, err := client.Tags.List(ctx)
 	if vergeos.IsNotFoundError(err) {
 		tags = nil
@@ -258,6 +275,57 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
+	}
+	return nil
+}
+
+// sweepSnapshotProfiles removes prefixed snapshot profiles. Periods are
+// deleted first. VMs that reference a profile are removed earlier in Sweep.
+func sweepSnapshotProfiles(ctx context.Context, client *vergeos.Client) error {
+	profiles, err := client.SnapshotProfiles.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] snapshot profiles endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list snapshot profiles: %w", err)
+	}
+	ids := map[int]string{}
+	for _, profile := range profiles {
+		if !HasPrefix(profile.Name) {
+			continue
+		}
+		ids[profile.Key.Int()] = profile.Name
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for id, name := range ids {
+		periods, err := client.SnapshotProfilePeriods.ListByProfile(ctx, id)
+		if vergeos.IsNotFoundError(err) {
+			periods = nil
+			err = nil
+		}
+		if err != nil {
+			return fmt.Errorf("list snapshot profile periods for %d: %w", id, err)
+		}
+		for _, period := range periods {
+			periodID := period.Key.Int()
+			log.Printf("[SWEEP] deleting snapshot profile period %d (%s)", periodID, period.Name)
+			record(ignoreNotFound(client.SnapshotProfilePeriods.Delete(ctx, periodID), "snapshot profile period", periodID))
+		}
+		log.Printf("[SWEEP] deleting snapshot profile %d (%s)", id, name)
+		record(ignoreNotFound(client.SnapshotProfiles.Delete(ctx, id), "snapshot profile", id))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep snapshot profiles: %w", errorsJoin(errs))
 	}
 	return nil
 }

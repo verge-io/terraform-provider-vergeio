@@ -10,6 +10,7 @@ import (
 	"terraform-provider-vergeio/internal/services/compute"
 	"terraform-provider-vergeio/internal/services/identity"
 	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/snapshot"
 	"terraform-provider-vergeio/internal/services/storage"
 	"terraform-provider-vergeio/internal/services/system"
 	"terraform-provider-vergeio/internal/services/tags"
@@ -125,6 +126,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		identity.NewGroupResource,
 		identity.NewMemberResource,
 		identity.NewPermissionResource,
+		snapshot.NewSnapshotProfileResource,
 		tags.NewTagCategoryResource,
 		tags.NewTagResource,
 		tags.NewTagMemberResource,
