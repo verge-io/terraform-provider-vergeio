@@ -26,18 +26,20 @@ type recordedBody struct {
 type fakeVerge struct {
 	t *testing.T
 
-	mu        sync.Mutex
-	next      int
-	uiIP      string
-	holdPower bool
-	tenants   map[int]map[string]any
-	status    map[int]map[string]any
-	addresses map[int]map[string]any
-	nodes     map[int]map[string]any
-	storage   map[int]map[string]any
-	calls     []string
-	bodies    []recordedBody
-	actions   []map[string]any
+	mu            sync.Mutex
+	next          int
+	uiIP          string
+	holdPower     bool
+	tenantGets    int
+	failTenantGet int
+	tenants       map[int]map[string]any
+	status        map[int]map[string]any
+	addresses     map[int]map[string]any
+	nodes         map[int]map[string]any
+	storage       map[int]map[string]any
+	calls         []string
+	bodies        []recordedBody
+	actions       []map[string]any
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -217,6 +219,15 @@ func (f *fakeVerge) serveTenants(w http.ResponseWriter, r *http.Request, id int,
 	case r.Method == http.MethodGet && id == 0:
 		writeJSON(f.t, w, http.StatusOK, f.filterMaps(f.tenantSlice(), r.URL.Query().Get("filter")))
 	case r.Method == http.MethodGet && id > 0:
+		// Create reads the new tenant back. failTenantGet is how many of
+		// those reads should succeed before a later provider read fails.
+		if f.failTenantGet > 0 {
+			f.tenantGets++
+			if f.tenantGets > f.failTenantGet {
+				writeJSON(f.t, w, http.StatusInternalServerError, map[string]string{"err": "read failed"})
+				return
+			}
+		}
 		obj, ok := f.tenants[id]
 		if !ok {
 			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})

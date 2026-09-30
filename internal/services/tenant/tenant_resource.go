@@ -6,6 +6,7 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"terraform-provider-vergeio/internal/client"
 
@@ -138,7 +139,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"change_password": schema.BoolAttribute{
-				MarkdownDescription: "Require a password change on first login. VergeOS accepts this only when the tenant is created, so changing it replaces the tenant.",
+				MarkdownDescription: "Require a password change on first login. Sent only when the tenant is created. VergeOS does not return it, so Terraform keeps the configured value. Changing a configured value replaces the tenant.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
@@ -266,11 +267,27 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Error creating tenant", err.Error())
 		return
 	}
+	// The tenant row exists. Keep its id in the response before power and
+	// read, so a later error still leaves the tenant in state.
+	r.rememberTenant(ctx, resp, &data)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		resp.Diagnostics.AddError("Error creating tenant", err.Error())
+		return
+	}
+	if err := r.api.reconcilePower(ctx, id, data.PowerState, data.PreferredNode); err != nil {
+		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
+		return
+	}
 	if err := r.api.readTenant(ctx, &data); err != nil {
 		resp.Diagnostics.AddError("Error reading tenant", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	stored := tenantForState(&data)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
 }
 
 func (r *TenantResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -301,13 +318,15 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Error updating tenant", err.Error())
 		return
 	}
-	// readTenant leaves password and preferred_node alone. VergeOS does not
-	// return either value, so the plan values stay in state.
+	// readTenant leaves password, preferred_node, and change_password alone.
+	// VergeOS does not return the first two, and refreshing change_password
+	// would replace the tenant after the first-login flag clears.
 	if err := r.api.readTenant(ctx, &plan); err != nil {
 		resp.Diagnostics.AddError("Error reading tenant", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	stored := tenantForState(&plan)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
 }
 
 func (r *TenantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -325,4 +344,85 @@ func (r *TenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 
 func (r *TenantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+// rememberTenant writes the tenant id into the create response before power
+// and the follow-up read. Terraform keeps that state when a later step
+// returns an error, so the next apply updates the tenant instead of
+// creating a second one with the same name.
+func (r *TenantResource) rememberTenant(ctx context.Context, resp *resource.CreateResponse, data *TenantResourceModel) {
+	if !tenantIDSet(data) {
+		return
+	}
+	stored := tenantForState(data)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	tflog.Debug(ctx, fmt.Sprintf("stored tenant %s in state before power and read", data.Id.ValueString()))
+}
+
+func tenantIDSet(data *TenantResourceModel) bool {
+	return data != nil && !data.Id.IsNull() && !data.Id.IsUnknown() && strings.TrimSpace(data.Id.ValueString()) != ""
+}
+
+// tenantForState copies the model and drops unknown values. State cannot
+// store them. Config-only attributes such as change_password stay as
+// configured when they are known, and become null when the configuration
+// omitted them.
+func tenantForState(data *TenantResourceModel) TenantResourceModel {
+	stored := *data
+	stored.Id = knownString(data.Id)
+	stored.Name = knownString(data.Name)
+	stored.Description = knownString(data.Description)
+	stored.Password = knownString(data.Password)
+	stored.URL = knownString(data.URL)
+	stored.OIDCApplication = knownInt32(data.OIDCApplication)
+	stored.ExposeCloudSnapshots = knownBool(data.ExposeCloudSnapshots)
+	stored.AllowBranding = knownBool(data.AllowBranding)
+	stored.ChangePassword = knownBool(data.ChangePassword)
+	stored.ThemeAccess = knownString(data.ThemeAccess)
+	stored.HelpURL = knownString(data.HelpURL)
+	stored.Note = knownString(data.Note)
+	stored.PowerState = knownBool(data.PowerState)
+	stored.PreferredNode = knownInt32(data.PreferredNode)
+	stored.UUID = knownString(data.UUID)
+	stored.VNet = knownInt32(data.VNet)
+	stored.UIAddressID = knownInt32(data.UIAddressID)
+	stored.UIAddress = knownString(data.UIAddress)
+	stored.Isolate = knownBool(data.Isolate)
+	stored.IsSnapshot = knownBool(data.IsSnapshot)
+	stored.Status = knownString(data.Status)
+	stored.State = knownString(data.State)
+	stored.Creator = knownString(data.Creator)
+	stored.Created = knownInt64(data.Created)
+	return stored
+}
+
+func knownString(v types.String) types.String {
+	if v.IsNull() || v.IsUnknown() {
+		return types.StringNull()
+	}
+	return v
+}
+
+func knownBool(v types.Bool) types.Bool {
+	if v.IsNull() || v.IsUnknown() {
+		return types.BoolNull()
+	}
+	return v
+}
+
+func knownInt32(v types.Int32) types.Int32 {
+	if v.IsNull() || v.IsUnknown() {
+		return types.Int32Null()
+	}
+	return v
+}
+
+func knownInt64(v types.Int64) types.Int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return types.Int64Null()
+	}
+	return v
 }

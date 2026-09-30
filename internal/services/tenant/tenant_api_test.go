@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -156,6 +157,9 @@ func TestCreateTenantPowersOnAndResolvesUIAddress(t *testing.T) {
 	if err := api.createTenant(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
+	if err := powerTenant(t, api, data); err != nil {
+		t.Fatal(err)
+	}
 	if err := api.readTenant(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +206,9 @@ func TestCreateTenantOffDoesNotPower(t *testing.T) {
 		PowerState: types.BoolValue(false),
 	}
 	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := powerTenant(t, api, data); err != nil {
 		t.Fatal(err)
 	}
 	if err := api.readTenant(context.Background(), data); err != nil {
@@ -273,6 +280,9 @@ func TestUpdateTenantPowerOff(t *testing.T) {
 	if err := api.createTenant(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
+	if err := powerTenant(t, api, state); err != nil {
+		t.Fatal(err)
+	}
 	if err := api.readTenant(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
@@ -298,6 +308,9 @@ func TestDeleteRunningTenantPowersOffFirst(t *testing.T) {
 		PowerState: types.BoolValue(true),
 	}
 	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := powerTenant(t, api, data); err != nil {
 		t.Fatal(err)
 	}
 	if err := api.deleteTenant(context.Background(), data); err != nil {
@@ -349,7 +362,10 @@ func TestPowerTimeoutLeavesTenantImportable(t *testing.T) {
 		Name:       types.StringValue("customer-a"),
 		PowerState: types.BoolValue(true),
 	}
-	err := api.createTenant(context.Background(), data)
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	err := powerTenant(t, api, data)
 	if err == nil || !containsAll(t, err.Error(), "timed out", "can be imported") {
 		t.Fatalf("err = %v", err)
 	}
@@ -467,6 +483,129 @@ func TestTenantsDataSourceListsAndFilters(t *testing.T) {
 	if len(miss.Tenants) != 0 {
 		t.Fatalf("missing filter returned %#v", miss.Tenants)
 	}
+}
+
+func TestCreateKeepsIDWhenPowerFails(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.holdPower = true
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("Tf-acc-tenant-password"),
+		PowerState: types.BoolValue(true),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected power to fail")
+	}
+	if !containsAll(t, diagnosticText(resp.Diagnostics), "was created", "timed out") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	if id := tenantStateID(t, ctx, resp.State); id == "" {
+		t.Fatal("power failure dropped the tenant id")
+	}
+}
+
+func TestCreateKeepsIDWhenReadFails(t *testing.T) {
+	fake := newFake(t)
+	fake.failTenantGet = 1
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the follow-up read to fail")
+	}
+	if !strings.Contains(diagnosticText(resp.Diagnostics), "Error reading tenant") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	if id := tenantStateID(t, ctx, resp.State); id == "" {
+		t.Fatal("read failure dropped the tenant id")
+	}
+}
+
+func TestReadKeepsConfiguredChangePassword(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:           types.StringValue("customer-a"),
+		Password:       types.StringValue("secret-pass"),
+		ChangePassword: types.BoolValue(true),
+		PowerState:     types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.tenants[id]["change_password"] = false
+	fake.mu.Unlock()
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.ChangePassword.IsNull() || !data.ChangePassword.ValueBool() {
+		t.Fatalf("change_password refreshed from API: %#v", data.ChangePassword)
+	}
+	if data.Password.ValueString() != "secret-pass" {
+		t.Fatalf("password = %#v", data.Password)
+	}
+}
+
+func powerTenant(t *testing.T, api *API, data *TenantResourceModel) error {
+	t.Helper()
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		return err
+	}
+	return api.reconcilePower(context.Background(), id, data.PowerState, data.PreferredNode)
+}
+
+func createTenantResource(t *testing.T, ctx context.Context, fake *fakeVerge, planModel TenantResourceModel) *resource.CreateResponse {
+	t.Helper()
+	r := &TenantResource{api: fake.api(t)}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, &planModel); diags.HasError() {
+		t.Fatalf("plan: %v", diags)
+	}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, resp)
+	return resp
+}
+
+func tenantStateID(t *testing.T, ctx context.Context, state tfsdk.State) string {
+	t.Helper()
+	if state.Raw.Type() == nil || state.Raw.IsNull() {
+		return ""
+	}
+	var got TenantResourceModel
+	if diags := state.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+	return got.Id.ValueString()
+}
+
+func diagnosticText(diags diag.Diagnostics) string {
+	var b strings.Builder
+	for _, d := range diags {
+		b.WriteString(d.Summary())
+		b.WriteString(" ")
+		b.WriteString(d.Detail())
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func containsAll(t *testing.T, s string, parts ...string) bool {

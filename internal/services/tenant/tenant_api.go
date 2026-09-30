@@ -82,9 +82,6 @@ func (a *API) createTenant(ctx context.Context, data *TenantResourceModel) error
 	id := created.Key.Int()
 	data.Id = idString(id)
 	tflog.Debug(ctx, fmt.Sprintf("created tenant %d", id))
-	if err := a.reconcilePower(ctx, id, data.PowerState, data.PreferredNode); err != nil {
-		return fmt.Errorf("tenant %d was created: %w", id, err)
-	}
 	return nil
 }
 
@@ -124,7 +121,8 @@ func assignTenantResource(data *TenantResourceModel, tenant *vergeos.Tenant) {
 	data.OIDCApplication = flexPtr(tenant.OIDCApplication)
 	data.ExposeCloudSnapshots = types.BoolValue(tenant.ExposeCloudSnapshots)
 	data.AllowBranding = types.BoolValue(tenant.AllowBranding)
-	data.ChangePassword = types.BoolValue(tenant.ChangePassword)
+	// change_password is create-only. VergeOS clears it after first login.
+	// Refreshing that false would disagree with a configured true and replace the tenant.
 	data.ThemeAccess = enumString(tenant.ThemeAccess)
 	data.HelpURL = types.StringValue(tenant.HelpURL)
 	data.Note = types.StringValue(tenant.Note)

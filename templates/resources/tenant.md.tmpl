@@ -12,7 +12,7 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 
 `ui_address` is the IP of the tenant UI, resolved from the `ui_address` row (`ui_address_id`). It stays empty until VergeOS assigns that address. Use it as the `host` of a second Terraform configuration that manages the inside of the tenant. See the [tenants guide](../guides/tenants.html).
 
-`password` is the tenant admin user's password. VergeOS does not return it. Terraform keeps the configured value in state. `preferred_node` is sent only when `powerstate` changes to true. VergeOS does not return it either.
+`password` is the tenant admin user's password. VergeOS does not return it. Terraform keeps the configured value in state. `change_password` is sent only when the tenant is created and is kept the same way, so a later refresh does not replace the tenant when VergeOS clears the first-login flag. `preferred_node` is sent only when `powerstate` changes to true. VergeOS does not return it either.
 
 Network blocks (`vnet_cidrs`) and external IPs are not resources in this provider. govergeos has no `vnet_cidrs` service and no helper that assigns an external IP to a tenant ([govergeos#55](https://github.com/verge-io/govergeos/issues/55)). Assigning either in the VergeOS UI can stage firewall changes and leave `need_fw_apply` set on the parent external network. Apply that network's firewall, with `vergeio_network_rules` or the UI, before treating the address as live. This resource does not see or clear that flag.
 
@@ -30,7 +30,7 @@ Network blocks (`vnet_cidrs`) and external IPs are not resources in this provide
 ### Optional
 
 - `allow_branding` (Boolean) Allow the tenant to customize colors and logo. Omit to leave the current value unchanged.
-- `change_password` (Boolean) Require a password change on first login. VergeOS accepts this only when the tenant is created, so changing it replaces the tenant.
+- `change_password` (Boolean) Require a password change on first login. Sent only when the tenant is created. VergeOS does not return it, so Terraform keeps the configured value. Changing a configured value replaces the tenant.
 - `description` (String) Tenant description. Omit to leave an existing description unchanged.
 - `expose_cloud_snapshots` (Boolean) Allow the tenant to request system cloud snapshots.
 - `help_url` (String) Custom help URL. `default` uses the product default. A blank value disables the help link.
