@@ -124,7 +124,7 @@ func testAccTenantConfig(tenantName, nodeName string, tier int, description stri
 resource "vergeio_tenant" "test" {
   name        = %q
   description = %q
-  password    = "tf-acc-tenant-password"
+  password    = "Tf-acc-tenant-password"
   powerstate  = false
 }
 
