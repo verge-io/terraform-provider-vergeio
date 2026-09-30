@@ -31,6 +31,10 @@ func Sweep(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("list users: %w", err)
 	}
+	groups, err := client.Groups.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list groups: %w", err)
+	}
 	files, err := client.CloudInitFiles.List(ctx)
 	if err != nil {
 		return fmt.Errorf("list cloud-init files: %w", err)
@@ -70,6 +74,18 @@ func Sweep(ctx context.Context) error {
 		}
 		userIDs[user.Key.Int()] = user.Name
 	}
+	groupIDs := map[int]string{}
+	for _, group := range groups {
+		if !HasPrefix(group.Name) {
+			continue
+		}
+		groupIDs[group.ID.Int()] = group.Name
+	}
+
+	permissions, err := client.Permissions.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list permissions: %w", err)
+	}
 
 	var errs []error
 	record := func(err error) {
@@ -78,8 +94,17 @@ func Sweep(ctx context.Context) error {
 		}
 	}
 
+	for _, perm := range permissions {
+		if !permissionBelongsToSweep(perm, userIDs, groupIDs) {
+			continue
+		}
+		id := perm.Key.Int()
+		log.Printf("[SWEEP] deleting permission %d (identity %d %s)", id, perm.Identity.Int(), perm.Table)
+		record(ignoreNotFound(client.Permissions.Delete(ctx, id), "permission", id))
+	}
+
 	for _, tagMember := range tagMembers {
-		if !referencesSweptObject(tagMember.Member, vmIDs, networkIDs, userIDs) && !HasPrefix(tagMember.Member) {
+		if !referencesSweptObject(tagMember.Member, vmIDs, networkIDs, userIDs, groupIDs) && !HasPrefix(tagMember.Member) {
 			continue
 		}
 		id := tagMember.Key.Int()
@@ -91,7 +116,8 @@ func Sweep(ctx context.Context) error {
 		if member.System {
 			continue
 		}
-		if !HasPrefix(member.Member) && !referencesSweptObject(member.Member, vmIDs, networkIDs, userIDs) {
+		_, ownedGroup := groupIDs[member.Group.Int()]
+		if !ownedGroup && !HasPrefix(member.Member) && !referencesSweptObject(member.Member, vmIDs, networkIDs, userIDs, groupIDs) {
 			continue
 		}
 		id := member.ID.Int()
@@ -118,6 +144,10 @@ func Sweep(ctx context.Context) error {
 	for id, name := range networkIDs {
 		log.Printf("[SWEEP] deleting network %d (%s)", id, name)
 		record(deleteNetwork(ctx, client, id))
+	}
+	for id, name := range groupIDs {
+		log.Printf("[SWEEP] deleting group %d (%s)", id, name)
+		record(ignoreNotFound(client.Groups.Delete(ctx, id), "group", id))
 	}
 	for id, name := range userIDs {
 		log.Printf("[SWEEP] deleting user %d (%s)", id, name)
@@ -162,6 +192,16 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	for _, user := range users {
 		if HasPrefix(user.Name) {
 			left = append(left, fmt.Sprintf("user %s (%d)", user.Name, user.Key.Int()))
+		}
+	}
+
+	groups, err := client.Groups.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify groups: %w", err)
+	}
+	for _, group := range groups {
+		if HasPrefix(group.Name) {
+			left = append(left, fmt.Sprintf("group %s (%d)", group.Name, group.ID.Int()))
 		}
 	}
 
@@ -293,7 +333,7 @@ func deleteNetwork(ctx context.Context, client *vergeos.Client, id int) error {
 	return ignoreNotFound(client.Networks.Delete(ctx, id), "network", id)
 }
 
-func referencesSweptObject(member string, vmIDs, networkIDs, userIDs map[int]string) bool {
+func referencesSweptObject(member string, vmIDs, networkIDs, userIDs, groupIDs map[int]string) bool {
 	kind, id, ok := splitRef(member)
 	if !ok {
 		return false
@@ -305,10 +345,51 @@ func referencesSweptObject(member string, vmIDs, networkIDs, userIDs map[int]str
 		_, ok = networkIDs[id]
 	case "users":
 		_, ok = userIDs[id]
+	case "groups":
+		_, ok = groupIDs[id]
 	default:
 		ok = false
 	}
 	return ok
+}
+
+// permissionBelongsToSweep reports whether a grant should be removed with
+// the acceptance-test users and groups. Identity may be the row key or a
+// separate identity whose display name is the object name. A grant on the
+// swept user or group row is removed too.
+func permissionBelongsToSweep(perm vergeos.Permission, userIDs, groupIDs map[int]string) bool {
+	identity := perm.Identity.Int()
+	if _, ok := userIDs[identity]; ok {
+		return true
+	}
+	if _, ok := groupIDs[identity]; ok {
+		return true
+	}
+	if nameIn(perm.IdentityDisplay, userIDs) || nameIn(perm.IdentityDisplay, groupIDs) {
+		return true
+	}
+	switch perm.Table {
+	case "users":
+		_, ok := userIDs[int(perm.Row)]
+		return ok
+	case "groups":
+		_, ok := groupIDs[int(perm.Row)]
+		return ok
+	default:
+		return false
+	}
+}
+
+func nameIn(name string, ids map[int]string) bool {
+	if name == "" {
+		return false
+	}
+	for _, candidate := range ids {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
 }
 
 func ownerVMID(owner string) int {

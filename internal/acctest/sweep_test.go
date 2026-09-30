@@ -4,26 +4,32 @@ import (
 	"context"
 	"os"
 	"testing"
+
+	"github.com/verge-io/govergeos"
 )
 
 func TestReferencesSweptObject(t *testing.T) {
 	vms := map[int]string{9: ResourcePrefix + "vm"}
 	networks := map[int]string{4: ResourcePrefix + "net"}
 	users := map[int]string{7: ResourcePrefix + "user"}
+	groups := map[int]string{3: ResourcePrefix + "group"}
 
-	if !referencesSweptObject("vms/9", vms, networks, users) {
+	if !referencesSweptObject("vms/9", vms, networks, users, groups) {
 		t.Fatal("vm reference should match")
 	}
-	if !referencesSweptObject("vnets/4", vms, networks, users) {
+	if !referencesSweptObject("vnets/4", vms, networks, users, groups) {
 		t.Fatal("network reference should match")
 	}
-	if !referencesSweptObject("users/7", vms, networks, users) {
+	if !referencesSweptObject("users/7", vms, networks, users, groups) {
 		t.Fatal("user reference should match")
 	}
-	if referencesSweptObject("vms/10", vms, networks, users) {
+	if !referencesSweptObject("groups/3", vms, networks, users, groups) {
+		t.Fatal("group reference should match")
+	}
+	if referencesSweptObject("vms/10", vms, networks, users, groups) {
 		t.Fatal("unrelated vm reference must not match")
 	}
-	if referencesSweptObject("production", vms, networks, users) {
+	if referencesSweptObject("production", vms, networks, users, groups) {
 		t.Fatal("bare names must not match")
 	}
 	if ownerVMID("vms/9") != 9 {
@@ -31,6 +37,27 @@ func TestReferencesSweptObject(t *testing.T) {
 	}
 	if ownerVMID("vnets/4") != 0 {
 		t.Fatal("non-vm owner must be ignored")
+	}
+
+	userName := ResourcePrefix + "user"
+	groupName := ResourcePrefix + "group"
+	if !permissionBelongsToSweep(vergeos.Permission{Identity: 7, Table: "vms"}, users, groups) {
+		t.Fatal("permission on a swept user key should match")
+	}
+	if !permissionBelongsToSweep(vergeos.Permission{Identity: 99, IdentityDisplay: groupName, Table: "vms"}, users, groups) {
+		t.Fatal("permission whose display name is a swept group should match")
+	}
+	if !permissionBelongsToSweep(vergeos.Permission{Identity: 1, Table: "groups", Row: 3}, users, groups) {
+		t.Fatal("permission on a swept group row should match")
+	}
+	if !permissionBelongsToSweep(vergeos.Permission{Identity: 1, Table: "users", Row: 7}, users, groups) {
+		t.Fatal("permission on a swept user row should match")
+	}
+	if permissionBelongsToSweep(vergeos.Permission{Identity: 1, IdentityDisplay: "admin", Table: "vms", Row: 0}, users, groups) {
+		t.Fatal("unrelated table grant must not match")
+	}
+	if userName == "" || groupName == "" {
+		t.Fatal("names should be set")
 	}
 }
 
