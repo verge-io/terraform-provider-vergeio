@@ -50,6 +50,9 @@ provider "vergeio" {}
 
 - vergeio_member
 - vergeio_network
+- vergeio_network_rule
+- vergeio_network_rule_alias
+- vergeio_network_rules
 - vergeio_tag_member
 - vergeio_user
 - vergeio_vm
