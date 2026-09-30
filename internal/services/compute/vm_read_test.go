@@ -143,3 +143,57 @@ func TestReadVMReusesSDKClient(t *testing.T) {
 		t.Fatalf("vm = name %q profile %d", data.Name.ValueString(), data.SnapshotProfile.ValueInt32())
 	}
 }
+
+// TestReadVMPrefersMachineRunning is a UI shutdown that leaves the powerstate
+// column true. Refresh has to store the machine running flag, or the next
+// plan does not show the drift.
+func TestReadVMPrefersMachineRunning(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case "/api/v4/vms/4":
+			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","powerstate":true,"running":false,"status":"stopped"}`))
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	data := &VMResourceModel{Id: types.StringValue("4")}
+	if err := api.readVM(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.PowerState.IsNull() || data.PowerState.ValueBool() {
+		t.Fatalf("powerstate = %#v, want false from machine running", data.PowerState)
+	}
+}
+
+// TestReadVMKeepsPowerStateAlias is a Get that already aliased
+// machine#status#running as powerstate and did not include a separate
+// running field.
+func TestReadVMKeepsPowerStateAlias(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case "/api/v4/vms/4":
+			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","powerstate":true}`))
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	data := &VMResourceModel{Id: types.StringValue("4")}
+	if err := api.readVM(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.PowerState.IsNull() || !data.PowerState.ValueBool() {
+		t.Fatalf("powerstate = %#v, want true", data.PowerState)
+	}
+}

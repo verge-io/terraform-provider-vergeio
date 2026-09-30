@@ -790,23 +790,16 @@ func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 	return nil
 }
 
-// This function checks the power state of the VM by calling the API and set the powerstate to true or false
+// isVMRunning reports the machine running flag.
+// The VM powerstate column can stay unchanged after a power change in the
+// VergeOS UI, so this does not use VM.PowerState from a plain Get.
 func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
-
-	// call the SDK API to get the VM and check power state
-	vmID, err := strconv.Atoi(vmId)
-	if err != nil {
-		return nil, fmt.Errorf("invalid VM ID: %v", err)
-	}
-
-	vm, err := va.sdk.VMs.Get(ctx, vmID)
+	running, status, err := va.readVMPowerStatus(ctx, vmId)
 	if err != nil {
 		return nil, err
 	}
-
-	tflog.Debug(ctx, fmt.Sprintf("VM powerstate read from API: %v", vm.PowerState))
-
-	return &vm.PowerState, nil
+	tflog.Debug(ctx, fmt.Sprintf("VM power read from machine status: running=%v status=%s", running, status))
+	return &running, nil
 }
 
 // This function kills the VM
@@ -815,91 +808,43 @@ func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 	return va.changeVMPowerState(ctx, data, "kill")
 }
 
-// This function powers on the VM
+// powerOnVM starts the VM and waits until machine status says it is running.
+// The poweron action is posted directly. VMService.PowerOn returns without
+// sending that action when the powerstate column is already true, so a VM
+// stopped in the UI would stay stopped.
 func (va *VMApi) powerOnVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Power On VM API for VM %v", data.Id.ValueString()))
-	err := va.changeVMPowerState(ctx, data, "poweron")
-	if err != nil {
+	if err := va.postVMAction(ctx, data.Id.ValueString(), vmActionPowerOn); err != nil {
 		return err
 	}
-
-	// wait for the vm to come up
-	time.Sleep(10 * time.Second)
-
-	return nil
+	if err := va.waitForVMPower(ctx, data.Id.ValueString(), true, vmPowerWaitTimeout, powerOnInterval); err != nil {
+		return fmt.Errorf("powering on VM %s: %w", vmShutdownLabel(data.Name.ValueString(), data.Id.ValueString()), err)
+	}
+	return sleepContext(ctx, powerOnSettle)
 }
 
-// This function changes the power state of the VM
-// It "kill" or "poweron" the VM based on the desired state
-// It also waits for the VM to be in the desired state
+// changeVMPowerState powers the VM on or kills it, then waits until machine
+// status matches. A timeout is an error so the following read cannot store
+// a powerstate the plan did not ask for.
 func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, desiredState string) error {
-
 	tflog.Debug(ctx, fmt.Sprintf("Change the power state for VM %v to %v", data.Id.ValueString(), desiredState))
 
-	// Convert vmID string to int
-	vmIDInt, err := strconv.Atoi(data.Id.ValueString())
-	if err != nil {
-		return fmt.Errorf("invalid VM ID format: %v", err)
-	}
-
-	// Send the power action using SDK
 	switch desiredState {
-	case "poweron":
-		err = va.sdk.VMs.PowerOn(ctx, vmIDInt)
-	case "kill":
-		err = va.sdk.VMs.PowerOff(ctx, vmIDInt) // Kill maps to PowerOff in SDK
+	case vmActionPowerOn:
+		return va.powerOnVM(ctx, data)
+	case vmActionKill:
+		// Post kill directly. VMService.PowerOff skips the action when the
+		// powerstate column is already false.
+		if err := va.postVMAction(ctx, data.Id.ValueString(), vmActionKill); err != nil {
+			return fmt.Errorf("failed to change the VM power state: %v", err)
+		}
+		if err := va.waitForVMPower(ctx, data.Id.ValueString(), false, vmPowerWaitTimeout, powerOnInterval); err != nil {
+			return fmt.Errorf("killing VM %s: %w", vmShutdownLabel(data.Name.ValueString(), data.Id.ValueString()), err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("invalid desired state: %s", desiredState)
 	}
-	if err != nil {
-		return fmt.Errorf("failed to change the VM power state: %v", err)
-	}
-
-	// Now wait for the VM to be in the desired state (even though SDK waits internally, we verify)
-	tflog.Debug(ctx, fmt.Sprintf("Waiting for the VM %v to be in the desired state %v", data.Id.ValueString(), desiredState))
-
-	var currentPowerState *bool = nil
-	var desiredBoolState bool
-	switch desiredState {
-	case "poweron":
-		desiredBoolState = true
-	case "kill":
-		desiredBoolState = false
-	default:
-		return fmt.Errorf("invalid desired state: %s", desiredState)
-	}
-	boolDesiredState := &desiredBoolState
-
-	// Check the power state of the VM
-	if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
-		return fmt.Errorf("error checking the power state of the VM: %v", err)
-	}
-	Retries := 1
-
-	// If the power state is not as desired, wait a bit more (SDK might still be completing)
-	for *currentPowerState != *boolDesiredState {
-
-		// Wait for a short period to allow the operation to complete
-		time.Sleep(5 * time.Second)
-
-		// Check the power state of the VM
-		if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
-			return fmt.Errorf("error checking the power state of the VM: %v", err)
-		}
-		tflog.Debug(ctx, fmt.Sprintf("VM power state after the wait %v", *currentPowerState))
-
-		Retries += 1
-
-		// We are only going to retry 5 times before giving up
-		if Retries > 5 {
-			// TODO: add logic to rollback the VM creation if the power state is not running after 5 retries
-			// for now we will just return
-			break
-		}
-		continue
-	}
-
-	return nil
 }
 
 // usePlannedConsolePass copies the planned console password onto the model
@@ -1026,9 +971,31 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
 
 	applyVM(data, vm)
+	// The column copied above can disagree with the guest. Store the machine
+	// running flag so refresh sees a UI power change and the value written
+	// after apply matches the plan.
+	if err := va.useMachinePowerState(ctx, data); err != nil {
+		return err
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
+	return nil
+}
+
+// useMachinePowerState stores machine#status#running on powerstate.
+// A status payload that has no power fields keeps the value applyVM set,
+// which is the case for a response that only carried the running flag
+// under the powerstate alias.
+func (va *VMApi) useMachinePowerState(ctx context.Context, data *VMResourceModel) error {
+	running, _, err := va.readVMPowerStatus(ctx, data.Id.ValueString())
+	if err != nil {
+		if errors.Is(err, errVMPowerStatusMissing) {
+			return nil
+		}
+		return err
+	}
+	data.PowerState = types.BoolValue(running)
 	return nil
 }
 

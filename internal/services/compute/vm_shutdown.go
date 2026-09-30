@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	// ACPI shutdown. VMService.PowerOff sends kill instead, so callers post
-	// this action themselves.
+	vmActionPowerOn = "poweron"
+	// ACPI shutdown. VMService.PowerOff sends kill instead, so callers use
+	// VMService.GuestShutdown for this action.
 	vmActionPowerOff = "poweroff"
 	vmActionKill     = "kill"
 )
@@ -32,10 +33,25 @@ const (
 // need force_power_off on update. Destroy falls back to kill unless
 // shutdown_on_destroy is graceful. Tests that go through gracefulPowerOff
 // shorten gracefulShutdownInterval.
+//
+// vmPowerWaitTimeout is how long powerstate=true waits for the machine to
+// report running, and how long a kill waits for it to stop.
+// powerOnSettle is a pause after the machine is running so a following
+// read can see guest addresses. vmUpdateSettle is the pause before the
+// read at the end of update. Tests set these to zero.
 var (
 	gracefulShutdownTimeout  = 2 * time.Minute
 	gracefulShutdownInterval = 2 * time.Second
+	vmPowerWaitTimeout       = 2 * time.Minute
+	powerOnInterval          = 2 * time.Second
+	powerOnSettle            = 10 * time.Second
+	vmUpdateSettle           = 5 * time.Second
 )
+
+// errVMPowerStatusMissing means the status payload had neither a running
+// flag nor a powerstate flag. Callers that already decoded a VM can keep
+// that powerstate. Callers that need a definite answer still fail.
+var errVMPowerStatusMissing = errors.New("VM power status response did not include a power state")
 
 const (
 	// shutdownOnDestroyGracefulThenKill sends one ACPI poweroff, waits
@@ -175,17 +191,41 @@ func (durationValidator) ValidateString(_ context.Context, req validator.StringR
 }
 
 // gracefulPowerOff sends one ACPI poweroff and polls until the VM stops.
-// Destroy can call this with its own timeout and force flag. It posts the
-// poweroff action itself and does not call VMService.PowerOff.
+// Destroy can call this with its own timeout and force flag. The ACPI
+// action is VMService.GuestShutdown. VMService.PowerOff sends kill, so it
+// is not used here. Kill is posted only when force is true and the guest
+// is still running at the deadline.
 func (va *VMApi) gracefulPowerOff(ctx context.Context, vmID, vmName string, timeout time.Duration, force bool) error {
 	return gracefulShutdown(ctx, vmID, vmName, timeout, gracefulShutdownInterval, force,
 		func(ctx context.Context, action string) error {
-			return va.postVMAction(ctx, vmID, action)
+			return va.sendVMPowerAction(ctx, vmID, action)
 		},
 		func(ctx context.Context) (bool, string, error) {
 			return va.readVMPowerStatus(ctx, vmID)
 		},
 	)
+}
+
+// sendVMPowerAction posts one vm action. poweroff uses GuestShutdown.
+// kill is posted directly so a stale powerstate column cannot skip it.
+func (va *VMApi) sendVMPowerAction(ctx context.Context, vmID, action string) error {
+	if action == vmActionPowerOff {
+		return va.guestShutdown(ctx, vmID)
+	}
+	return va.postVMAction(ctx, vmID, action)
+}
+
+// guestShutdown sends the ACPI poweroff. It does not wait for the guest
+// to stop; gracefulShutdown polls machine status after this returns.
+func (va *VMApi) guestShutdown(ctx context.Context, vmID string) error {
+	if err := va.ensureSDK(); err != nil {
+		return err
+	}
+	id, err := strconv.Atoi(strings.TrimSpace(vmID))
+	if err != nil {
+		return fmt.Errorf("invalid VM ID format: %v", err)
+	}
+	return va.sdk.VMs.GuestShutdown(ctx, id)
 }
 
 // gracefulShutdown posts one ACPI poweroff, then polls until the VM is
@@ -357,11 +397,13 @@ func (b vmPowerStatusBody) powerStatus() (running bool, status string, ok bool) 
 	case b.Running != nil:
 		running = *b.Running
 		ok = true
+	case nestedRunning != nil:
+		// Nested machine status is the live flag. The powerstate column can
+		// stay true after the guest is shut down in the UI.
+		running = *nestedRunning
+		ok = true
 	case b.PowerState != nil:
 		running = *b.PowerState
-		ok = true
-	case nestedRunning != nil:
-		running = *nestedRunning
 		ok = true
 	}
 	if !ok {
@@ -417,7 +459,50 @@ func (va *VMApi) readVMPowerStatus(ctx context.Context, vmID string) (bool, stri
 	}
 	running, status, ok := body.powerStatus()
 	if !ok {
-		return false, "", errors.New("VM power status response did not include a power state")
+		return false, "", errVMPowerStatusMissing
 	}
 	return running, status, nil
+}
+
+// waitForVMPower polls until the machine running flag equals want or the
+// deadline passes. The first read is immediate. A timeout names the last
+// status. A read or context error is returned as-is.
+func (va *VMApi) waitForVMPower(ctx context.Context, vmID string, want bool, timeout, interval time.Duration) error {
+	if timeout < 0 {
+		timeout = 0
+	}
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		running, status, err := va.readVMPowerStatus(ctx, vmID)
+		if err != nil {
+			return err
+		}
+		last = powerStatusLabel(status, running)
+		if running == want {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			target := "stopped"
+			if want {
+				target = "running"
+			}
+			if last == "" {
+				last = powerStatusLabel("", running)
+			}
+			return fmt.Errorf("VM %s stayed %q and did not become %s before the timeout", vmID, last, target)
+		}
+		wait := interval
+		if interval > 0 {
+			if remaining := time.Until(deadline); remaining < wait {
+				wait = remaining
+			}
+		}
+		if err := sleepContext(ctx, wait); err != nil {
+			return err
+		}
+	}
 }

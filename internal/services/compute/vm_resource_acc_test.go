@@ -299,6 +299,146 @@ func testAccPowerOnVMOutsideTerraform(id string) error {
 	return nil
 }
 
+// TestAccVMResource_PowerState powers a VM on and off from configuration,
+// and corrects a power change made outside Terraform.
+// An empty VM may ignore ACPI, so force_power_off stops it if the guest
+// does not. The test is skipped unless TF_ACC=1.
+func TestAccVMResource_PowerState(t *testing.T) {
+	vmName := acctest.Name("vm")
+	off := testAccVMPowerConfig(vmName, false)
+	on := testAccVMPowerConfig(vmName, true)
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: off,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "false"),
+					testAccCheckVMPower("vergeio_vm.test", false),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				Config: on,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("powerstate"), knownvalue.Bool(true)),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "true"),
+					testAccCheckVMPower("vergeio_vm.test", true),
+				),
+			},
+			{
+				// UI shutdown while configuration still wants the VM on.
+				PreConfig: func() {
+					if err := testAccPowerOffVMOutsideTerraform(vmID); err != nil {
+						t.Fatalf("power off VM outside Terraform: %v", err)
+					}
+				},
+				Config: on,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("powerstate"), knownvalue.Bool(true)),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "true"),
+					testAccCheckVMPower("vergeio_vm.test", true),
+				),
+			},
+			{
+				Config: off,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("powerstate"), knownvalue.Bool(false)),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "false"),
+					testAccCheckVMPower("vergeio_vm.test", false),
+				),
+			},
+			{
+				// UI power on while configuration wants the VM stopped.
+				PreConfig: func() {
+					if err := testAccPowerOnVMOutsideTerraform(vmID); err != nil {
+						t.Fatalf("power on VM outside Terraform: %v", err)
+					}
+				},
+				Config: off,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("powerstate"), knownvalue.Bool(false)),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "false"),
+					testAccCheckVMPower("vergeio_vm.test", false),
+				),
+			},
+			{
+				Config: off,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccVMPowerConfig(vmName string, power bool) string {
+	powerValue := "false"
+	if power {
+		powerValue = "true"
+	}
+	return testAccVMResourceConfig(vmName, fmt.Sprintf(`
+  enabled         = true
+  cpu_cores       = 1
+  ram             = 1024
+  powerstate      = %s
+  force_power_off = true
+  timeouts {
+    update = "45s"
+  }
+`, powerValue))
+}
+
+func testAccPowerOffVMOutsideTerraform(id string) error {
+	vmID, err := strconv.Atoi(id)
+	if err != nil {
+		return fmt.Errorf("vm id %q: %w", id, err)
+	}
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if err := client.VMs.PowerOff(ctx, vmID); err != nil {
+		return err
+	}
+	vm, err := client.VMs.Get(ctx, vmID)
+	if err != nil {
+		return err
+	}
+	if vm.PowerState {
+		return fmt.Errorf("vm %s is still running after power off", id)
+	}
+	return nil
+}
+
 func testAccCheckVMPower(resourceName string, running bool) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]

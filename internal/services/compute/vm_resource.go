@@ -328,7 +328,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the VM is powered on. On update, false sends one ACPI poweroff and waits until the guest stops. It does not hard-kill the VM. If the guest is still running when timeouts.update elapses (default 2 minutes), apply fails unless force_power_off is true. Omit this attribute to leave the current power unchanged.",
+				MarkdownDescription: "Whether the VM is powered on. Default = False on create, which leaves a new VM stopped. Apply powers the VM on, or sends one ACPI poweroff, when this differs from the VM's current power, including a power change made in the VergeOS UI. The provider reads the VM again after that change so state matches. Powering off waits until the guest stops. It does not hard-kill the VM. If the guest is still running when timeouts.update elapses (default 2 minutes), apply fails unless force_power_off is true. Omit this attribute to leave the current power unchanged.",
 				Optional:            true,
 				Computed:            true,
 				// Keep the prior value when configuration omits powerstate.
@@ -1166,8 +1166,10 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		)
 		return
 	}
-	// UpdateVM used to wait here so a following read sees the VM running.
-	time.Sleep(5 * time.Second)
+	// Pause so a following read can see guest state after a power change.
+	// Tests set vmUpdateSettle to zero. The power helpers already wait
+	// until machine status matches the plan.
+	time.Sleep(vmUpdateSettle)
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating the devices with the plan data %v", planData.Devices))
 	tflog.Debug(ctx, "Syncing devices ran")

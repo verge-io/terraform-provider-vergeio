@@ -27,9 +27,6 @@ linters:
       - path: internal/services/compute/vm_drive.go
         linters: [errcheck]
         text: Body.Close
-      - path: internal/services/compute/vm_api.go
-        linters: [ineffassign]
-        text: currentPowerState
       - path: internal/services/compute/vm_resource.go
         linters: [ineffassign]
         text: ineffectual assignment to i
