@@ -54,10 +54,17 @@ provider "vergeio" {}
 - vergeio_network_rule_alias
 - vergeio_network_rules
 - vergeio_tag_member
+- vergeio_tenant
+- vergeio_tenant_node
+- vergeio_tenant_storage
 - vergeio_user
 - vergeio_vm
 
-Drives, NICs, and devices are nested blocks on `vergeio_vm`.
+Drives and NICs are `vergeio_vm_drive` and `vergeio_vm_nic`. Devices stay nested on `vergeio_vm`.
+
+`vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
+
+Network blocks and external IPs are not resources yet. govergeos has no `vnet_cidrs` service and no helper that assigns an external IP to a tenant. Assigning those in the UI can leave `need_fw_apply` set on the parent external network. Apply that network's firewall before treating the address as live.
 
 ## Data Sources
 
@@ -69,6 +76,7 @@ Drives, NICs, and devices are nested blocks on `vergeio_vm`.
 - vergeio_nodes
 - vergeio_resource_groups
 - vergeio_tags
+- vergeio_tenants
 - vergeio_version
 - vergeio_vms
 

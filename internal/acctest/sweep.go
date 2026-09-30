@@ -124,6 +124,8 @@ func Sweep(ctx context.Context) error {
 		record(ignoreNotFound(client.Users.Delete(ctx, id), "user", id))
 	}
 
+	record(sweepTenants(ctx, client))
+
 	if len(errs) > 0 {
 		return fmt.Errorf("sweep deleted with %d error(s): %w", len(errs), errorsJoin(errs))
 	}
@@ -173,10 +175,100 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 		}
 	}
 
+	tenants, err := client.Tenants.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify tenants: %w", err)
+	}
+	for _, tenant := range tenants {
+		if !tenant.IsSnapshot && HasPrefix(tenant.Name) {
+			left = append(left, fmt.Sprintf("tenant %s (%d)", tenant.Name, tenant.Key.Int()))
+		}
+	}
+
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
 	}
 	return nil
+}
+
+func sweepTenants(ctx context.Context, client *vergeos.Client) error {
+	tenants, err := client.Tenants.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list tenants: %w", err)
+	}
+	ids := map[int]string{}
+	for _, tenant := range tenants {
+		if tenant.IsSnapshot || !HasPrefix(tenant.Name) {
+			continue
+		}
+		ids[tenant.Key.Int()] = tenant.Name
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	nodes, err := client.TenantNodes.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tenant nodes endpoint unavailable, skipping")
+		nodes = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant nodes: %w", err)
+	}
+	for _, node := range nodes {
+		if _, ok := ids[node.Tenant.Int()]; !ok {
+			continue
+		}
+		id := node.Key.Int()
+		log.Printf("[SWEEP] deleting tenant node %d (%s)", id, node.Name)
+		record(ignoreNotFound(client.TenantNodes.Delete(ctx, id), "tenant node", id))
+	}
+
+	allocations, err := client.TenantStorage.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tenant storage endpoint unavailable, skipping")
+		allocations = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant storage: %w", err)
+	}
+	for _, allocation := range allocations {
+		if _, ok := ids[allocation.Tenant.Int()]; !ok {
+			continue
+		}
+		id := allocation.Key.Int()
+		log.Printf("[SWEEP] deleting tenant storage %d", id)
+		record(ignoreNotFound(client.TenantStorage.Delete(ctx, id), "tenant storage", id))
+	}
+
+	for id, name := range ids {
+		log.Printf("[SWEEP] deleting tenant %d (%s)", id, name)
+		record(deleteTenant(ctx, client, id))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenants: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func deleteTenant(ctx context.Context, client *vergeos.Client, id int) error {
+	err := client.Tenants.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if offErr := client.Tenants.PowerOff(ctx, id); offErr != nil && !vergeos.IsNotFoundError(offErr) {
+		return fmt.Errorf("delete tenant %d: %w (power off: %v)", id, err, offErr)
+	}
+	return ignoreNotFound(client.Tenants.Delete(ctx, id), "tenant", id)
 }
 
 func deleteVM(ctx context.Context, client *vergeos.Client, id int) error {

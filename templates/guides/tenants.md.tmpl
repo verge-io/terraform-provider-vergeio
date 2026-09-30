@@ -1,0 +1,73 @@
+---
+page_title: "Tenants"
+description: |-
+  Create a VergeOS tenant on the parent, then manage the inside of that tenant from a second Terraform configuration.
+---
+
+# Tenants
+
+A VergeOS tenant is a full VergeOS instance carved from the parent: its own UI, API, nodes, storage, and networks. `vergeio_tenant`, `vergeio_tenant_node`, and `vergeio_tenant_storage` declare that bundle on the parent. `vergeio_tenants` reads it back.
+
+## Two configurations
+
+Terraform configures a provider before it applies resources. The tenant UI address does not exist until `vergeio_tenant` is created, so the same configuration cannot point a provider at that address.
+
+This configuration fails. The host is unknown until apply:
+
+```terraform
+resource "vergeio_tenant" "customer" {
+  name       = "customer-a"
+  password   = var.tenant_password
+  powerstate = true
+}
+
+provider "vergeio" {
+  alias    = "inside"
+  host     = vergeio_tenant.customer.ui_address
+  username = "admin"
+  password = var.tenant_password
+}
+
+resource "vergeio_vm" "app" {
+  provider  = vergeio.inside
+  name      = "app"
+  cpu_cores = 2
+  ram       = 2048
+}
+```
+
+Terraform reports:
+
+```
+Error: Invalid provider configuration
+
+The configuration for provider["registry.terraform.io/verge-io/vergeio"].inside
+depends on values that cannot be determined until apply.
+```
+
+Use two root modules. The parent module creates the tenant and outputs `ui_address`. The tenant module reads that output with `terraform_remote_state` and configures its own provider. Apply the parent module first. Apply the tenant module after `ui_address` is set. A fresh tenant has no UI address until VergeOS assigns one, which usually happens once the tenant is powered on and has an address on the parent.
+
+The parent module:
+
+{{ tffile "examples/guides/tenants/parent.tf" }}
+
+The tenant module. `var.tenant_password` is the same value passed to `vergeio_tenant.password` in the parent module. VergeOS creates the tenant admin user (`admin`) with that password. Keep the password in both modules' inputs. Leave it out of the parent outputs.
+
+{{ tffile "examples/guides/tenants/tenant.tf" }}
+
+After the tenant exists, create an API key in the tenant UI and switch the tenant module to that key. The parent module cannot mint the key: a key is issued by the tenant API, which is this second configuration.
+
+```terraform
+provider "vergeio" {
+  host    = data.terraform_remote_state.parent.outputs.tenant_ui_address
+  api_key = var.tenant_api_key
+}
+```
+
+## Addresses handed down from the parent
+
+`vergeio_tenant_network_block` and `vergeio_tenant_external_ip` are not implemented. govergeos 0.3.0, which this provider uses, exposes `Tenants`, `TenantNodes`, `TenantStorage`, and `TenantLayer2Networks`. It has no service for network blocks (`vnet_cidrs`) and no helper that assigns an external IP to a tenant. `VNetAddresses` can create an address on a network. It has no field that means "give this address to tenant X". Building those resources here would invent request fields the SDK does not define. The SDK gap is [govergeos#55](https://github.com/verge-io/govergeos/issues/55).
+
+Assigning a network block or an external IP in the VergeOS UI, or with another client, stages firewall changes on the parent's external network and can leave `need_fw_apply` set. Nothing in the tenant resources reads or clears that flag, because the assignment itself is outside this provider. Apply the parent network's firewall before treating the new address as live. `vergeio_network_rules` on the parent configuration applies `need_fw_apply` for rule edits. It does not apply a flag left behind by an address assignment made outside Terraform. A stopped parent network loads staged rules when it starts.
+
+When govergeos grows tenant network block and external IP helpers, the matching resources should apply the parent network firewall after the change, or store `need_fw_apply` and warn, the same way `vergeio_network_rule` does for rule edits.
