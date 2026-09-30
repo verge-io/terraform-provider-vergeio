@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tags (Data Source)
 
-Retrieves information about tags configured in VergeOS. Tags can be used to organize and categorize resources.
+Retrieves information about tags configured in VergeOS. Tags can be used to organize and categorize resources. Create a category with `vergeio_tag_category` and a tag with `vergeio_tag`. This data source reads tags that already exist.
 
 Supports filtering by name and/or category to handle duplicate tag names across categories.
 
