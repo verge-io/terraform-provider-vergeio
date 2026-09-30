@@ -21,12 +21,16 @@ import (
 var _ vergeio.IClient = &TagsApi{}
 
 func NewTagsApi(c *vergeio.Client) *TagsApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
-	return &TagsApi{
+	api := &TagsApi{
 		name:   "Tags Api",
 		client: c,
-		sdk:    sdk,
 	}
+	if c != nil {
+		// Keep the VergeOS client when govergeos setup fails. readTag retries
+		// through Client.SDK so import Read is not stuck with a nil service.
+		api.sdk, _ = c.SDK()
+	}
+	return api
 }
 
 type TagsApi struct {

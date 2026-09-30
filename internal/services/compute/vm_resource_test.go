@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
@@ -92,6 +93,17 @@ func TestVMResource_Schema(t *testing.T) {
 		if got != want {
 			t.Errorf("powerstate plan modifier description %q, want UseStateForUnknown %q", got, want)
 		}
+	}
+
+	snapshotProfile, ok := resp.Schema.Attributes["snapshot_profile"].(schema.Int32Attribute)
+	if !ok {
+		t.Fatal("snapshot_profile should be an int32 attribute")
+	}
+	if !snapshotProfile.Optional {
+		t.Error("snapshot_profile should be optional")
+	}
+	if !strings.Contains(snapshotProfile.MarkdownDescription, "tonumber(vergeio_snapshot_profile.example.id)") {
+		t.Errorf("snapshot_profile should document the profile resource id, got %q", snapshotProfile.MarkdownDescription)
 	}
 
 	// Check schema description

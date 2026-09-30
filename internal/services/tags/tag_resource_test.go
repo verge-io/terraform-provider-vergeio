@@ -67,6 +67,77 @@ func TestTagResourceSchema(t *testing.T) {
 	}
 }
 
+// TestTagImportReadReusesSDKClient is the acceptance import: ImportState
+// configures one resource, then Read configures another. A second govergeos
+// setup must not leave Read with a nil tag service.
+func TestTagImportReadReusesSDKClient(t *testing.T) {
+	var versionCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			versionCalls++
+			if versionCalls > 1 {
+				http.Error(w, "unavailable", http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case "/api/v4/tags/8":
+			_, _ = w.Write([]byte(`{"$key":8,"name":"production","description":"workloads","category":4,"category_display":"environment"}`))
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := context.Background()
+	vergeClient := vergeio.NewClient(server.URL, "user", "pass", true)
+	schemaResp := &fwresource.SchemaResponse{}
+	NewTagResource().Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+
+	importer := &TagResource{}
+	configure := &fwresource.ConfigureResponse{}
+	importer.Configure(ctx, fwresource.ConfigureRequest{ProviderData: vergeClient}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	importResp := &fwresource.ImportStateResponse{State: tfsdk.State{
+		Schema: schemaResp.Schema,
+		Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), nil),
+	}}
+	importer.ImportState(ctx, fwresource.ImportStateRequest{ID: "8"}, importResp)
+	if importResp.Diagnostics.HasError() {
+		t.Fatal(importResp.Diagnostics)
+	}
+
+	// Read uses a new resource instance, matching the framework server.
+	reader := &TagResource{}
+	configure = &fwresource.ConfigureResponse{}
+	reader.Configure(ctx, fwresource.ConfigureRequest{ProviderData: vergeClient}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	if reader.tagsApi == nil || reader.tagsApi.sdk == nil || reader.tagsApi.sdk.Tags == nil {
+		t.Fatal("import Read was configured without a tag client")
+	}
+	resp := &fwresource.ReadResponse{State: importResp.State}
+	reader.Read(ctx, fwresource.ReadRequest{State: importResp.State}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got TagResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.Name.ValueString() != "production" || got.Category.ValueInt32() != 4 || got.CategoryName.ValueString() != "environment" {
+		t.Fatalf("imported tag = name %q category %d category_name %q", got.Name.ValueString(), got.Category.ValueInt32(), got.CategoryName.ValueString())
+	}
+	if versionCalls != 1 {
+		t.Fatalf("version checks = %d, want 1", versionCalls)
+	}
+}
+
 func TestTagImportState(t *testing.T) {
 	ctx := context.Background()
 	tag := &TagResource{}

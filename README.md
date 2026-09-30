@@ -55,6 +55,7 @@ provider "vergeio" {}
 - vergeio_network_rule_alias
 - vergeio_network_rules
 - vergeio_permission
+- vergeio_snapshot_profile
 - vergeio_tag
 - vergeio_tag_category
 - vergeio_tag_member
@@ -67,6 +68,8 @@ provider "vergeio" {}
 Drives and NICs are `vergeio_vm_drive` and `vergeio_vm_nic`. Devices stay nested on `vergeio_vm`.
 
 `vergeio_group` creates a group. `vergeio_permission` grants a user or a group list, read, create, modify, and delete on a table or one object. `vergeio_member` adds a user or another object to a group. `vergeio_users` lists users the same way `vergeio_groups` lists groups.
+
+`vergeio_snapshot_profile` defines when snapshots are taken and how long they are kept. Each `period` block sets the frequency, the time of day, a required retention in seconds, and whether the snapshot is quiesced. Retention has no default. `vergeio_vm.snapshot_profile` is that profile's key: `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 

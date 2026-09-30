@@ -4,6 +4,8 @@
 package vergeio
 
 import (
+	"fmt"
+
 	"github.com/verge-io/govergeos"
 )
 
@@ -26,4 +28,25 @@ func (c *Client) SDKOptions() []vergeos.ClientOption {
 		opts = append(opts, vergeos.WithTimeout(timeout))
 	}
 	return opts
+}
+
+// SDK returns the govergeos client for this connection.
+// The first successful client is kept. A failed attempt is not cached, so
+// the next call can try again. Resource Configure and a later Read share
+// this client instead of each opening one and discarding a setup error.
+func (c *Client) SDK() (*vergeos.Client, error) {
+	if c == nil {
+		return nil, fmt.Errorf("vergeio client is nil")
+	}
+	c.sdkMu.Lock()
+	defer c.sdkMu.Unlock()
+	if c.sdk != nil {
+		return c.sdk, nil
+	}
+	sdk, err := vergeos.NewClient(c.SDKOptions()...)
+	if err != nil {
+		return nil, err
+	}
+	c.sdk = sdk
+	return sdk, nil
 }

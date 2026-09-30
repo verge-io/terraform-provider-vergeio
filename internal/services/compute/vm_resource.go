@@ -287,7 +287,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"snapshot_profile": schema.Int32Attribute{
-				MarkdownDescription: "Snapshot profile",
+				MarkdownDescription: "Key of a snapshot profile. Set this to tonumber(vergeio_snapshot_profile.example.id). Omit to leave the current profile unchanged.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -1062,6 +1062,10 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	tflog.Debug(ctx, fmt.Sprintf("auto read %v", ctx))
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if r.vmApi == nil {
+		resp.Diagnostics.AddError("Error Fetching Data", "VM client is not configured")
 		return
 	}
 

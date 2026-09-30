@@ -30,12 +30,16 @@ const (
 var _ vergeio.IClient = &VMApi{}
 
 func NewVMApi(c *vergeio.Client) *VMApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
-	return &VMApi{
+	api := &VMApi{
 		name:   "VM Api",
 		client: c,
-		sdk:    sdk,
 	}
+	if c != nil {
+		// A setup error is retried by readVM. Do not drop the VergeOS client
+		// when the first govergeos client cannot be built.
+		api.sdk, _ = c.SDK()
+	}
+	return api
 }
 
 type VMApi struct {
@@ -926,6 +930,9 @@ func usePlannedShutdownSettings(state, plan *VMResourceModel) {
 // during apply; store null so the result is known. The attribute changes only
 // when configuration changes that stored value.
 func applyVM(data *VMResourceModel, vm *vergeos.VM) {
+	if data == nil || vm == nil {
+		return
+	}
 	data.Machine = types.Int32Value(int32(vm.Machine))
 	data.Name = types.StringValue(vm.Name)
 	data.Cluster = types.Int32Value(int32(vm.Cluster.Int()))
@@ -990,18 +997,30 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 
 // Read the VM from the API.
 func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
+	if err := va.ensureSDK(); err != nil {
+		return err
+	}
+	if data == nil {
+		return fmt.Errorf("VM is nil")
+	}
 
 	tflog.Debug(ctx, "Reading the vm data")
 
 	// Call the SDK API to get the VM
-	vmID, err := strconv.Atoi(data.Id.ValueString())
-	if err != nil {
-		return fmt.Errorf("invalid VM ID: %v", err)
+	if data.Id.IsNull() || data.Id.IsUnknown() || strings.TrimSpace(data.Id.ValueString()) == "" {
+		return fmt.Errorf("invalid VM ID: empty")
+	}
+	vmID, err := strconv.Atoi(strings.TrimSpace(data.Id.ValueString()))
+	if err != nil || vmID <= 0 {
+		return fmt.Errorf("invalid VM ID: %v", data.Id.ValueString())
 	}
 
 	vm, err := va.sdk.VMs.Get(ctx, vmID)
 	if err != nil {
 		return err
+	}
+	if vm == nil || vm.ID.Int() <= 0 {
+		return fmt.Errorf("read VM %d: response was empty", vmID)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
@@ -1010,6 +1029,26 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
+	return nil
+}
+
+// ensureSDK connects the govergeos client when Configure stored the VergeOS
+// client but the first setup failed. A nil sdk used to panic on VMs.Get.
+func (va *VMApi) ensureSDK() error {
+	if va == nil || va.client == nil {
+		return fmt.Errorf("VM client is not configured")
+	}
+	if va.sdk != nil && va.sdk.VMs != nil {
+		return nil
+	}
+	sdk, err := va.client.SDK()
+	if err != nil {
+		return fmt.Errorf("VM client is not configured: %w", err)
+	}
+	if sdk == nil || sdk.VMs == nil {
+		return fmt.Errorf("VM client is not configured")
+	}
+	va.sdk = sdk
 	return nil
 }
 

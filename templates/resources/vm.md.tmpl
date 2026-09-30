@@ -14,6 +14,8 @@ Setting `powerstate` to false on a running VM sends one ACPI `poweroff` and wait
 
 Destroying or replacing a running VM sends the same ACPI `poweroff` and waits `timeouts.delete`, which also defaults to 2 minutes. VergeOS suggests 60 to 120 seconds for a graceful shutdown. If the guest is still running when that wait ends, destroy sends `kill` and then deletes the VM. A guest that ignores ACPI stays running for the whole `timeouts.delete` wait before that kill. A Debian 12 generic cloud image, for example, logged the power-down event and was still running minutes later. Set `shutdown_on_destroy` to `kill` to cut power immediately, or to `graceful` to fail the destroy instead of killing. Replace, taint, and a change that forces a new VM all use this same delete.
 
+`snapshot_profile` is the key of a [`vergeio_snapshot_profile`](snapshot_profile.html). Set `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`.
+
 ## Example Usage
 
 `vergeio_vm` keeps machine settings, devices, and an optional `boot_disk`. Other drives are [`vergeio_vm_drive`](vm_drive.html) resources and NICs are [`vergeio_vm_nic`](vm_nic.html) resources. Guest agent addresses are read from `vergeio_vm.web-server.guest_agent_ips` on this resource.
@@ -118,7 +120,7 @@ Destroying or replacing a running VM sends the same ACPI `poweroff` and waits `t
     - `localtime` Localtime (Recommended for Widows)
 - `secure_boot` (Boolean) - Depends on `uefi` Default = False
 - `serial_port` (Boolean) - Default = False
-- `snapshot_profile` (Number) - Key of snapshot profile. Default = None
+- `snapshot_profile` (Number) - Key of a snapshot profile. Use `tonumber(vergeio_snapshot_profile.example.id)` so the VM and its protection policy are declared together. See [`vergeio_snapshot_profile`](snapshot_profile.html). Omit to leave the current profile unchanged. Default = None
 - `sound` (String)
     - `none` None (**Default**)
     - `sb16`    Creative Sound Blaster 16
