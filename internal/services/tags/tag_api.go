@@ -57,8 +57,8 @@ func (ta *TagsApi) createTag(ctx context.Context, data *TagResourceModel) error 
 }
 
 func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
-	if ta == nil || ta.sdk == nil || ta.sdk.Tags == nil {
-		return fmt.Errorf("tag client is not configured")
+	if err := ta.ensureSDK(); err != nil {
+		return err
 	}
 	if data == nil {
 		return fmt.Errorf("tag is nil")
@@ -79,6 +79,27 @@ func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
 	}
 	applyTag(data, tag)
 	tflog.Debug(ctx, fmt.Sprintf("read tag %d", id))
+	return nil
+}
+
+// ensureSDK uses the provider client when this API was built without a
+// govergeos client. Import configures one resource and Read configures
+// another; both must see the same connection.
+func (ta *TagsApi) ensureSDK() error {
+	if ta == nil || ta.client == nil {
+		return fmt.Errorf("tag client is not configured")
+	}
+	if ta.sdk != nil && ta.sdk.Tags != nil {
+		return nil
+	}
+	sdk, err := ta.client.SDK()
+	if err != nil {
+		return fmt.Errorf("tag client is not configured: %w", err)
+	}
+	if sdk == nil || sdk.Tags == nil {
+		return fmt.Errorf("tag client is not configured")
+	}
+	ta.sdk = sdk
 	return nil
 }
 

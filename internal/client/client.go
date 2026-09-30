@@ -13,7 +13,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
+
+	"github.com/verge-io/govergeos"
 )
 
 // All the Verge.IO endpoints.
@@ -44,6 +47,12 @@ type Client struct {
 	Insecure   bool
 	httpClient *http.Client
 	FieldCache *FieldCache
+
+	// sdk is the govergeos client for this connection. sdkMu guards it.
+	// One successful client is reused so a later resource Configure does not
+	// depend on another version check.
+	sdkMu sync.Mutex
+	sdk   *vergeos.Client
 }
 
 // ClientConfig is the connection settings for NewClientWithConfig.

@@ -1064,6 +1064,10 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if r.vmApi == nil {
+		resp.Diagnostics.AddError("Error Fetching Data", "VM client is not configured")
+		return
+	}
 
 	// Read data into the model to get all the attributes
 	readDataError := r.vmApi.readVM(ctx, &data)
