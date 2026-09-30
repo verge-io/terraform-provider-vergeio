@@ -16,6 +16,8 @@ Creates a tag in a `vergeio_tag_category`. Requires VergeOS v26 or later. Assign
 
 Changing `category` replaces the tag. VergeOS does not move a tag to another category.
 
+`category_name` is the category's current name. Renaming the category refreshes it when this tag is next applied.
+
 `category` is a number. Use `tonumber(vergeio_tag_category.example.id)`. `vergeio_tag_member.tag_id` is a number too. Use `tonumber(vergeio_tag.example.id)`.
 
 ## Example Usage
@@ -36,7 +38,7 @@ Changing `category` replaces the tag. VergeOS does not move a tag to another cat
 
 ### Read-Only
 
-- `category_name` (String) Name of the tag category, read from VergeOS.
+- `category_name` (String) Name of the tag category, read from VergeOS. Refreshed when this tag is applied, including after the category is renamed.
 - `id` (String) Tag key assigned by VergeOS.
 
 ## Import

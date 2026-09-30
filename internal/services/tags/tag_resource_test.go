@@ -13,6 +13,7 @@ import (
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	resschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -51,9 +52,18 @@ func TestTagResourceSchema(t *testing.T) {
 	}
 	assertTagMemberInt32RequiresReplace(t, "category", category.PlanModifiers[0], 4, 9)
 
-	categoryName, ok := resp.Schema.Attributes["category_name"]
-	if !ok || !categoryName.IsComputed() || categoryName.IsRequired() {
-		t.Fatal("category_name should be computed")
+	categoryName, ok := resp.Schema.Attributes["category_name"].(resschema.StringAttribute)
+	if !ok || !categoryName.Computed || categoryName.Optional || categoryName.Required {
+		t.Fatal("category_name should be computed only")
+	}
+	// A category rename does not change this tag's category id, but VergeOS
+	// returns the new display name. UseStateForUnknown would keep the old
+	// name in the plan and the apply would fail as an inconsistent result.
+	keepPrior := stringplanmodifier.UseStateForUnknown().Description(context.Background())
+	for _, mod := range categoryName.PlanModifiers {
+		if mod.Description(context.Background()) == keepPrior {
+			t.Fatal("category_name must not preserve the prior name across an update")
+		}
 	}
 }
 
@@ -122,5 +132,86 @@ func TestTagReadRemovesMissingTag(t *testing.T) {
 	}
 	if !resp.State.Raw.IsNull() {
 		t.Fatal("missing tag should be removed from state")
+	}
+}
+
+// TestTagUpdateRefreshesCategoryName is the unit stand-in for the acceptance
+// step that renames a category and a tag in one apply. The plan leaves
+// category_name unknown. The read after update stores the name VergeOS
+// returns, which is the renamed category.
+func TestTagUpdateRefreshesCategoryName(t *testing.T) {
+	const (
+		oldCategory = "tf-acc-tagcat-abc"
+		newCategory = "tf-acc-tagcat-abc-v2"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/tags/8":
+			_, _ = w.Write([]byte(`{"response":"OK"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tags/8":
+			_, _ = w.Write([]byte(`{"$key":8,"name":"production-v2","description":"workloads","category":4,"category_display":"` + newCategory + `"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := context.Background()
+	tag := &TagResource{}
+	configure := &fwresource.ConfigureResponse{}
+	tag.Configure(ctx, fwresource.ConfigureRequest{
+		ProviderData: vergeio.NewClient(server.URL, "user", "pass", true),
+	}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	schemaResp := &fwresource.SchemaResponse{}
+	tag.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	diags := state.Set(ctx, &TagResourceModel{
+		Id:           types.StringValue("8"),
+		Category:     types.Int32Value(4),
+		Name:         types.StringValue("production"),
+		Description:  types.StringValue("workloads"),
+		CategoryName: types.StringValue(oldCategory),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	diags = plan.Set(ctx, &TagResourceModel{
+		Id:           types.StringValue("8"),
+		Category:     types.Int32Value(4),
+		Name:         types.StringValue("production-v2"),
+		Description:  types.StringValue("workloads"),
+		CategoryName: types.StringUnknown(),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+
+	resp := &fwresource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	tag.Update(ctx, fwresource.UpdateRequest{Plan: plan, State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got TagResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.CategoryName.ValueString() != newCategory {
+		t.Fatalf("category_name = %q, want %q", got.CategoryName.ValueString(), newCategory)
+	}
+	if got.Category.ValueInt32() != 4 {
+		t.Fatalf("category id = %d, want 4", got.Category.ValueInt32())
+	}
+	if got.Name.ValueString() != "production-v2" {
+		t.Fatalf("name = %q", got.Name.ValueString())
 	}
 }

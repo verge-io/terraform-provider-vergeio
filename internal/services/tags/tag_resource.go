@@ -86,12 +86,15 @@ func (r *TagResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
+			// category_name is the category's display name. Renaming the category
+			// leaves this tag's category id unchanged, but VergeOS still returns
+			// the new name on the next read. Keeping the prior name with
+			// UseStateForUnknown makes that apply fail as an inconsistent
+			// result. Leave it computed with no plan modifier so an update
+			// plans it unknown and the read can store the refreshed name.
 			"category_name": schema.StringAttribute{
-				MarkdownDescription: "Name of the tag category, read from VergeOS.",
+				MarkdownDescription: "Name of the tag category, read from VergeOS. Refreshed when this tag is applied, including after the category is renamed.",
 				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
 			},
 		},
 	}

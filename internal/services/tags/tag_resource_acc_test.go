@@ -22,6 +22,11 @@ import (
 // every other taggable_* flag unset. An omitted flag must not be sent as
 // false: that turns tagging off for that object type.
 //
+// The update renames the category while the tag's category id stays the
+// same, and also renames the tag. VergeOS then returns the new category
+// name on the tag. category_name is planned unknown on that apply so the
+// refreshed name is not an inconsistent result.
+//
 // Destroying the category deletes every tag in it and every assignment of
 // those tags. VergeOS does not ask for confirmation. The published example
 // sets prevent_destroy so an ordinary destroy cannot do that by accident.
@@ -59,7 +64,7 @@ func TestAccTagCategoryAndTag(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_tag.test", "name", tagName),
 					resource.TestCheckResourceAttr("vergeio_tag.test", "description", "workloads"),
 					resource.TestCheckResourceAttrSet("vergeio_tag.test", "id"),
-					resource.TestCheckResourceAttrSet("vergeio_tag.test", "category_name"),
+					resource.TestCheckResourceAttrPair("vergeio_tag.test", "category_name", "vergeio_tag_category.test", "name"),
 					testAccCheckTagCategory("vergeio_tag.test", "vergeio_tag_category.test"),
 				),
 			},
@@ -82,6 +87,7 @@ func TestAccTagCategoryAndTag(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_tag_category.test", "taggable_nodes", "true"),
 					resource.TestCheckResourceAttr("vergeio_tag.test", "name", tagName+"-v2"),
 					resource.TestCheckResourceAttr("vergeio_tag.test", "description", "updated workloads"),
+					resource.TestCheckResourceAttrPair("vergeio_tag.test", "category_name", "vergeio_tag_category.test", "name"),
 					testAccCheckTagCategory("vergeio_tag.test", "vergeio_tag_category.test"),
 				),
 			},
