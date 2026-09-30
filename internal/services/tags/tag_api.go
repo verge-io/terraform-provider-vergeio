@@ -57,6 +57,12 @@ func (ta *TagsApi) createTag(ctx context.Context, data *TagResourceModel) error 
 }
 
 func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
+	if ta == nil || ta.sdk == nil || ta.sdk.Tags == nil {
+		return fmt.Errorf("tag client is not configured")
+	}
+	if data == nil {
+		return fmt.Errorf("tag is nil")
+	}
 	id, err := parseID(data.Id, "tag")
 	if err != nil {
 		return err
@@ -64,6 +70,12 @@ func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
 	tag, err := ta.sdk.Tags.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	// Get can return a nil tag or a zero tag when the body is empty or null.
+	// applyTag would then store id "0". Reject that instead of panicking or
+	// writing a tag that has no key.
+	if tag == nil || tag.Key.Int() <= 0 {
+		return fmt.Errorf("read tag %d: response was empty", id)
 	}
 	applyTag(data, tag)
 	tflog.Debug(ctx, fmt.Sprintf("read tag %d", id))

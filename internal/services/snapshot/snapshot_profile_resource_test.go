@@ -61,10 +61,14 @@ func TestSnapshotProfileResourceSchema(t *testing.T) {
 	if !ok || !frequency.Required {
 		t.Fatal("frequency should be required")
 	}
-	for _, name := range []string{"hour", "minute", "quiesce"} {
+	key, ok := block.NestedObject.Attributes["key"].(resschema.StringAttribute)
+	if !ok || !key.Computed || key.Optional || key.Required {
+		t.Fatal("key should be computed only")
+	}
+	for _, name := range []string{"hour", "minute", "day_of_week", "day_of_month", "month", "quiesce", "skip_missed", "max_tier", "min_snapshots", "immutable"} {
 		attr, ok := block.NestedObject.Attributes[name]
-		if !ok || !attr.IsOptional() {
-			t.Fatalf("%s should be optional", name)
+		if !ok || !attr.IsOptional() || !attr.IsComputed() {
+			t.Fatalf("%s should be optional and computed", name)
 		}
 	}
 	quiesce, ok := block.NestedObject.Attributes["quiesce"].(resschema.BoolAttribute)

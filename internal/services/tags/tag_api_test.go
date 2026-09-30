@@ -4,13 +4,16 @@
 package tags
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
 )
@@ -145,6 +148,94 @@ func TestTagCreateReadUpdateDelete(t *testing.T) {
 	if err := api.deleteTag(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestReadTagNilClientDoesNotPanic(t *testing.T) {
+	cases := []struct {
+		name string
+		api  *TagsApi
+	}{
+		{name: "nil api", api: nil},
+		{name: "nil sdk", api: &TagsApi{}},
+		{name: "nil tags service", api: &TagsApi{sdk: &vergeos.Client{}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.api.readTag(t.Context(), &TagResourceModel{Id: types.StringValue("4")})
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+		})
+	}
+}
+
+func TestReadTagNilResponseDoesNotPanic(t *testing.T) {
+	api := &TagsApi{sdk: &vergeos.Client{Tags: stubTagService{}}}
+	err := api.readTag(t.Context(), &TagResourceModel{Id: types.StringValue("4")})
+	if err == nil {
+		t.Fatal("nil tag response should be an error")
+	}
+
+	api.sdk.Tags = stubTagService{tag: &vergeos.Tag{Name: "production"}}
+	err = api.readTag(t.Context(), &TagResourceModel{Id: types.StringValue("4")})
+	if err == nil {
+		t.Fatal("tag response without a key should be an error")
+	}
+}
+
+func TestReadTagEmptyHTTPBodyDoesNotPanic(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case "/api/v4/tags/4":
+			_, _ = w.Write([]byte(`null`))
+		default:
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	err := api.readTag(t.Context(), &TagResourceModel{Id: types.StringValue("4")})
+	if err == nil {
+		t.Fatal("empty tag response should be an error")
+	}
+}
+
+// stubTagService is a TagServiceInterface whose Get returns a fixed tag.
+// The zero value returns a nil tag and a nil error.
+type stubTagService struct {
+	tag *vergeos.Tag
+}
+
+func (s stubTagService) List(context.Context, ...vergeos.ListOption) ([]vergeos.Tag, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s stubTagService) Get(context.Context, int) (*vergeos.Tag, error) {
+	return s.tag, nil
+}
+
+func (s stubTagService) GetByName(context.Context, string) (*vergeos.Tag, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s stubTagService) ListByCategory(context.Context, int) ([]vergeos.Tag, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s stubTagService) Create(context.Context, *vergeos.TagCreateRequest) (*vergeos.Tag, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s stubTagService) Update(context.Context, int, *vergeos.TagUpdateRequest) (*vergeos.Tag, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
+func (s stubTagService) Delete(context.Context, int) error {
+	return fmt.Errorf("not implemented")
 }
 
 func TestReadTagNotFound(t *testing.T) {

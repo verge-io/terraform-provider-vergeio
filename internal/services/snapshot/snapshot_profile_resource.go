@@ -16,7 +16,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -114,7 +113,7 @@ func (r *SnapshotProfileResource) Schema(ctx context.Context, req resource.Schem
 							MarkdownDescription: "Period key assigned by VergeOS.",
 							Computed:            true,
 							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
+								periodRefreshModifier{},
 							},
 						},
 						"name": schema.StringAttribute{
@@ -161,7 +160,7 @@ func optionalInt32(description string, validators ...validator.Int32) schema.Int
 		Optional:            true,
 		Computed:            true,
 		PlanModifiers: []planmodifier.Int32{
-			int32planmodifier.UseStateForUnknown(),
+			periodRefreshModifier{},
 		},
 		Validators: validators,
 	}
@@ -173,7 +172,7 @@ func optionalString(description string, validators ...validator.String) schema.S
 		Optional:            true,
 		Computed:            true,
 		PlanModifiers: []planmodifier.String{
-			stringplanmodifier.UseStateForUnknown(),
+			periodRefreshModifier{},
 		},
 		Validators: validators,
 	}
@@ -185,7 +184,7 @@ func optionalBool(description string) schema.BoolAttribute {
 		Optional:            true,
 		Computed:            true,
 		PlanModifiers: []planmodifier.Bool{
-			boolplanmodifier.UseStateForUnknown(),
+			periodRefreshModifier{},
 		},
 	}
 }

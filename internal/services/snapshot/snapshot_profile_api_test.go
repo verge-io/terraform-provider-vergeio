@@ -85,6 +85,40 @@ func TestPeriodInputsRequiresRetentionAndUniqueNames(t *testing.T) {
 	}
 }
 
+func TestPeriodInputsOmitsUnknownRefreshedFields(t *testing.T) {
+	got, err := periodInputs([]periodModel{{
+		Name:         types.StringValue("weekly"),
+		Frequency:    types.StringValue("weekly"),
+		Hour:         types.Int32Value(1),
+		Minute:       types.Int32Value(0),
+		DayOfWeek:    types.StringValue("sun"),
+		DayOfMonth:   types.Int32Unknown(),
+		Month:        types.Int32Unknown(),
+		Retention:    types.Int64Value(2419200),
+		Quiesce:      types.BoolValue(true),
+		SkipMissed:   types.BoolUnknown(),
+		MaxTier:      types.StringUnknown(),
+		MinSnapshots: types.Int32Unknown(),
+		Immutable:    types.BoolUnknown(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("periods = %d", len(got))
+	}
+	period := got[0]
+	if period.Retention != 2419200 || period.Hour == nil || *period.Hour != 1 || period.Minute == nil || *period.Minute != 0 {
+		t.Fatalf("configured fields = %+v", period)
+	}
+	if period.DayOfWeek == nil || *period.DayOfWeek != "sun" || period.Quiesce == nil || !*period.Quiesce {
+		t.Fatalf("configured fields = %+v", period)
+	}
+	if period.DayOfMonth != nil || period.Month != nil || period.SkipMissed != nil || period.MaxTier != nil || period.MinSnapshots != nil || period.Immutable != nil {
+		t.Fatalf("unknown refreshed fields were sent: %+v", period)
+	}
+}
+
 func TestOrderedPeriodsKeepsPriorOrder(t *testing.T) {
 	api := []vergeos.SnapshotProfilePeriod{
 		{Key: 2, Name: "weekly", Frequency: "weekly", Retention: 2419200},
