@@ -1255,6 +1255,10 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
+	// The file rows were written above. The VM read still has the previous
+	// bodies, and saving those fails apply with an inconsistent result.
+	usePlannedCloudInitFiles(&stateData, &planData)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)
 }
