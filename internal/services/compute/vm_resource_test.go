@@ -128,9 +128,13 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 		t.Fatal("boot_disk.key should be a string attribute")
 	}
 	assertPlanModifiers(t, "boot_disk.key", bootKey.PlanModifiers,
-		stringplanmodifier.UseStateForUnknown().Description(context.Background()),
+		stringplanmodifier.UseNonNullStateForUnknown().Description(context.Background()),
 	)
 	assertStringKeepsPriorState(t, "boot_disk.key", bootKey.PlanModifiers, "45", "46")
+	// Adding boot_disk to an existing VM has a null prior key. That plan must
+	// stay unknown so apply can store the key VergeOS assigns. Create already
+	// plans the key unknown and must stay that way.
+	assertStringStaysUnknownWhenPriorNull(t, "boot_disk.key", bootKey.PlanModifiers)
 
 	keepState := stringplanmodifier.UseStateForUnknown().Description(context.Background())
 	keepStateInt := int32planmodifier.UseStateForUnknown().Description(context.Background())
@@ -342,6 +346,46 @@ func assertStringKeepsPriorState(t *testing.T, name string, mods []planmodifier.
 	}
 	if plan.ValueString() != next {
 		t.Fatalf("%s configured plan = %s, want %q", name, plan, next)
+	}
+}
+
+// assertStringStaysUnknownWhenPriorNull covers a nested computed attribute
+// whose block is new. The resource is already in state, so the prior value
+// is null, and the framework has marked the plan unknown. Copying that null
+// makes apply fail with an inconsistent result. Create, where the whole
+// resource state is null, must also stay unknown.
+func assertStringStaysUnknownWhenPriorNull(t *testing.T, name string, mods []planmodifier.String) {
+	t.Helper()
+	plan := types.StringUnknown()
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringNull(),
+			PlanValue:   plan,
+			StateValue:  types.StringNull(),
+			State:       priorResourceState(),
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if !plan.IsUnknown() {
+		t.Fatalf("%s null prior plan = %s, want unknown", name, plan)
+	}
+
+	plan = types.StringUnknown()
+	for _, mod := range mods {
+		resp := &planmodifier.StringResponse{PlanValue: plan}
+		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+			ConfigValue: types.StringNull(),
+			PlanValue:   plan,
+			StateValue:  types.StringNull(),
+			State: tfsdk.State{
+				Raw: tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}, nil),
+			},
+		}, resp)
+		plan = resp.PlanValue
+	}
+	if !plan.IsUnknown() {
+		t.Fatalf("%s create plan = %s, want unknown", name, plan)
 	}
 }
 
