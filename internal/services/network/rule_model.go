@@ -14,10 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -82,9 +80,10 @@ func firewallRuleAttributes(mode ruleSchemaMode) map[string]schema.Attribute {
 		"id": schema.StringAttribute{
 			MarkdownDescription: "Rule id, the vnet_rules key.",
 			Computed:            true,
-			PlanModifiers: []planmodifier.String{
-				stringplanmodifier.UseStateForUnknown(),
-			},
+			// The list resource matches rules by name, and the list index is
+			// not that name. ruleIDPlanModifiers keeps a single rule's id and
+			// plans a list rule's id from the rule with the same name.
+			PlanModifiers: ruleIDPlanModifiers(mode),
 		},
 		"name": schema.StringAttribute{
 			MarkdownDescription: "Rule name, unique on the network. Rules are matched by name.",
@@ -177,8 +176,11 @@ func ruleOrder(mode ruleSchemaMode) schema.Attribute {
 	return schema.Int32Attribute{
 		MarkdownDescription: "Position assigned from the rule list, starting at 1. Lower is earlier.",
 		Computed:            true,
+		// orderid follows the list position. Copy it only when the same rule
+		// is still at this index. A new or moved rule stays unknown so apply
+		// can store the position VergeOS keeps.
 		PlanModifiers: []planmodifier.Int32{
-			int32planmodifier.UseStateForUnknown(),
+			ruleListComputedModifier{sameIndex: true},
 		},
 	}
 }

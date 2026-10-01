@@ -463,15 +463,21 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						"key": schema.StringAttribute{
 							Optional: true,
 							Computed: true,
+							// UseStateForUnknown copies the device at this index,
+							// including null when the block is new. Adding a
+							// device, or inserting one above another, then
+							// stores a different key and Terraform rejects the
+							// plan. Copy the key from the device with the same
+							// name, and leave a new device unknown.
 							PlanModifiers: []planmodifier.String{
-								stringplanmodifier.UseStateForUnknown(),
+								deviceComputedModifier{},
 							},
 						},
 						"machine": schema.Int32Attribute{
 							Computed: true,
 							Optional: true,
 							PlanModifiers: []planmodifier.Int32{
-								int32planmodifier.UseStateForUnknown(),
+								deviceComputedModifier{},
 							},
 						},
 						// "machine_type": schema.StringAttribute{
@@ -544,15 +550,18 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 								"key": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
+									// Same name match as the device key. A TPM
+									// block added with the device must stay
+									// unknown instead of copying null.
 									PlanModifiers: []planmodifier.Int32{
-										int32planmodifier.UseStateForUnknown(),
+										deviceComputedModifier{},
 									},
 								},
 								"machine_device": schema.Int32Attribute{
 									Optional: true,
 									Computed: true,
 									PlanModifiers: []planmodifier.Int32{
-										int32planmodifier.UseStateForUnknown(),
+										deviceComputedModifier{},
 									},
 								},
 								"model": schema.StringAttribute{
