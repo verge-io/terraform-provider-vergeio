@@ -29,6 +29,9 @@ func TestSyncDevicesCreatesFirstWhenStateIsEmpty(t *testing.T) {
 			if !strings.Contains(string(body), `"name":"gpu"`) {
 				t.Errorf("POST body = %s, want name gpu", body)
 			}
+			if strings.Contains(string(body), "settings_args") {
+				t.Errorf("non-TPM create sent settings_args: %s", body)
+			}
 			w.WriteHeader(http.StatusCreated)
 			if _, err := w.Write([]byte(`{"$key":"12"}`)); err != nil {
 				t.Errorf("write response: %v", err)
