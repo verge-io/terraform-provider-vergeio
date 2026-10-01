@@ -73,6 +73,10 @@ func TestTagResourceSchema(t *testing.T) {
 func TestTagImportReadReusesSDKClient(t *testing.T) {
 	var versionCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -163,6 +167,10 @@ func TestTagImportState(t *testing.T) {
 
 func TestTagReadRemovesMissingTag(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -216,6 +224,10 @@ func TestTagUpdateRefreshesCategoryName(t *testing.T) {
 		newCategory = "tf-acc-tagcat-abc-v2"
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":

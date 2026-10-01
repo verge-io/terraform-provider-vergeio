@@ -96,11 +96,11 @@ func (va *VMApi) findVMByMachine(ctx context.Context, machineID int32) (*vergeos
 	case 0:
 		return nil, nil
 	case 1:
-		return va.sdk.VMs.Get(ctx, found[0].ID.Int())
+		return va.sdk.VMs.Get(ctx, found[0].Key.Int())
 	default:
 		ids := make([]string, 0, len(found))
 		for _, vm := range found {
-			ids = append(ids, strconv.Itoa(vm.ID.Int()))
+			ids = append(ids, strconv.Itoa(vm.Key.Int()))
 		}
 		return nil, fmt.Errorf("%d VMs use machine %d (ids %s)", len(found), machineID, strings.Join(ids, ", "))
 	}

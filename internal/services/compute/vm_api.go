@@ -457,10 +457,10 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		return err
 	}
 
-	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vm.ID))
+	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vm.Key))
 
 	// save into the Terraform state.
-	data.Id = types.StringValue(strconv.Itoa(vm.ID.Int()))
+	data.Id = types.StringValue(strconv.Itoa(vm.Key.Int()))
 
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
 
@@ -759,7 +759,7 @@ func (va *VMApi) detachCloudInit(ctx context.Context, data *VMResourceModel) err
 	}
 
 	for _, file := range files {
-		fileKey := file.ID.Int()
+		fileKey := file.Key.Int()
 		tflog.Debug(ctx, fmt.Sprintf("Deleting cloud-init file %d", fileKey))
 		if err := va.sdk.CloudInitFiles.Delete(ctx, fileKey); err != nil {
 			return fmt.Errorf("error deleting cloud-init file %d: %v", fileKey, err)
@@ -966,7 +966,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	if err != nil {
 		return err
 	}
-	if vm == nil || vm.ID.Int() <= 0 {
+	if vm == nil || vm.Key.Int() <= 0 {
 		return fmt.Errorf("read VM %d: response was empty", vmID)
 	}
 
@@ -1116,7 +1116,7 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 		vmAPIResp = append(vmAPIResp, VMAPIDataSourceModel{
 			Id:          int32(vm.Machine), // Machine reference ID
 			Name:        vm.Name,
-			Key:         int32(vm.ID.Int()), // VM Key (was $key in API)
+			Key:         int32(vm.Key.Int()), // VM Key (was $key in API)
 			IsSnapshot:  vm.IsSnapshot,
 			CPUType:     vm.CPUType,
 			MachineType: vm.MachineType,

@@ -145,6 +145,10 @@ func TestTagCategoryCreateSendsExplicitFalseOnWire(t *testing.T) {
 func TestTagCategoryUpdateOmitsUnchangedFalseOnWire(t *testing.T) {
 	var gotPut map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":
@@ -191,6 +195,10 @@ func TestTagCategoryUpdateOmitsUnchangedFalseOnWire(t *testing.T) {
 
 func TestTagCategoryReadNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -213,6 +221,10 @@ func TestTagCategoryReadNotFound(t *testing.T) {
 
 func TestTagCategoryDeleteNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -238,6 +250,10 @@ func postTagCategory(t *testing.T, data *TagCategoryResourceModel) map[string]an
 	var got map[string]any
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":

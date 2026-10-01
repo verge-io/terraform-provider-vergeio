@@ -121,7 +121,7 @@ func TestApplyVMDropsUnreadConsolePass(t *testing.T) {
 			MachineType: types.StringNull(),
 		}
 		applyVM(data, &vergeos.VM{
-			ID:          9,
+			Key:         9,
 			Name:        "vm",
 			ConsolePass: "from-api",
 		})

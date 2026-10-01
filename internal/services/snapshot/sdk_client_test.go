@@ -20,7 +20,7 @@ func TestSnapshotProfileConstructorReturnsClientError(t *testing.T) {
 		t.Fatalf("nil client: api=%v err=%v", api, err)
 	}
 
-	api, err = NewSnapshotProfileApi(versionClient(t, "27.0.0"))
+	api, err = NewSnapshotProfileApi(versionClient(t, "25.0.0"))
 	if err == nil || api != nil {
 		t.Fatalf("unsupported version: api=%v err=%v", api, err)
 	}
@@ -40,6 +40,10 @@ func TestSnapshotProfileConstructorReturnsClientError(t *testing.T) {
 func versionClient(t *testing.T, version string) *vergeio.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
 	}))

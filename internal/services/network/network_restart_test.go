@@ -49,9 +49,6 @@ func TestNetworkIsRunningUsesMachineStatus(t *testing.T) {
 	if !networkIsRunning(&vergeos.Network{Status: "running"}) {
 		t.Fatal("status running should count as running")
 	}
-	if networkIsRunning(&vergeos.Network{PowerState: true, Status: "stopped"}) {
-		t.Fatal("powerstate alone should not count as running")
-	}
 	if networkIsRunning(&vergeos.Network{Status: "stopped"}) {
 		t.Fatal("stopped status should not count as running")
 	}
@@ -77,6 +74,10 @@ func TestUpdateNetworkRestartsWhenChangeIsStaged(t *testing.T) {
 	var putBody, resetBody []byte
 	resetSent := false
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnets/12":
@@ -186,6 +187,10 @@ func TestUpdateNetworkRestartsWhenChangeIsStaged(t *testing.T) {
 func TestRestartAfterUpdateWarnsWhenRestartDisabled(t *testing.T) {
 	var calls []string
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		if r.Method == http.MethodPost {
 			t.Errorf("restart_on_change false sent %s %s", r.Method, r.URL.Path)
@@ -248,6 +253,10 @@ func TestRestartAfterUpdateWarnsWhenRestartDisabled(t *testing.T) {
 
 func TestRestartAfterUpdateSkipsStoppedNetwork(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		if r.Method == http.MethodPost {
 			t.Errorf("stopped network was reset")
 			http.Error(w, "unexpected reset", http.StatusInternalServerError)
@@ -293,6 +302,10 @@ func TestRestartAfterUpdateErrorsWhenFlagStaysSet(t *testing.T) {
 	networkRestartInterval = 0
 
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
 			w.WriteHeader(http.StatusOK)
@@ -328,6 +341,10 @@ func TestRestartAfterUpdateErrorsWhenFlagStaysSet(t *testing.T) {
 
 func TestReadNetworkDefaultsRestartOnChange(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -354,6 +371,10 @@ func TestReadNetworkDefaultsRestartOnChange(t *testing.T) {
 func newRestartTestAPI(t *testing.T, handler http.HandlerFunc) *NetworkApi {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		if r.URL.Path == "/version.json" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)

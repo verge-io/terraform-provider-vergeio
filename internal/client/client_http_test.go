@@ -33,6 +33,10 @@ func TestDoUsesBasicAuthWithoutAPIKey(t *testing.T) {
 	var user, pass string
 	var ok bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		user, pass, ok = r.BasicAuth()
 		if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
@@ -59,6 +63,10 @@ func TestDoUsesBasicAuthWithoutAPIKey(t *testing.T) {
 func TestDoUsesBearerTokenWhenAPIKeySet(t *testing.T) {
 	var auth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		auth = r.Header.Get("Authorization")
 		if _, _, ok := r.BasicAuth(); ok {
 			t.Error("basic auth was sent with an API key")
@@ -93,6 +101,10 @@ func TestDoUsesBearerTokenWhenAPIKeySet(t *testing.T) {
 
 func TestDoTimesOut(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		<-r.Context().Done()
 	}))
 	defer server.Close()
@@ -116,6 +128,10 @@ func TestDoTimesOut(t *testing.T) {
 
 func TestDoHonorsContextCancel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		<-r.Context().Done()
 	}))
 	defer server.Close()
@@ -204,6 +220,10 @@ func TestDoDoesNotLazilyCreateHTTPClient(t *testing.T) {
 
 func TestConcurrentDoDoesNotRace(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"response":"ok"}`))

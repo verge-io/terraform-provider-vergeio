@@ -72,6 +72,10 @@ func TestDeleteDiskUnplugsOnceThenWaits(t *testing.T) {
 	statusReads := 0
 	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -142,6 +146,10 @@ func TestDeleteDiskTimeoutNamesDriveAndStatus(t *testing.T) {
 
 	unplugs := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		switch {
 		case r.URL.Path == "/version.json":
 			w.WriteHeader(http.StatusOK)
@@ -188,6 +196,10 @@ func TestDeleteDiskWaitsWhenUnplugAlreadyInProgress(t *testing.T) {
 	unplugs := 0
 	statusReads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		switch {
 		case r.URL.Path == "/version.json":
 			w.WriteHeader(http.StatusOK)
@@ -233,6 +245,10 @@ func TestDeleteNICUnplugsOnceThenWaits(t *testing.T) {
 	statusReads := 0
 	deleted := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -295,6 +311,10 @@ func TestDeleteNICTimeoutNamesNICAndStatus(t *testing.T) {
 
 	unplugs := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		switch {
 		case r.URL.Path == "/version.json":
 			w.WriteHeader(http.StatusOK)

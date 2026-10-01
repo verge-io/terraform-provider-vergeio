@@ -15,6 +15,10 @@ import (
 func TestSyncDisksRenamePutsInPlace(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -76,6 +80,10 @@ func TestSyncDisksRenamePutsInPlace(t *testing.T) {
 
 func TestSyncDisksMediaChangeDoesNotRecreate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		http.Error(w, "unexpected", http.StatusInternalServerError)
 	}))
@@ -103,6 +111,10 @@ func TestSyncDisksMediaChangeDoesNotRecreate(t *testing.T) {
 
 func TestSyncDisksUnrelatedVMUpdateDoesNotRewrite(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		http.Error(w, "unexpected", http.StatusInternalServerError)
 	}))
@@ -159,6 +171,10 @@ func TestSyncDisksDescriptionChangeOmitsDiskSize(t *testing.T) {
 	var putBody string
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -243,6 +259,10 @@ func TestSyncDisksDescriptionChangeOmitsDiskSize(t *testing.T) {
 func TestSyncDisksNameFallbackUpdatesExistingKey(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		if r.Method == http.MethodPut && r.URL.Path == "/api/v4/machine_drives/11" {
 			w.WriteHeader(http.StatusOK)
@@ -287,6 +307,10 @@ func TestSyncDisksNameFallbackUpdatesExistingKey(t *testing.T) {
 func TestSyncDisksDeletesLastWhenPlanIsEmpty(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
 		case r.URL.Path == "/version.json":
@@ -343,6 +367,10 @@ func TestSyncDisksHotplugsCreatedDriveOnRunningVM(t *testing.T) {
 	var hotplugBody string
 	statusReads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -425,6 +453,10 @@ func TestSyncDisksHotplugsCreatedDriveOnRunningVM(t *testing.T) {
 func TestSyncDisksCreateOnStoppedVMDoesNotHotplug(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
@@ -471,6 +503,10 @@ func TestSyncDisksCreateOnStoppedVMDoesNotHotplug(t *testing.T) {
 func TestSyncDisksSkipsHotplugForDisabledDrive(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
@@ -515,6 +551,10 @@ func TestSyncDisksSkipsHotplugForDisabledDrive(t *testing.T) {
 func TestSyncDisksHotplugRefusalRequiresPowerCycle(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		switch {
 		case r.URL.Path == "/version.json":
@@ -572,6 +612,10 @@ func TestSyncDisksHotplugRefusalRequiresPowerCycle(t *testing.T) {
 func TestHotplugDriveUnplugSetsFlag(t *testing.T) {
 	var body string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)

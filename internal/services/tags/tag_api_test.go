@@ -78,6 +78,10 @@ func TestTagUpdateRequestDoesNotSendCategory(t *testing.T) {
 func TestTagCreateReadUpdateDelete(t *testing.T) {
 	var gotPost, gotPut map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":
@@ -185,6 +189,10 @@ func TestReadTagNilResponseDoesNotPanic(t *testing.T) {
 
 func TestReadTagEmptyHTTPBodyDoesNotPanic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -218,7 +226,7 @@ func (s stubTagService) Get(context.Context, int) (*vergeos.Tag, error) {
 	return s.tag, nil
 }
 
-func (s stubTagService) GetByName(context.Context, string) (*vergeos.Tag, error) {
+func (s stubTagService) GetByName(context.Context, int, string) (*vergeos.Tag, error) {
 	return nil, fmt.Errorf("not implemented")
 }
 
@@ -240,6 +248,10 @@ func (s stubTagService) Delete(context.Context, int) error {
 
 func TestReadTagNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":

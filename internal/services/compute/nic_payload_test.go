@@ -196,12 +196,12 @@ func TestPreserveNICConfigFields(t *testing.T) {
 
 func TestSortNICsForState(t *testing.T) {
 	nics := []vergeos.VMNIC{
-		{ID: vergeos.FlexInt(3), Name: "nic1"},
-		{ID: vergeos.FlexInt(1), Name: "nic0"},
-		{ID: vergeos.FlexInt(2), Name: "nic1"},
+		{Key: vergeos.FlexInt(3), Name: "nic1"},
+		{Key: vergeos.FlexInt(1), Name: "nic0"},
+		{Key: vergeos.FlexInt(2), Name: "nic1"},
 	}
 	sortNICsForState(nics)
-	if nics[0].Name != "nic0" || nics[1].ID.Int() != 2 || nics[2].ID.Int() != 3 {
+	if nics[0].Name != "nic0" || nics[1].Key.Int() != 2 || nics[2].Key.Int() != 3 {
 		t.Fatalf("unexpected NIC order: %#v", nics)
 	}
 }

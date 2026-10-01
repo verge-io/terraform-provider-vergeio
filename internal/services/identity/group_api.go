@@ -61,7 +61,7 @@ func groupUpdateRequest(plan, state *GroupResourceModel) *vergeos.GroupUpdateReq
 }
 
 func applyGroup(data *GroupResourceModel, group *vergeos.Group) {
-	data.Id = idString(group.ID.Int())
+	data.Id = idString(group.Key.Int())
 	data.Name = types.StringValue(group.Name)
 	data.Description = types.StringValue(group.Description)
 	data.Enabled = types.BoolValue(group.Enabled)

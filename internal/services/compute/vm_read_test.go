@@ -26,6 +26,10 @@ func TestReadVMNilClientDoesNotPanic(t *testing.T) {
 
 func TestReadVMEmptyResponseDoesNotPanic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -47,6 +51,10 @@ func TestReadVMEmptyResponseDoesNotPanic(t *testing.T) {
 
 func TestReadVMAppliesSnapshotProfile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -75,6 +83,10 @@ func TestReadVMAppliesSnapshotProfile(t *testing.T) {
 func TestReadVMRetriesSDKSetup(t *testing.T) {
 	var versionCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -114,6 +126,10 @@ func TestReadVMRetriesSDKSetup(t *testing.T) {
 func TestReadVMReusesSDKClient(t *testing.T) {
 	var versionCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -153,6 +169,10 @@ func TestReadVMReusesSDKClient(t *testing.T) {
 // plan does not show the drift.
 func TestReadVMPrefersMachineRunning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -180,6 +200,10 @@ func TestReadVMPrefersMachineRunning(t *testing.T) {
 // running field.
 func TestReadVMKeepsPowerStateAlias(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":

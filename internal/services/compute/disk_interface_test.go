@@ -104,6 +104,10 @@ func TestDriveInterfaceSchemaAllowsDocumentedValues(t *testing.T) {
 
 func TestValidateDiskInterfaceUsesAPIList(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/version.json" {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
@@ -145,6 +149,10 @@ func TestValidateDiskInterfaceUsesAPIList(t *testing.T) {
 
 func TestValidateDiskInterfaceRejectsValueMissingFromAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/version.json" {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))

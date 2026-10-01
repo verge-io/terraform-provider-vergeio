@@ -76,6 +76,10 @@ func TestClusterDataSource_Schema(t *testing.T) {
 func TestClusterDataSource_Configure_WithValidClient(t *testing.T) {
 	dataSource := &ClusterDataSource{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))

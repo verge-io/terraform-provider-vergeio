@@ -488,6 +488,6 @@ func (r *VMNICResource) fillVMID(ctx context.Context, data *vmNICResourceModel) 
 	if vm == nil {
 		return fmt.Errorf("no VM found for machine %d", data.Machine.ValueInt32())
 	}
-	data.VMID = types.StringValue(fmt.Sprintf("%d", vm.ID.Int()))
+	data.VMID = types.StringValue(fmt.Sprintf("%d", vm.Key.Int()))
 	return nil
 }

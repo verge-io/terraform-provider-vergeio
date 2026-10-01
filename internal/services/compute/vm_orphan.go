@@ -78,15 +78,15 @@ func (va *VMApi) findVMByName(ctx context.Context, name string) (*vergeos.VM, er
 	case 0:
 		return nil, nil
 	case 1:
-		full, err := va.sdk.VMs.Get(ctx, found[0].ID.Int())
+		full, err := va.sdk.VMs.Get(ctx, found[0].Key.Int())
 		if err != nil {
-			return nil, fmt.Errorf("reading VM %q (id %d): %w", name, found[0].ID.Int(), err)
+			return nil, fmt.Errorf("reading VM %q (id %d): %w", name, found[0].Key.Int(), err)
 		}
 		return full, nil
 	default:
 		ids := make([]string, 0, len(found))
 		for _, vm := range found {
-			ids = append(ids, strconv.Itoa(vm.ID.Int()))
+			ids = append(ids, strconv.Itoa(vm.Key.Int()))
 		}
 		return nil, fmt.Errorf("%d VMs are named %q (ids %s)", len(found), name, strings.Join(ids, ", "))
 	}
@@ -105,7 +105,7 @@ func (r *VMResource) adoptOrphanVM(ctx context.Context, data *VMResourceModel) e
 		return fmt.Errorf("VM %q is already in use, but no VM with that name was found. Delete the conflicting VM in VergeOS, or import it with `terraform import vergeio_vm.<name> <id>`", name)
 	}
 
-	id := strconv.Itoa(existing.ID.Int())
+	id := strconv.Itoa(existing.Key.Int())
 	if ok, reason := vmConfigMatches(data, existing); !ok {
 		return fmt.Errorf("VM %q already exists with id %s and was not adopted because %s. Import it with `terraform import vergeio_vm.<name> %s`, or delete the VM in VergeOS and apply again", name, id, reason, id)
 	}

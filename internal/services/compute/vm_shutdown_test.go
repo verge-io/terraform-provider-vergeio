@@ -404,6 +404,10 @@ func TestGracefulPowerOffPostsPoweroffAndPolls(t *testing.T) {
 	var actions []string
 	statusReads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -450,6 +454,10 @@ func TestGracefulPowerOffTimeoutDoesNotKill(t *testing.T) {
 
 	var actions []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, _ := io.ReadAll(r.Body)
 		switch {
 		case r.URL.Path == "/version.json":
@@ -490,6 +498,10 @@ func TestGracefulPowerOffForcePostsKill(t *testing.T) {
 	var mu sync.Mutex
 	var actions []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		kills := 0

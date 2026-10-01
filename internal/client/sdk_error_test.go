@@ -33,7 +33,7 @@ func TestCachedVergeosClientNilClient(t *testing.T) {
 }
 
 func TestNewVergeosClientRejectsUnsupportedVersion(t *testing.T) {
-	sdk, err := versionClient(t, "27.0.0", true).NewVergeosClient()
+	sdk, err := versionClient(t, "25.0.0", true).NewVergeosClient()
 	if err == nil || sdk != nil {
 		t.Fatalf("sdk=%v err=%v", sdk, err)
 	}
@@ -48,10 +48,14 @@ func TestNewVergeosClientRejectsUnsupportedVersion(t *testing.T) {
 func TestCachedVergeosClientRetriesAfterFailure(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls++
 		w.Header().Set("Content-Type", "application/json")
 		if calls == 1 {
-			_, _ = w.Write([]byte(`{"version":"27.0.0"}`))
+			_, _ = w.Write([]byte(`{"version":"25.0.0"}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
@@ -75,6 +79,10 @@ func TestCachedVergeosClientRetriesAfterFailure(t *testing.T) {
 
 func TestNewVergeosClientRejectsUntrustedCertificate(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -98,6 +106,10 @@ func TestNewVergeosClientRejectsUntrustedCertificate(t *testing.T) {
 func versionClient(t *testing.T, version string, insecure bool) *Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
 	}))

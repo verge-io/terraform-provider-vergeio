@@ -183,6 +183,10 @@ func TestImportPermissionResolvesUserByIdentity(t *testing.T) {
 func permissionServer(t *testing.T, extra func(http.ResponseWriter, *http.Request) bool) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		if extra != nil && extra(w, r) {
 			return

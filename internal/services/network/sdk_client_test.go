@@ -25,7 +25,7 @@ func mustAPI[T any](api T, err error) T {
 }
 
 func TestNetworkConstructorsReturnClientError(t *testing.T) {
-	bad := versionClient(t, "27.0.0")
+	bad := versionClient(t, "25.0.0")
 	good := versionClient(t, "26.0.0")
 
 	api, err := NewNetworkApi(nil)
@@ -57,7 +57,7 @@ func TestNetworkConstructorsReturnClientError(t *testing.T) {
 func TestNetworkDataSourceConfigureReportsClientError(t *testing.T) {
 	d := &NetworkDataSource{}
 	resp := &datasource.ConfigureResponse{}
-	d.Configure(t.Context(), datasource.ConfigureRequest{ProviderData: versionClient(t, "27.0.0")}, resp)
+	d.Configure(t.Context(), datasource.ConfigureRequest{ProviderData: versionClient(t, "25.0.0")}, resp)
 	requireClientDiagnostic(t, resp.Diagnostics)
 	if d.networkApi != nil {
 		t.Fatal("network API was stored after the client could not be created")
@@ -67,7 +67,7 @@ func TestNetworkDataSourceConfigureReportsClientError(t *testing.T) {
 func TestNetworkResourceConfigureReportsClientError(t *testing.T) {
 	r := &NetworkResource{}
 	resp := &resource.ConfigureResponse{}
-	r.Configure(t.Context(), resource.ConfigureRequest{ProviderData: versionClient(t, "27.0.0")}, resp)
+	r.Configure(t.Context(), resource.ConfigureRequest{ProviderData: versionClient(t, "25.0.0")}, resp)
 	requireClientDiagnostic(t, resp.Diagnostics)
 	if r.networkApi != nil {
 		t.Fatal("network API was stored after the client could not be created")
@@ -76,6 +76,10 @@ func TestNetworkResourceConfigureReportsClientError(t *testing.T) {
 
 func TestNewNetworkApiRejectsUntrustedCertificate(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -96,6 +100,10 @@ func TestNewNetworkApiRejectsUntrustedCertificate(t *testing.T) {
 func versionClient(t *testing.T, version string) *vergeio.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
 	}))

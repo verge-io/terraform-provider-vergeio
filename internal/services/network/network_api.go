@@ -103,7 +103,7 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		return err
 	}
 
-	data.Id = types.StringValue(fmt.Sprintf("%d", network.ID.Int()))
+	data.Id = types.StringValue(fmt.Sprintf("%d", network.Key.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
 
 	return nil
@@ -275,9 +275,9 @@ func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkR
 	network := networks[0]
 	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
 
-	data.PowerState = types.BoolValue(network.PowerState)
+	data.PowerState = types.BoolValue(network.Running)
 
-	tflog.Debug(ctx, fmt.Sprintf("Network status read from API is: %t", network.PowerState))
+	tflog.Debug(ctx, fmt.Sprintf("Network status read from API is: %t", network.Running))
 
 	return nil
 }
@@ -437,7 +437,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.IPaddress_Type = types.StringValue("static")
 	data.Layer2_Type = types.StringValue("vlan")
 	data.Enable_Bonding = types.BoolValue(false)
-	data.PowerState = types.BoolValue(network.PowerState)
+	data.PowerState = types.BoolValue(network.Running)
 	data.NeedRestart = types.BoolValue(network.NeedRestart)
 	// restart_on_change is not a VergeOS field. Keep an explicit setting and
 	// fill the default when state has never stored one, such as after import.
@@ -496,7 +496,7 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 	var networkAPIResp []NetworkAPIDataSourceModel
 	for _, network := range networks {
 		networkAPIResp = append(networkAPIResp, NetworkAPIDataSourceModel{
-			Id:          int32(network.ID.Int()),
+			Id:          int32(network.Key.Int()),
 			Name:        network.Name,
 			Description: network.Description,
 		})

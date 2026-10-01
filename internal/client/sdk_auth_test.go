@@ -16,10 +16,16 @@ import (
 func TestSDKOptionsUsesAPIKeyOverPassword(t *testing.T) {
 	var auth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth = r.Header.Get("Authorization")
-		if _, _, ok := r.BasicAuth(); ok {
-			t.Error("basic auth was sent with an API key")
+		if r.URL.Path == "/api/v4/clusters" {
+			auth = r.Header.Get("Authorization")
+			if _, _, ok := r.BasicAuth(); ok {
+				t.Error("basic auth was sent with an API key")
+			}
 		}
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -49,7 +55,13 @@ func TestSDKOptionsUsesBasicAuth(t *testing.T) {
 	var user, pass string
 	var ok bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok = r.BasicAuth()
+		if r.URL.Path == "/api/v4/clusters" {
+			user, pass, ok = r.BasicAuth()
+		}
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -66,6 +78,10 @@ func TestSDKOptionsUsesBasicAuth(t *testing.T) {
 
 func TestSDKOptionsInsecureTLS(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -98,6 +114,10 @@ func TestSDKOptionsInsecureTLS(t *testing.T) {
 
 func TestSDKOptionsTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		time.Sleep(500 * time.Millisecond)
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))

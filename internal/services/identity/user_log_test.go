@@ -32,6 +32,10 @@ func TestUserCreateDoesNotLogPassword(t *testing.T) {
 
 	var sent []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)

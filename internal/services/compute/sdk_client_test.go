@@ -24,7 +24,7 @@ func mustAPI[T any](api T, err error) T {
 }
 
 func TestComputeConstructorsReturnClientError(t *testing.T) {
-	bad := versionClient(t, "27.0.0")
+	bad := versionClient(t, "25.0.0")
 	good := versionClient(t, "26.0.0")
 
 	vm, err := NewVMApi(nil)
@@ -71,7 +71,7 @@ func TestComputeConstructorsReturnClientError(t *testing.T) {
 func TestVMResourceConfigureReportsClientError(t *testing.T) {
 	r := &VMResource{}
 	resp := &resource.ConfigureResponse{}
-	r.Configure(t.Context(), resource.ConfigureRequest{ProviderData: versionClient(t, "27.0.0")}, resp)
+	r.Configure(t.Context(), resource.ConfigureRequest{ProviderData: versionClient(t, "25.0.0")}, resp)
 	requireClientDiagnostic(t, resp.Diagnostics)
 	if r.vmApi != nil || r.diskApi != nil || r.nicApi != nil || r.deviceApi != nil {
 		t.Fatal("VM APIs were stored after the client could not be created")
@@ -81,6 +81,10 @@ func TestVMResourceConfigureReportsClientError(t *testing.T) {
 func versionClient(t *testing.T, version string) *vergeio.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
 	}))

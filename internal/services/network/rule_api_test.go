@@ -17,6 +17,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
 )
 
 func TestFirewallResourceNames(t *testing.T) {
@@ -295,6 +297,10 @@ func TestManagedRulesOmitSystemAndSort(t *testing.T) {
 func newRuleTestAPI(t *testing.T, handler http.HandlerFunc) *RuleApi {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		if r.URL.Path == "/version.json" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -387,6 +393,10 @@ func (f *ruleFixture) lastVNet() int {
 }
 
 func (f *ruleFixture) serve(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
@@ -428,6 +438,10 @@ func (f *ruleFixture) ruleList() []map[string]any {
 }
 
 func (f *ruleFixture) createRule(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	body := readMap(f.t, r)
 	f.next++
 	body["$key"] = f.next
@@ -437,6 +451,10 @@ func (f *ruleFixture) createRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) getRule(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	key := pathKey(r.URL.Path)
 	rule, ok := f.rules[key]
 	if !ok {
@@ -447,6 +465,10 @@ func (f *ruleFixture) getRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) updateRule(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	key := pathKey(r.URL.Path)
 	rule, ok := f.rules[key]
 	if !ok {
@@ -461,6 +483,10 @@ func (f *ruleFixture) updateRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) deleteRule(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	key := pathKey(r.URL.Path)
 	if _, ok := f.rules[key]; !ok {
 		writeJSON(f.t, w, http.StatusNotFound, map[string]any{"err": "not found"})
@@ -490,6 +516,10 @@ func (f *ruleFixture) getNetwork(w http.ResponseWriter) {
 }
 
 func (f *ruleFixture) apply(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	body := readMap(f.t, r)
 	f.applies++
 	f.action, _ = body["action"].(string)
@@ -502,6 +532,10 @@ func (f *ruleFixture) apply(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) createAlias(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	body := readMap(f.t, r)
 	f.next++
 	body["$key"] = f.next
@@ -510,6 +544,10 @@ func (f *ruleFixture) createAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) getAlias(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	key := pathKey(r.URL.Path)
 	alias, ok := f.aliases[key]
 	if !ok {
@@ -520,6 +558,10 @@ func (f *ruleFixture) getAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) updateAlias(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	key := pathKey(r.URL.Path)
 	alias, ok := f.aliases[key]
 	if !ok {
@@ -533,6 +575,10 @@ func (f *ruleFixture) updateAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *ruleFixture) deleteAlias(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	key := pathKey(r.URL.Path)
 	if _, ok := f.aliases[key]; !ok {
 		writeJSON(f.t, w, http.StatusNotFound, map[string]any{"err": "not found"})
