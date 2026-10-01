@@ -4,16 +4,15 @@
 package compute
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"terraform-provider-vergeio/internal/client"
 )
@@ -36,52 +35,55 @@ func TestNormalizeTPMVersion(t *testing.T) {
 	}
 }
 
-func TestTPMVersionPlanUsesStoredValue(t *testing.T) {
-	ctx := t.Context()
-	vmSchema := vmSchema(t)
-	state := tfsdk.State{
-		Schema: vmSchema,
-		Raw:    tftypes.NewValue(vmSchema.Type().TerraformType(ctx), nil),
-	}
+func TestTPMVersionSemanticEquals(t *testing.T) {
 	for _, tc := range []struct {
-		config string
-		want   string
+		prior string
+		next  string
+		want  bool
 	}{
-		{config: "2.0", want: "2"},
-		{config: "1.2", want: "1"},
-		{config: "2", want: "2"},
-		{config: "1", want: "1"},
-		{config: " 1.2 ", want: "1"},
+		{prior: "2.0", next: "2", want: true},
+		{prior: "2", next: "2.0", want: true},
+		{prior: "1.2", next: "1", want: true},
+		{prior: "1", next: "1.2", want: true},
+		{prior: "2.0", next: "2.0", want: true},
+		{prior: "2", next: "2", want: true},
+		{prior: "1.2", next: "1.2", want: true},
+		{prior: "1", next: "1", want: true},
+		{prior: " 2.0 ", next: "2", want: true},
+		{prior: " 1.2 ", next: "1", want: true},
+		{prior: "2.0", next: "1.2", want: false},
+		{prior: "2", next: "1", want: false},
+		{prior: "2.0", next: "1", want: false},
+		{prior: "other", next: "2", want: false},
 	} {
-		device := configuredTPM("tpm")
-		device.DeviceTPMSettingsModel.Version = types.StringValue(tc.config)
-		config := vmValue(t, vmSchema, []*deviceResourceModel{device})
-		assertDeviceString(t, ctx, vmSchema, config, state, 0, "tpm_settings.version", tc.want)
+		equal, diags := NewTPMVersionValue(tc.next).StringSemanticEquals(t.Context(), NewTPMVersionValue(tc.prior))
+		if diags.HasError() {
+			t.Fatalf("StringSemanticEquals(%q, %q) diagnostics: %s", tc.next, tc.prior, diags)
+		}
+		if equal != tc.want {
+			t.Errorf("StringSemanticEquals(%q, %q) = %t, want %t", tc.next, tc.prior, equal, tc.want)
+		}
 	}
 
-	unknown := configuredTPM("tpm")
-	unknown.DeviceTPMSettingsModel.Version = types.StringNull()
-	config := vmValue(t, vmSchema, []*deviceResourceModel{unknown})
-	assertDeviceUnknown(t, ctx, vmSchema, config, state, 0, "tpm_settings.version")
+	equal, diags := NewTPMVersionValue("2.0").StringSemanticEquals(t.Context(), types.StringValue("2"))
+	if equal || !diags.HasError() {
+		t.Fatalf("unexpected type equal=%t diags=%s", equal, diags)
+	}
 }
 
-func TestTPMVersionPlanKeepsOmittedValue(t *testing.T) {
-	resp := &planmodifier.StringResponse{PlanValue: types.StringValue("2")}
-	tpmVersionModifier{}.PlanModifyString(t.Context(), planmodifier.StringRequest{
-		ConfigValue: types.StringNull(),
-		PlanValue:   types.StringValue("2"),
-	}, resp)
-	if resp.PlanValue.IsNull() || resp.PlanValue.IsUnknown() || resp.PlanValue.ValueString() != "2" {
-		t.Fatalf("omitted version plan = %s, want prior stored value 2", resp.PlanValue)
+func TestTPMVersionSchemaKeepsConfig(t *testing.T) {
+	resp := &fwresource.SchemaResponse{}
+	NewVMResource().Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+	version := deviceSettingString(t, resp.Schema.Blocks, "tpm_settings", "version")
+	if len(version.PlanModifiers) != 0 {
+		t.Fatalf("tpm_settings.version has %d plan modifiers, want 0", len(version.PlanModifiers))
 	}
-
-	unknown := &planmodifier.StringResponse{PlanValue: types.StringUnknown()}
-	tpmVersionModifier{}.PlanModifyString(t.Context(), planmodifier.StringRequest{
-		ConfigValue: types.StringUnknown(),
-		PlanValue:   types.StringUnknown(),
-	}, unknown)
-	if unknown.PlanValue.IsNull() || !unknown.PlanValue.IsUnknown() {
-		t.Fatalf("unknown version plan = %s, want unknown", unknown.PlanValue)
+	custom, ok := version.CustomType.(TPMVersionType)
+	if !ok {
+		t.Fatalf("tpm_settings.version custom type = %T, want TPMVersionType", version.CustomType)
+	}
+	if !custom.Equal(TPMVersionType{}) {
+		t.Fatal("tpm_settings.version custom type is not TPMVersionType")
 	}
 }
 
@@ -117,9 +119,9 @@ func TestUpdateTPMSettingsSendsStoredVersion(t *testing.T) {
 			writeTestBody(t, w, http.StatusOK, `{}`)
 		}))
 
-		version := types.StringNull()
+		version := NewTPMVersionNull()
 		if !tc.omit {
-			version = types.StringValue(tc.version)
+			version = NewTPMVersionValue(tc.version)
 		}
 		api := &DeviceApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
 		err := api.updateTPMSettings(t.Context(), &deviceResourceModel{
@@ -261,6 +263,6 @@ func tpmDevice(version string) *deviceResourceModel {
 	device := configuredTPM("tpm")
 	device.Key = types.StringValue("3")
 	device.DeviceTPMSettingsModel.Key = types.Int32Value(9)
-	device.DeviceTPMSettingsModel.Version = types.StringValue(version)
+	device.DeviceTPMSettingsModel.Version = NewTPMVersionValue(version)
 	return device
 }
