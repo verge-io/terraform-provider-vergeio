@@ -137,7 +137,7 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 
 // networkCreateRequest builds the SDK create body.
 // A value that is null or unknown is left unset. An explicit false, 0, or ""
-// is sent.
+// is sent. interface_vnet 0 is not a parent id and is left unset.
 func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateRequest, error) {
 	apiData := NetworkAPIResourceModel{
 		Name:            vergeio.KnownString(data.Name),
@@ -158,7 +158,7 @@ func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateReq
 		VLAN_TAG:        vergeio.KnownInt32(data.VLAN_TAG),
 		MTU:             vergeio.KnownInt32(data.MTU),
 		RateLimit:       vergeio.KnownInt64(data.RateLimit),
-		Interface_Vnet:  vergeio.KnownInt32(data.Interface_Vnet),
+		Interface_Vnet:  vergeio.KnownInt32(unsetInterfaceVnetZero(data.Interface_Vnet)),
 		IPaddress_Type:  vergeio.KnownString(data.IPaddress_Type),
 		Layer2_Type:     vergeio.KnownString(data.Layer2_Type),
 		Enable_Bonding:  vergeio.KnownBool(data.Enable_Bonding),
@@ -186,6 +186,10 @@ type networkUpdateBody struct {
 // networkUpdateRequest builds the update body from attributes that differ
 // from state. Type is readonly and is not sent.
 func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkResourceModel) (*networkUpdateBody, int, error) {
+	interfaceVnet := vergeio.ChangedInt32(
+		unsetInterfaceVnetZero(planData.Interface_Vnet),
+		unsetInterfaceVnetZero(stateData.Interface_Vnet),
+	)
 	apiData := NetworkAPIResourceModel{
 		Name:            vergeio.ChangedString(planData.Name, stateData.Name),
 		Description:     vergeio.ChangedString(planData.Description, stateData.Description),
@@ -204,7 +208,7 @@ func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkReso
 		VLAN_TAG:        vergeio.ChangedInt32(planData.VLAN_TAG, stateData.VLAN_TAG),
 		MTU:             vergeio.ChangedInt32(planData.MTU, stateData.MTU),
 		RateLimit:       vergeio.ChangedInt64(planData.RateLimit, stateData.RateLimit),
-		Interface_Vnet:  vergeio.ChangedInt32(planData.Interface_Vnet, stateData.Interface_Vnet),
+		Interface_Vnet:  interfaceVnet,
 		IPaddress_Type:  vergeio.ChangedString(planData.IPaddress_Type, stateData.IPaddress_Type),
 		Layer2_Type:     vergeio.ChangedString(planData.Layer2_Type, stateData.Layer2_Type),
 		Enable_Bonding:  vergeio.ChangedBool(planData.Enable_Bonding, stateData.Enable_Bonding),
@@ -411,6 +415,15 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 	}
 
 	return nc.sdk.Networks.Kill(ctx, networkIDInt)
+}
+
+// unsetInterfaceVnetZero maps a configured interface_vnet of 0 to null.
+// Zero is not a parent network id. VergeOS rejects it on create and update.
+func unsetInterfaceVnetZero(v types.Int32) types.Int32 {
+	if v.IsNull() || v.IsUnknown() || v.ValueInt32() != 0 {
+		return v
+	}
+	return types.Int32Null()
 }
 
 // interfaceVnetFromAPI stores the physical network id reported by VergeOS.

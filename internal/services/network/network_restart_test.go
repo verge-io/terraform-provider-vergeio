@@ -384,6 +384,33 @@ func TestReadNetworkStoresReportedMTUAndLayer2(t *testing.T) {
 	}
 }
 
+func TestReadNetworkNullsZeroInterfaceVnet(t *testing.T) {
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/vnets/12" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		const body = `{"$key":12,"name":"lan","enabled":true,"running":false,"interface_vnet":0}`
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	})
+
+	data := &NetworkResourceModel{Id: types.StringValue("12")}
+	if err := api.readNetwork(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.Interface_Vnet.IsNull() || data.Interface_Vnet.IsUnknown() {
+		t.Fatalf("interface_vnet = %#v, want null", data.Interface_Vnet)
+	}
+}
+
 func TestReadNetworkStoresInterfaceVnetAndBonding(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {

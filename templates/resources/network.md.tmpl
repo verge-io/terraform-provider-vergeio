@@ -53,7 +53,7 @@ VergeOS stages some updates on a running network, including DHCP range and addre
 - `powerstate` (Boolean) - Whether the vNET is powered on. Stored from the router machine running state. `true` powers the network on after create, and on update when the machine is stopped. `false` kills a running network. Destroy kills a running network before delete. Omit to leave the current power unchanged.
 - `restart_on_change` (Boolean) - Restart a running network after an update that VergeOS stages with `need_restart`, such as a DHCP range or address change. Default = True. Set to false to keep the network up until a maintenance window.
 - `type` (String) - Default = Internal, Type of vNET to create (Internal/External)
-- `interface_vnet` (Number) - Physical vNET ID to attach an external vNET to, Depends on `type=external`
+- `interface_vnet` (Number) - Physical vNET ID to attach an external vNET to, Depends on `type=external`. `0` is unset and is not sent. It matches a network with no parent.
 - `layer2_id` (Number) - VLAN ID to assign an external vNET, Depends on `type=external`
 - `rate_limit` (Number) - Bandwidth cap in megabytes per second. `0` removes the cap. Omit to leave an existing cap unchanged.
 - `ipaddress_type` (String) - `none` is required for a Layer 2 vNET

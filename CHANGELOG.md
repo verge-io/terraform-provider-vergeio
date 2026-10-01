@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_network.interface_vnet` set to `0` is treated as unset. Create and update omit it, and a configuration of `0` does not plan a change when VergeOS has no parent.
 - `vergeio_network` refresh stores `mtu`, `layer2_id`, `layer2_type`, `interface_vnet`, and `enable_bonding` from VergeOS. A configured MTU applies, and a null `interface_vnet` stays null.
 - Changing the `rule` list on `vergeio_network_rules`, or adding a `vergeio_device` to an existing VM, no longer fails apply with "Provider produced inconsistent result". A nested id is taken from the object with the same name. `orderid` is kept only when that rule is still at the same index. A new object, or a rule that moved, is planned unknown.
 - Deleting `vergeio_vm_nic` powers off a running VM whose guest leaves the NIC up after hot unplug, then deletes the NIC. Destroy no longer fails at the NIC and leaves the VM and network running. A guest that releases the NIC is left running.
