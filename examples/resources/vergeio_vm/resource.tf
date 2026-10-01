@@ -48,7 +48,7 @@ resource "vergeio_vm" "web-server" {
     type        = "tpm"
     tpm_settings = {
       model   = "crb"
-      version = "2.0" # display label; VergeOS stores "2" ("1.2" is stored as "1")
+      version = "2.0" # display label; sent on create as "2". Read-only after create.
     }
   }
 

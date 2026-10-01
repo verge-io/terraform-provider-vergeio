@@ -87,17 +87,13 @@ func TestTPMVersionSchemaKeepsConfig(t *testing.T) {
 	}
 }
 
-func TestUpdateTPMSettingsSendsStoredVersion(t *testing.T) {
-	for _, tc := range []struct {
-		version string
-		want    string
-		omit    bool
-	}{
-		{version: "2.0", want: "2"},
-		{version: "1.2", want: "1"},
-		{version: "2", want: "2"},
-		{version: "1", want: "1"},
-		{omit: true},
+func TestUpdateTPMSettingsOmitsVersion(t *testing.T) {
+	for _, version := range []TPMVersion{
+		NewTPMVersionValue("2.0"),
+		NewTPMVersionValue("1.2"),
+		NewTPMVersionValue("2"),
+		NewTPMVersionValue("1"),
+		NewTPMVersionNull(),
 	} {
 		var got map[string]any
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,10 +115,6 @@ func TestUpdateTPMSettingsSendsStoredVersion(t *testing.T) {
 			writeTestBody(t, w, http.StatusOK, `{}`)
 		}))
 
-		version := NewTPMVersionNull()
-		if !tc.omit {
-			version = NewTPMVersionValue(tc.version)
-		}
 		api := &DeviceApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
 		err := api.updateTPMSettings(t.Context(), &deviceResourceModel{
 			Name: types.StringValue("tpm"),
@@ -135,17 +127,90 @@ func TestUpdateTPMSettingsSendsStoredVersion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if tc.omit {
-			if _, ok := got["version"]; ok {
-				t.Fatalf("omitted version was sent: %#v", got)
-			}
-			continue
-		}
-		if got["version"] != tc.want {
-			t.Fatalf("version %q sent as %#v, want %q", tc.version, got["version"], tc.want)
+		if _, ok := got["version"]; ok {
+			t.Fatalf("version %q was sent on update: %#v", version.ValueString(), got)
 		}
 		if got["model"] != "crb" {
 			t.Fatalf("model = %#v, want crb", got["model"])
+		}
+	}
+}
+
+func TestCreateDeviceSendsTPMVersionOnce(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    string
+		omit    bool
+	}{
+		{version: "2.0", want: "2"},
+		{version: "1.2", want: "1"},
+		{version: "2", want: "2"},
+		{version: "1", want: "1"},
+		{omit: true},
+	} {
+		var createBody map[string]any
+		var updateBody map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if vergeio.AnswerCredentialCheck(w, r) {
+				return
+			}
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read body: %v", err)
+			}
+			switch {
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_devices":
+				if err := json.Unmarshal(body, &createBody); err != nil {
+					t.Errorf("decode create %s: %v", body, err)
+				}
+				writeTestBody(t, w, http.StatusCreated, `{"$key":"3"}`)
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_devices/3":
+				writeTestBody(t, w, http.StatusOK, `{"machine":70,"type":"tpm","name":"tpm","enabled":true}`)
+			case r.Method == http.MethodPut && r.URL.Path == "/api/v4/machine_device_settings_tpm/9":
+				if err := json.Unmarshal(body, &updateBody); err != nil {
+					t.Errorf("decode update %s: %v", body, err)
+				}
+				writeTestBody(t, w, http.StatusOK, `{}`)
+			case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_device_settings_tpm":
+				writeTestBody(t, w, http.StatusOK, `[{"$key":9,"machine_device":3,"model":"crb","version":"2"}]`)
+			default:
+				t.Errorf("unexpected %s %s body %s", r.Method, r.URL.Path, body)
+				http.Error(w, "unexpected", http.StatusInternalServerError)
+			}
+		}))
+
+		version := NewTPMVersionNull()
+		if !tc.omit {
+			version = NewTPMVersionValue(tc.version)
+		}
+		api := &DeviceApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+		err := api.createDevice(t.Context(), &deviceResourceModel{
+			Machine: types.Int32Value(70),
+			Type:    types.StringValue("tpm"),
+			Name:    types.StringValue("tpm"),
+			Enabled: types.BoolValue(true),
+			DeviceTPMSettingsModel: &DeviceTPMSettingsModel{
+				Model:   types.StringValue("crb"),
+				Version: version,
+			},
+		})
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		args, _ := createBody["settings_args"].(map[string]any)
+		if tc.omit {
+			if _, ok := createBody["settings_args"]; ok {
+				t.Fatalf("unset version was sent on create: %#v", createBody["settings_args"])
+			}
+		} else if args["version"] != tc.want {
+			t.Fatalf("create version %q sent as %#v, want %q", tc.version, createBody["settings_args"], tc.want)
+		}
+		if _, ok := updateBody["version"]; ok {
+			t.Fatalf("version %q was sent on settings update: %#v", tc.version, updateBody)
+		}
+		if updateBody["model"] != "crb" {
+			t.Fatalf("settings update model = %#v, want crb", updateBody["model"])
 		}
 	}
 }
@@ -188,8 +253,8 @@ func TestReadTPMSettingsStoresVersionKey(t *testing.T) {
 	}
 }
 
-func TestSyncDevicesSendsChangedTPMVersion(t *testing.T) {
-	var version any
+func TestSyncDevicesOmitsTPMVersionOnUpdate(t *testing.T) {
+	var payload map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
@@ -204,14 +269,12 @@ func TestSyncDevicesSendsChangedTPMVersion(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_devices/3":
 			writeTestBody(t, w, http.StatusOK, `{"machine":70,"type":"tpm","name":"tpm","enabled":true}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/machine_device_settings_tpm/9":
-			var payload map[string]any
 			if err := json.Unmarshal(body, &payload); err != nil {
 				t.Errorf("decode TPM update %s: %v", body, err)
 			}
-			version = payload["version"]
 			writeTestBody(t, w, http.StatusOK, `{}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_device_settings_tpm":
-			writeTestBody(t, w, http.StatusOK, `[{"$key":9,"machine_device":3,"model":"crb","version":"1"}]`)
+			writeTestBody(t, w, http.StatusOK, `[{"$key":9,"machine_device":3,"model":"crb","version":"2"}]`)
 		default:
 			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.Path, body)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -225,11 +288,14 @@ func TestSyncDevicesSendsChangedTPMVersion(t *testing.T) {
 	if err := api.syncDevices(t.Context(), &plan, &state, types.Int32Value(70)); err != nil {
 		t.Fatal(err)
 	}
-	if version != "1" {
-		t.Fatalf("TPM update version = %#v, want 1", version)
+	if _, ok := payload["version"]; ok {
+		t.Fatalf("TPM update sent version %#v", payload["version"])
 	}
-	if got := state[0].DeviceTPMSettingsModel.Version.ValueString(); got != "1" {
-		t.Fatalf("state version = %q, want 1", got)
+	if payload["model"] != "crb" {
+		t.Fatalf("TPM update model = %#v, want crb", payload["model"])
+	}
+	if got := state[0].DeviceTPMSettingsModel.Version.ValueString(); got != "2" {
+		t.Fatalf("state version = %q, want 2", got)
 	}
 }
 

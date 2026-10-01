@@ -853,7 +853,8 @@ func TestAccVMResource_AddDevice(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.name", "tpm"),
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.type", "tpm"),
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.model", "crb"),
-					// SemanticEquals keeps the configured label. The API write sends "2".
+					// SemanticEquals keeps the configured label. Create sends stored "2".
+					// The settings update omits version because it is read-only.
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.version", "2.0"),
 					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.key"),
 					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.machine"),

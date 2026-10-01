@@ -97,6 +97,9 @@ type deviceAPIResourceModel struct {
 	ResourceGroup string `json:"resource_group,omitempty"`
 	Enabled       bool   `json:"enabled,omitempty"`
 	Status        int32  `json:"status,omitempty"`
+	// SettingsArgs is sent only when creating a TPM device. VergeOS applies
+	// version there. The settings row then treats version as read-only.
+	SettingsArgs map[string]string `json:"settings_args,omitempty"`
 }
 
 // List of valid device interfaces.
@@ -166,6 +169,11 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 		Enabled:       data.Enabled.ValueBool(),
 		ResourceGroup: data.ResourceGroup.ValueString(),
 		Status:        data.Status.ValueInt32(),
+	}
+	// Version is accepted on device create. The settings update below
+	// cannot change it.
+	if data.Type.ValueString() == "tpm" {
+		apiData.SettingsArgs = tpmCreateSettings(data)
 	}
 
 	// Encode the API data
@@ -602,8 +610,9 @@ func normalizeTPMVersion(version string) string {
 	}
 }
 
-// storedTPMVersion is the version to send. Null, unknown, and blank values
-// are omitted so an unset version keeps the VergeOS default.
+// storedTPMVersion is the version to send when a TPM device is created.
+// Null, unknown, and blank values are omitted so an unset version keeps
+// the VergeOS default.
 func storedTPMVersion(version TPMVersion) (string, bool) {
 	if version.IsNull() || version.IsUnknown() {
 		return "", false
@@ -615,16 +624,28 @@ func storedTPMVersion(version TPMVersion) (string, bool) {
 	return stored, true
 }
 
+// tpmCreateSettings is the version sent with the device create. VergeOS
+// stores it on the settings row and then marks version read-only.
+func tpmCreateSettings(data *deviceResourceModel) map[string]string {
+	if data == nil || data.DeviceTPMSettingsModel == nil {
+		return nil
+	}
+	version, ok := storedTPMVersion(data.DeviceTPMSettingsModel.Version)
+	if !ok {
+		return nil
+	}
+	return map[string]string{"version": version}
+}
+
 // UpdateTPMSettings updates TPM settings for the device.
+// version is omitted. PUT api/v4/machine_device_settings_tpm/{key} returns
+// 422 field 'version' is readonly. The create payload is the only write.
 func (da *DeviceApi) updateTPMSettings(ctx context.Context, data *deviceResourceModel, key types.Int32) error {
 	tflog.Debug(ctx, "Updating TPM settings for device: "+data.Name.ValueString())
 
 	// Prepare the API data packet
 	apiData := map[string]interface{}{
 		"model": data.DeviceTPMSettingsModel.Model.ValueString(),
-	}
-	if version, ok := storedTPMVersion(data.DeviceTPMSettingsModel.Version); ok {
-		apiData["version"] = version
 	}
 
 	// Encode the API data
