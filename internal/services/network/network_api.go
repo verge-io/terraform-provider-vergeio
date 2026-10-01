@@ -535,6 +535,10 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 		})
 
 	}
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.Networks == nil {
+		data.Networks = []*NetworkModel{}
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 

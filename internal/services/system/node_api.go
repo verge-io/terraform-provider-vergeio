@@ -91,6 +91,10 @@ func (va *NodeApi) readNodes(ctx context.Context, data *NodeDataSourceModel) err
 		})
 
 	}
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.Nodes == nil {
+		data.Nodes = []*NodeModel{}
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 

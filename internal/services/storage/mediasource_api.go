@@ -98,6 +98,10 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 		})
 
 	}
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.Mediasources == nil {
+		data.Mediasources = []*MediasourceModel{}
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
