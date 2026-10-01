@@ -413,6 +413,15 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 	return nc.sdk.Networks.Kill(ctx, networkIDInt)
 }
 
+// interfaceVnetFromAPI stores the physical network id reported by VergeOS.
+// A missing or null interface is 0 on the SDK type. That is not an id.
+func interfaceVnetFromAPI(id vergeos.FlexInt) types.Int32 {
+	if id.Int() == 0 {
+		return types.Int32Null()
+	}
+	return types.Int32Value(int32(id.Int()))
+}
+
 // Read the Network (Vnet) from the API.
 func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceModel) error {
 
@@ -432,8 +441,6 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
 
-	// Some fields are still stored as the historical defaults. Mapping them
-	// from the SDK response is separate from sending explicit zero values.
 	data.Name = types.StringValue(network.Name)
 	data.Description = types.StringValue(network.Description)
 	data.Enabled = types.BoolValue(network.Enabled)
@@ -448,10 +455,13 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.Domain = types.StringValue(network.Domain)
 	data.On_Power_Loss = types.StringValue(network.OnPowerLoss)
 	data.Type = types.StringValue(network.Type)
-	data.VLAN_TAG = types.Int32Value(0)
-	data.MTU = types.Int32Value(1500)
+	data.VLAN_TAG = types.Int32Value(int32(network.VLAN))
+	data.MTU = types.Int32Value(int32(network.MTU))
 	data.RateLimit = types.Int64Value(network.RateLimit)
-	data.Interface_Vnet = types.Int32Value(0)
+	// VergeOS sends JSON null when the network is not attached to a physical
+	// vNET. govergeos decodes that null as 0, which is also its none value.
+	// State keeps null so refresh does not invent interface 0.
+	data.Interface_Vnet = interfaceVnetFromAPI(network.InterfaceVnet)
 	// An empty response keeps the historical default. A reported value, such
 	// as none, is stored so apply does not write static over the plan.
 	ipType := strings.TrimSpace(network.IPAddressType)
@@ -459,8 +469,8 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 		ipType = "static"
 	}
 	data.IPaddress_Type = types.StringValue(ipType)
-	data.Layer2_Type = types.StringValue("vlan")
-	data.Enable_Bonding = types.BoolValue(false)
+	data.Layer2_Type = types.StringValue(network.Layer2Type)
+	data.Enable_Bonding = types.BoolValue(network.EnableBonding)
 	data.PowerState = types.BoolValue(network.Running)
 	data.NeedRestart = types.BoolValue(network.NeedRestart)
 	// restart_on_change is not a VergeOS field. Keep an explicit setting and
