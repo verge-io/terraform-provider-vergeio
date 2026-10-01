@@ -94,7 +94,6 @@ Optional:
 - `minute` (Number) Minute of the hour, 0 through 59. Omit to leave the current value unchanged. An omitted value is not sent. Set 0 explicitly for the top of the hour.
 - `month` (Number) Month of the year, 1 through 12. 0 means any month. Omit to leave the current value unchanged.
 - `quiesce` (Boolean) Quiesce the guest while the snapshot is taken. Requires a guest agent. Applies to VMs and volumes. Omit to leave the current value unchanged. An omitted value is not sent as false.
-- `skip_missed` (Boolean) Skip the snapshot when the scheduled time was missed. Omit to leave the current value unchanged. An omitted value is not sent.
 
 Read-Only:
 

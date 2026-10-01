@@ -65,7 +65,10 @@ func TestSnapshotProfileResourceSchema(t *testing.T) {
 	if !ok || !key.Computed || key.Optional || key.Required {
 		t.Fatal("key should be computed only")
 	}
-	for _, name := range []string{"hour", "minute", "day_of_week", "day_of_month", "month", "quiesce", "skip_missed", "max_tier", "min_snapshots", "immutable"} {
+	if _, exists := block.NestedObject.Attributes["skip_missed"]; exists {
+		t.Fatal("skip_missed is not a snapshot_profile_periods column and must not be planned or sent")
+	}
+	for _, name := range []string{"hour", "minute", "day_of_week", "day_of_month", "month", "quiesce", "max_tier", "min_snapshots", "immutable"} {
 		attr, ok := block.NestedObject.Attributes[name]
 		if !ok || !attr.IsOptional() || !attr.IsComputed() {
 			t.Fatalf("%s should be optional and computed", name)
@@ -203,6 +206,9 @@ func TestSnapshotProfileCreateUpdateDelete(t *testing.T) {
 	if body.Quiesce == nil || !*body.Quiesce {
 		t.Fatal("quiesce true was not sent")
 	}
+	if strings.Contains(string(fake.periodCreateBody("nightly")), "skip_missed") {
+		t.Fatalf("period create sent skip_missed, which snapshot_profile_periods does not store: %s", fake.periodCreateBody("nightly"))
+	}
 
 	state := created.State
 	updatePlan := tfsdk.Plan{Schema: schemaResp.Schema}
@@ -260,6 +266,9 @@ func TestSnapshotProfileCreateUpdateDelete(t *testing.T) {
 	}
 	if put.Quiesce == nil || *put.Quiesce {
 		t.Fatal("quiesce false was not sent")
+	}
+	if strings.Contains(string(fake.periodUpdateBody("nightly")), "skip_missed") {
+		t.Fatalf("period update sent skip_missed, which snapshot_profile_periods does not store: %s", fake.periodUpdateBody("nightly"))
 	}
 	weekly := fake.periodCreate("weekly")
 	if weekly.Retention != 2419200 {
@@ -416,19 +425,23 @@ type profileFake struct {
 	profiles         map[int]vergeos.SnapshotProfile
 	periods          map[int]vergeos.SnapshotProfilePeriod
 	periodCreates    map[string]vergeos.SnapshotProfilePeriodCreateRequest
+	periodCreateRaw  map[string][]byte
 	periodUpdates    map[string]vergeos.SnapshotProfilePeriodUpdateRequest
+	periodUpdateRaw  map[string][]byte
 	deletedPeriods   map[string]bool
 	failPeriodCreate bool
 }
 
 func newProfileFake() *profileFake {
 	return &profileFake{
-		next:           1,
-		profiles:       map[int]vergeos.SnapshotProfile{},
-		periods:        map[int]vergeos.SnapshotProfilePeriod{},
-		periodCreates:  map[string]vergeos.SnapshotProfilePeriodCreateRequest{},
-		periodUpdates:  map[string]vergeos.SnapshotProfilePeriodUpdateRequest{},
-		deletedPeriods: map[string]bool{},
+		next:            1,
+		profiles:        map[int]vergeos.SnapshotProfile{},
+		periods:         map[int]vergeos.SnapshotProfilePeriod{},
+		periodCreates:   map[string]vergeos.SnapshotProfilePeriodCreateRequest{},
+		periodCreateRaw: map[string][]byte{},
+		periodUpdates:   map[string]vergeos.SnapshotProfilePeriodUpdateRequest{},
+		periodUpdateRaw: map[string][]byte{},
+		deletedPeriods:  map[string]bool{},
 	}
 }
 
@@ -594,6 +607,7 @@ func (f *profileFake) createPeriod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.periodCreates[req.Name] = req
+	f.periodCreateRaw[req.Name] = append([]byte(nil), body...)
 	id := f.next
 	f.next++
 	f.periods[id] = vergeos.SnapshotProfilePeriod{
@@ -636,8 +650,13 @@ func (f *profileFake) updatePeriod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	var req vergeos.SnapshotProfilePeriodUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -650,6 +669,7 @@ func (f *profileFake) updatePeriod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.periodUpdates[period.Name] = req
+	f.periodUpdateRaw[period.Name] = append([]byte(nil), body...)
 	if req.Name != nil {
 		period.Name = *req.Name
 	}
@@ -714,10 +734,22 @@ func (f *profileFake) periodCreate(name string) vergeos.SnapshotProfilePeriodCre
 	return f.periodCreates[name]
 }
 
+func (f *profileFake) periodCreateBody(name string) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]byte(nil), f.periodCreateRaw[name]...)
+}
+
 func (f *profileFake) periodUpdate(name string) vergeos.SnapshotProfilePeriodUpdateRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.periodUpdates[name]
+}
+
+func (f *profileFake) periodUpdateBody(name string) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]byte(nil), f.periodUpdateRaw[name]...)
 }
 
 func (f *profileFake) periodDeleted(name string) bool {

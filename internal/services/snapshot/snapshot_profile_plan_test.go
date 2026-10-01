@@ -44,7 +44,6 @@ func TestPeriodPlanAgreesWithRead(t *testing.T) {
 
 	t.Run("new period is unknown", func(t *testing.T) {
 		assertPeriodUnknown(t, ctx, schema, config, plan, state, 1, "key")
-		assertPeriodUnknown(t, ctx, schema, config, plan, state, 1, "skip_missed")
 		assertPeriodUnknown(t, ctx, schema, config, plan, state, 1, "day_of_month")
 		assertPeriodUnknown(t, ctx, schema, config, plan, state, 1, "immutable")
 		assertPeriodUnknown(t, ctx, schema, config, plan, state, 1, "month")
@@ -58,7 +57,6 @@ func TestPeriodPlanAgreesWithRead(t *testing.T) {
 
 	t.Run("existing period keeps state", func(t *testing.T) {
 		assertPeriodString(t, ctx, schema, config, plan, state, 0, "key", "11")
-		assertPeriodBool(t, ctx, schema, config, plan, state, 0, "skip_missed", false)
 		assertPeriodInt32(t, ctx, schema, config, plan, state, 0, "day_of_month", 0)
 		assertPeriodBool(t, ctx, schema, config, plan, state, 0, "immutable", false)
 		assertPeriodInt32(t, ctx, schema, config, plan, state, 0, "month", 0)
@@ -76,7 +74,6 @@ func TestPeriodPlanAgreesWithRead(t *testing.T) {
 			Period: []periodModel{nightlyState, weeklyState},
 		})
 		assertPeriodString(t, ctx, schema, config, plan, refreshed, 1, "key", "22")
-		assertPeriodBool(t, ctx, schema, config, plan, refreshed, 1, "skip_missed", false)
 		assertPeriodInt32(t, ctx, schema, config, plan, refreshed, 1, "day_of_month", 0)
 		assertPeriodBool(t, ctx, schema, config, plan, refreshed, 1, "immutable", false)
 		assertPeriodInt32(t, ctx, schema, config, plan, refreshed, 1, "month", 0)
@@ -132,7 +129,6 @@ func TestPeriodPlanUnknownWhenNameReplacesIndex(t *testing.T) {
 	plan := modelValue(t, schema, replaced)
 
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "key")
-	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "skip_missed")
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "day_of_month")
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "month")
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "max_tier")
@@ -157,7 +153,6 @@ func TestPeriodPlanUnknownOnCreate(t *testing.T) {
 	}
 
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "key")
-	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "skip_missed")
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "day_of_month")
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "immutable")
 	assertPeriodUnknown(t, ctx, schema, config, plan, state, 0, "month")
@@ -203,7 +198,6 @@ func refreshedPeriod(name, key, frequency string, hour, minute int32, day string
 	period.Key = types.StringValue(key)
 	period.DayOfMonth = types.Int32Value(0)
 	period.Month = types.Int32Value(0)
-	period.SkipMissed = types.BoolValue(false)
 	period.Immutable = types.BoolValue(false)
 	period.MaxTier = types.StringValue("1")
 	period.MinSnapshots = types.Int32Value(1)
