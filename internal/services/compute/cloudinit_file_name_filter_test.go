@@ -31,17 +31,25 @@ func TestReadCloudinitFilesEscapesNameFilterAndKeepsExactName(t *testing.T) {
 					_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 				case "/api/v4/cloudinit_files":
 					gotFilter = r.URL.Query().Get("filter")
+					if r.URL.Query().Get("download") != "" {
+						t.Errorf("list sent download=%q", r.URL.Query().Get("download"))
+					}
 					body, err := json.Marshal([]map[string]any{
-						{"$key": 1, "name": decoy},
-						{"$key": 2, "name": name},
+						{"$key": 1, "name": decoy, "contents": "decoy-list"},
+						{"$key": 2, "name": name, "contents": "from-list"},
 					})
 					if err != nil {
 						t.Errorf("marshal: %v", err)
 						return
 					}
 					_, _ = w.Write(body)
+				case "/api/v4/cloudinit_files/2":
+					if r.URL.Query().Get("download") != "1" {
+						t.Errorf("download=%q, want 1", r.URL.Query().Get("download"))
+					}
+					_, _ = w.Write([]byte("from-download"))
 				default:
-					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+					t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
 					http.Error(w, "unexpected", http.StatusNotFound)
 				}
 			}))
@@ -58,6 +66,9 @@ func TestReadCloudinitFilesEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}
 			if len(data.CloudinitFiles) != 1 || data.CloudinitFiles[0].Name.ValueString() != name {
 				t.Fatalf("got %d cloudinit files, want the one named %q", len(data.CloudinitFiles), name)
+			}
+			if got := data.CloudinitFiles[0].Contents.ValueString(); got != "from-download" {
+				t.Fatalf("contents = %q, want the download body", got)
 			}
 		})
 	}
