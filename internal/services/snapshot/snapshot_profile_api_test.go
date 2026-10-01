@@ -80,7 +80,7 @@ func TestPeriodInputsRequiresRetentionAndUniqueNames(t *testing.T) {
 	if got[0].Quiesce == nil || !*got[0].Quiesce {
 		t.Fatal("quiesce should be sent when set")
 	}
-	if got[0].SkipMissed != nil || got[0].DayOfWeek != nil {
+	if got[0].DayOfWeek != nil || got[0].MaxTier != nil || got[0].Immutable != nil {
 		t.Fatal("omitted period fields should not be sent")
 	}
 }
@@ -96,7 +96,6 @@ func TestPeriodInputsOmitsUnknownRefreshedFields(t *testing.T) {
 		Month:        types.Int32Unknown(),
 		Retention:    types.Int64Value(2419200),
 		Quiesce:      types.BoolValue(true),
-		SkipMissed:   types.BoolUnknown(),
 		MaxTier:      types.StringUnknown(),
 		MinSnapshots: types.Int32Unknown(),
 		Immutable:    types.BoolUnknown(),
@@ -114,7 +113,7 @@ func TestPeriodInputsOmitsUnknownRefreshedFields(t *testing.T) {
 	if period.DayOfWeek == nil || *period.DayOfWeek != "sun" || period.Quiesce == nil || !*period.Quiesce {
 		t.Fatalf("configured fields = %+v", period)
 	}
-	if period.DayOfMonth != nil || period.Month != nil || period.SkipMissed != nil || period.MaxTier != nil || period.MinSnapshots != nil || period.Immutable != nil {
+	if period.DayOfMonth != nil || period.Month != nil || period.MaxTier != nil || period.MinSnapshots != nil || period.Immutable != nil {
 		t.Fatalf("unknown refreshed fields were sent: %+v", period)
 	}
 }

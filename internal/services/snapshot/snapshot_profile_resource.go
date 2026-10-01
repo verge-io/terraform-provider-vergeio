@@ -59,7 +59,6 @@ type periodModel struct {
 	Month        types.Int32  `tfsdk:"month"`
 	Retention    types.Int64  `tfsdk:"retention"`
 	Quiesce      types.Bool   `tfsdk:"quiesce"`
-	SkipMissed   types.Bool   `tfsdk:"skip_missed"`
 	MaxTier      types.String `tfsdk:"max_tier"`
 	MinSnapshots types.Int32  `tfsdk:"min_snapshots"`
 	Immutable    types.Bool   `tfsdk:"immutable"`
@@ -143,7 +142,6 @@ func (r *SnapshotProfileResource) Schema(ctx context.Context, req resource.Schem
 							},
 						},
 						"quiesce":       optionalBool("Quiesce the guest while the snapshot is taken. Requires a guest agent. Applies to VMs and volumes. Omit to leave the current value unchanged. An omitted value is not sent as false."),
-						"skip_missed":   optionalBool("Skip the snapshot when the scheduled time was missed. Omit to leave the current value unchanged. An omitted value is not sent."),
 						"max_tier":      optionalString("Highest storage tier that may hold the snapshot, from 1 (no restriction) through 5. Omit to leave the current value unchanged.", stringvalidator.OneOf("1", "2", "3", "4", "5")),
 						"min_snapshots": optionalInt32("Minimum number of snapshots to retain, including during an outage longer than retention. Omit to leave the current value unchanged. An omitted value is not sent.", int32validator.AtLeast(0)),
 						"immutable":     optionalBool("Lock the snapshot until it is unlocked. Applies to system snapshots. Omit to leave the current value unchanged. An omitted value is not sent."),
@@ -347,7 +345,6 @@ func periodForState(period periodModel) periodModel {
 		Month:        knownInt32(period.Month),
 		Retention:    knownInt64(period.Retention),
 		Quiesce:      knownBool(period.Quiesce),
-		SkipMissed:   knownBool(period.SkipMissed),
 		MaxTier:      knownString(period.MaxTier),
 		MinSnapshots: knownInt32(period.MinSnapshots),
 		Immutable:    knownBool(period.Immutable),

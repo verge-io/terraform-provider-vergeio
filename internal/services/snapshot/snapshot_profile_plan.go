@@ -26,7 +26,7 @@ var (
 // UseStateForUnknown only replaces an unknown plan value, and it uses the
 // list index. A period added in an update is null in the plan, not unknown,
 // and its index has no prior state. Read then stores the API key and the
-// platform defaults (skip_missed false, day_of_month 0, and the rest), which
+// platform defaults (day_of_month 0, and the rest), which
 // Terraform rejects as an inconsistent result.
 //
 // A configured value is left alone. An omitted value is copied from the
@@ -245,8 +245,6 @@ func periodAttribute(period periodModel, name string) (attr.Value, bool) {
 		return period.MinSnapshots, true
 	case "quiesce":
 		return period.Quiesce, true
-	case "skip_missed":
-		return period.SkipMissed, true
 	case "immutable":
 		return period.Immutable, true
 	default:
