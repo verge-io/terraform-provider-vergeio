@@ -41,6 +41,99 @@ func TestNetworkUpdateRequestSendsExplicitFalse(t *testing.T) {
 	}
 }
 
+func TestNetworkCreateRequestOmitsInterfaceVnetZero(t *testing.T) {
+	data := &NetworkResourceModel{
+		Name:           types.StringValue("tf-acc-net"),
+		Type:           types.StringValue("internal"),
+		Interface_Vnet: types.Int32Value(0),
+	}
+
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.InterfaceVnet != nil {
+		t.Fatalf("interface_vnet pointer = %v, want nil", *req.InterfaceVnet)
+	}
+	requireAbsent(t, decodeJSON(t, marshalRequest(t, req)), "interface_vnet")
+}
+
+func TestNetworkCreateRequestSendsPositiveInterfaceVnet(t *testing.T) {
+	data := &NetworkResourceModel{
+		Name:           types.StringValue("tf-acc-net"),
+		Type:           types.StringValue("external"),
+		Interface_Vnet: types.Int32Value(4),
+	}
+
+	req, err := networkCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.InterfaceVnet == nil || *req.InterfaceVnet != 4 {
+		t.Fatalf("interface_vnet pointer = %v, want 4", req.InterfaceVnet)
+	}
+	requireNumber(t, decodeJSON(t, marshalRequest(t, req)), "interface_vnet", 4)
+}
+
+func TestNetworkUpdateRequestOmitsInterfaceVnetZero(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("renamed"),
+		Interface_Vnet: types.Int32Value(0),
+	}
+	state := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		Interface_Vnet: types.Int32Null(),
+	}
+
+	req, _, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.InterfaceVnet != nil {
+		t.Fatalf("interface_vnet pointer = %v, want nil", *req.InterfaceVnet)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireString(t, obj, "name", "renamed")
+	requireAbsent(t, obj, "interface_vnet")
+
+	// A plan that still holds 0 must not be sent over a real parent id.
+	plan.Interface_Vnet = types.Int32Value(0)
+	state.Interface_Vnet = types.Int32Value(4)
+	plan.Name = state.Name
+	req, _, err = networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.InterfaceVnet != nil {
+		t.Fatalf("interface_vnet pointer = %v, want nil", *req.InterfaceVnet)
+	}
+	requireAbsent(t, decodeJSON(t, marshalRequest(t, req)), "interface_vnet")
+}
+
+func TestNetworkUpdateRequestSendsChangedInterfaceVnet(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		Interface_Vnet: types.Int32Value(5),
+	}
+	state := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		Interface_Vnet: types.Int32Value(4),
+	}
+
+	req, _, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.InterfaceVnet == nil || *req.InterfaceVnet != 5 {
+		t.Fatalf("interface_vnet pointer = %v, want 5", req.InterfaceVnet)
+	}
+	requireNumber(t, decodeJSON(t, marshalRequest(t, req)), "interface_vnet", 5)
+}
+
 func TestNetworkCreateRequestOmitsUnsetEnabled(t *testing.T) {
 	data := &NetworkResourceModel{
 		Name:    types.StringValue("tf-acc-net"),
