@@ -193,7 +193,7 @@ func (r *NetworkRuleResource) save(ctx context.Context, plan, config firewallRul
 }
 
 func fillRuleModel(rule firewallRule, vnet types.String, apply types.Bool) firewallRuleModel {
-	model := rule.model()
+	model := firewallRuleModel{nestedFirewallRuleModel: rule.model()}
 	model.VNet = vnet
 	if model.VNet.IsNull() || model.VNet.IsUnknown() || model.VNet.ValueString() == "" {
 		if rule.VNet > 0 {

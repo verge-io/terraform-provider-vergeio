@@ -41,11 +41,10 @@ var (
 	aliasScopes    = []string{"private", "global", "tenant", "none"}
 )
 
-// firewallRuleModel is one rule in state. The list resource nests it.
-// The single-rule resource adds vnet and apply on the same struct.
-type firewallRuleModel struct {
+// nestedFirewallRuleModel is one element of vergeio_network_rules.rule.
+// It matches firewallRuleAttributes. vnet and apply are not nested attributes.
+type nestedFirewallRuleModel struct {
 	ID               types.String `tfsdk:"id"`
-	VNet             types.String `tfsdk:"vnet"`
 	Name             types.String `tfsdk:"name"`
 	Description      types.String `tfsdk:"description"`
 	Direction        types.String `tfsdk:"direction"`
@@ -67,7 +66,15 @@ type firewallRuleModel struct {
 	DropThrottle     types.Bool   `tfsdk:"drop_throttle"`
 	Pin              types.String `tfsdk:"pin"`
 	OrderID          types.Int32  `tfsdk:"orderid"`
-	Apply            types.Bool   `tfsdk:"apply"`
+}
+
+// firewallRuleModel is the state of vergeio_network_rule. vnet and apply
+// live on that resource only, so they are not part of a nested rule.
+type firewallRuleModel struct {
+	nestedFirewallRuleModel
+
+	VNet  types.String `tfsdk:"vnet"`
+	Apply types.Bool   `tfsdk:"apply"`
 }
 
 func firewallRuleAttributes(mode ruleSchemaMode) map[string]schema.Attribute {
@@ -207,8 +214,8 @@ func ruleObjectType() types.ObjectType {
 	return types.ObjectType{AttrTypes: ruleAttrTypes()}
 }
 
-func (rule firewallRule) model() firewallRuleModel {
-	return firewallRuleModel{
+func (rule firewallRule) model() nestedFirewallRuleModel {
+	return nestedFirewallRuleModel{
 		ID:               idValue(rule.Key),
 		Name:             types.StringValue(rule.Name),
 		Description:      types.StringValue(rule.Description),
@@ -235,7 +242,7 @@ func (rule firewallRule) model() firewallRuleModel {
 }
 
 func rulesToList(ctx context.Context, rules []firewallRule) (types.List, diag.Diagnostics) {
-	models := make([]firewallRuleModel, 0, len(rules))
+	models := make([]nestedFirewallRuleModel, 0, len(rules))
 	for _, rule := range rules {
 		models = append(models, rule.model())
 	}
@@ -246,7 +253,7 @@ func rulesFromList(ctx context.Context, list types.List, single bool) ([]firewal
 	if list.IsNull() || list.IsUnknown() {
 		return nil, nil
 	}
-	var models []firewallRuleModel
+	var models []nestedFirewallRuleModel
 	diags := list.ElementsAs(ctx, &models, false)
 	if diags.HasError() {
 		return nil, diags
@@ -261,7 +268,7 @@ func rulesFromList(ctx context.Context, list types.List, single bool) ([]firewal
 // rule converts a planned rule. single uses cfg-style nulls already stored on
 // the model: the caller passes the config model for a single rule and the
 // plan model for a list, where defaults have filled omitted values.
-func (model firewallRuleModel) rule(single bool) firewallRule {
+func (model nestedFirewallRuleModel) rule(single bool) firewallRule {
 	rule := firewallRule{
 		Key:              ruleKey(model.ID),
 		Name:             strings.TrimSpace(stringOrEmpty(model.Name)),
