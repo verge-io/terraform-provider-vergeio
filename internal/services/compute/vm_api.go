@@ -741,10 +741,192 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 		return err
 	}
 
+	// VMUpdateRequest has no cloudinit_files field, so the PUT above drops
+	// them. The file rows have to be written on their own.
+	if err := va.syncCloudInitFiles(ctx, planData, stateData); err != nil {
+		return err
+	}
+
 	// Power stays with the caller. VMResource.Update syncs drives and NICs
 	// first, then applyPlannedPowerState, so a VM powered on in this apply
 	// boots with those devices instead of leaving them offline.
 	return nil
+}
+
+// syncCloudInitFiles creates, updates, and deletes the cloud-init files owned
+// by this VM. Rows are matched by name. An unchanged list makes no file
+// requests. A changed list is reconciled to the plan: missing names are
+// created, names that left the plan are deleted, and a new body is written
+// onto the existing row.
+func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VMResourceModel) error {
+	if planData == nil {
+		return fmt.Errorf("cloud-init plan is nil")
+	}
+	var stateFiles []CloudInitFile
+	if stateData != nil {
+		stateFiles = stateData.CloudInitFiles
+	}
+	if cloudInitFilesEqual(planData.CloudInitFiles, stateFiles) {
+		return nil
+	}
+
+	planned, err := indexCloudInitFiles(planData.CloudInitFiles)
+	if err != nil {
+		return err
+	}
+	previous, err := indexCloudInitFiles(stateFiles)
+	if err != nil {
+		return err
+	}
+
+	if err := va.ensureSDK(); err != nil {
+		return err
+	}
+	if va.sdk == nil || va.sdk.CloudInitFiles == nil {
+		return fmt.Errorf("cloud-init client is not configured")
+	}
+
+	vmID, err := vmIDFromModels(planData, stateData)
+	if err != nil {
+		return err
+	}
+
+	existing, err := va.sdk.CloudInitFiles.ListByVM(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("listing cloud-init files for VM %d: %w", vmID, err)
+	}
+
+	byName := make(map[string][]vergeos.CloudInitFile, len(existing))
+	for _, file := range existing {
+		byName[file.Name] = append(byName[file.Name], file)
+	}
+
+	// Delete rows the plan dropped before creating a file that reuses a name.
+	for name, files := range byName {
+		if _, keep := planned[name]; keep {
+			continue
+		}
+		for _, file := range files {
+			if err := va.deleteCloudInitFile(ctx, file); err != nil {
+				return err
+			}
+		}
+		delete(byName, name)
+	}
+
+	for name, contents := range planned {
+		files := byName[name]
+		if len(files) == 0 {
+			continue
+		}
+		for _, extra := range files[1:] {
+			if err := va.deleteCloudInitFile(ctx, extra); err != nil {
+				return err
+			}
+		}
+		prior, known := previous[name]
+		if known && prior == contents {
+			continue
+		}
+		if files[0].Key.Int() <= 0 {
+			return fmt.Errorf("cloud-init file %q has no key", name)
+		}
+		updated := contents
+		tflog.Debug(ctx, fmt.Sprintf("Updating cloud-init file %d (%q) on VM %d", files[0].Key.Int(), name, vmID))
+		if _, err := va.sdk.CloudInitFiles.Update(ctx, files[0].Key.Int(), &vergeos.CloudInitFileUpdateRequest{Contents: &updated}); err != nil {
+			return fmt.Errorf("updating cloud-init file %q: %w", name, err)
+		}
+	}
+
+	for name, contents := range planned {
+		if len(byName[name]) > 0 {
+			continue
+		}
+		tflog.Debug(ctx, fmt.Sprintf("Creating cloud-init file %q on VM %d", name, vmID))
+		if _, err := va.sdk.CloudInitFiles.CreateForVM(ctx, vmID, &vergeos.CloudInitFileCreateRequest{
+			Name:     name,
+			Contents: contents,
+		}); err != nil {
+			return fmt.Errorf("creating cloud-init file %q: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func (va *VMApi) deleteCloudInitFile(ctx context.Context, file vergeos.CloudInitFile) error {
+	key := file.Key.Int()
+	if key <= 0 {
+		return fmt.Errorf("cloud-init file %q has no key", file.Name)
+	}
+	tflog.Debug(ctx, fmt.Sprintf("Deleting cloud-init file %d (%q)", key, file.Name))
+	if err := va.sdk.CloudInitFiles.Delete(ctx, key); err != nil {
+		return fmt.Errorf("deleting cloud-init file %q: %w", file.Name, err)
+	}
+	return nil
+}
+
+// vmIDFromModels reads the VM key the update is aimed at.
+// The plan carries it after a normal apply. State is the fallback.
+func vmIDFromModels(planData, stateData *VMResourceModel) (int, error) {
+	var id types.String
+	if planData != nil {
+		id = planData.Id
+	}
+	if id.IsNull() || id.IsUnknown() || strings.TrimSpace(id.ValueString()) == "" {
+		if stateData != nil {
+			id = stateData.Id
+		}
+	}
+	if id.IsNull() || id.IsUnknown() || strings.TrimSpace(id.ValueString()) == "" {
+		return 0, fmt.Errorf("invalid VM ID: empty")
+	}
+	vmID, err := strconv.Atoi(strings.TrimSpace(id.ValueString()))
+	if err != nil || vmID <= 0 {
+		return 0, fmt.Errorf("invalid VM ID: %v", id.ValueString())
+	}
+	return vmID, nil
+}
+
+// cloudInitFilesEqual reports whether the planned file list matches state,
+// including order. A nil list and an empty list are different: clearing the
+// argument deletes the rows, while omitting a change does not.
+func cloudInitFilesEqual(plan, state []CloudInitFile) bool {
+	if (plan == nil) != (state == nil) {
+		return false
+	}
+	if len(plan) != len(state) {
+		return false
+	}
+	for i := range plan {
+		if !plan[i].Name.Equal(state[i].Name) || !plan[i].Contents.Equal(state[i].Contents) {
+			return false
+		}
+	}
+	return true
+}
+
+// indexCloudInitFiles maps a file name to its body.
+// A nil or empty list is an empty map. Unknown values, a blank name, and a
+// repeated name are errors so an update does not delete or create the wrong row.
+func indexCloudInitFiles(files []CloudInitFile) (map[string]string, error) {
+	out := make(map[string]string, len(files))
+	for _, file := range files {
+		if file.Name.IsUnknown() || file.Contents.IsUnknown() {
+			return nil, fmt.Errorf("cloudinit_files are not known yet")
+		}
+		name := file.Name.ValueString()
+		if file.Name.IsNull() || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("cloudinit_files name is empty")
+		}
+		if file.Contents.IsNull() {
+			return nil, fmt.Errorf("cloudinit_files %q is missing contents", name)
+		}
+		if _, exists := out[name]; exists {
+			return nil, fmt.Errorf("cloudinit_files name %q is duplicated", name)
+		}
+		out[name] = file.Contents.ValueString()
+	}
+	return out, nil
 }
 
 // detachCloudInit deletes the cloud-init files owned by this VM
@@ -854,6 +1036,25 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 // value saved after apply is the planned one.
 func usePlannedConsolePass(state, plan *VMResourceModel) {
 	state.ConsolePass = plan.ConsolePass
+}
+
+// usePlannedCloudInitFiles stores the cloud-init files that update applied.
+// readVM keeps the bodies already on the model when the VM payload omits
+// them, so a contents change would otherwise be saved as the previous body.
+func usePlannedCloudInitFiles(state, plan *VMResourceModel) {
+	if state == nil || plan == nil {
+		return
+	}
+	state.CloudInitFiles = cloneCloudInitFiles(plan.CloudInitFiles)
+}
+
+func cloneCloudInitFiles(files []CloudInitFile) []CloudInitFile {
+	if files == nil {
+		return nil
+	}
+	cloned := make([]CloudInitFile, len(files))
+	copy(cloned, files)
+	return cloned
 }
 
 // usePlannedShutdownSettings copies provider-only power settings onto the
