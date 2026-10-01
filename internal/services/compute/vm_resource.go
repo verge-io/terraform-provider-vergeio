@@ -417,8 +417,13 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 					"key": schema.StringAttribute{
 						MarkdownDescription: "Drive key assigned by VergeOS.",
 						Computed:            true,
+						// UseStateForUnknown copies a null prior value when this
+						// block is added to a VM that is already in state. Apply
+						// then stores the drive key and Terraform rejects the
+						// plan as inconsistent. UseNonNullStateForUnknown keeps
+						// a key that is already known and leaves a new key unknown.
 						PlanModifiers: []planmodifier.String{
-							stringplanmodifier.UseStateForUnknown(),
+							stringplanmodifier.UseNonNullStateForUnknown(),
 						},
 					},
 					"name": schema.StringAttribute{
