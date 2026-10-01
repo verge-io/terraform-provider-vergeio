@@ -34,7 +34,8 @@ BUG FIXES:
 - `vergeio_network` refresh stores `mtu`, `layer2_id`, `layer2_type`, `interface_vnet`, and `enable_bonding` from VergeOS. A configured MTU applies, and a null `interface_vnet` stays null.
 - Changing the `rule` list on `vergeio_network_rules`, or adding a `vergeio_device` to an existing VM, no longer fails apply with "Provider produced inconsistent result". A nested id is taken from the object with the same name. `orderid` is kept only when that rule is still at the same index. A new object, or a rule that moved, is planned unknown.
 - Deleting `vergeio_vm_nic` powers off a running VM whose guest leaves the NIC up after hot unplug, then deletes the NIC. Destroy no longer fails at the NIC and leaves the VM and network running. A guest that releases the NIC is left running.
-- `vergeio_vm` refresh reads cloud-init file contents from VergeOS. A file edited or deleted outside Terraform shows in the plan, and a later update restores it.
+- `vergeio_vm` refresh reads cloud-init file contents from VergeOS. A file edited outside Terraform, or deleted while another cloud-init file remains, shows in the plan, and a later update restores it.
+- `vergeio_vm` cloud-init refresh keeps a configured name such as `user-data` when VergeOS stores `/user-data`, leaves `cloudinit_files` unset when the configuration sets none, and keeps files removed after the VM powers on. Those three no longer plan a change on every refresh.
 - `vergeio_cloudinit_files`, `vergeio_resource_groups`, and `vergeio_tags` return an empty list when nothing matches.
 - `vergeio_cloudinit_files` loads file contents from the download API. A `filter_name` that matches nothing returns an empty list.
 - Editing `cloudinit_files` on an existing VM creates, updates, and deletes the file rows to match the plan.

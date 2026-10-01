@@ -821,7 +821,9 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 }
 
 // syncCloudInitFiles creates, updates, and deletes the cloud-init files owned
-// by this VM. Rows are matched by name. A plan that matches state makes no
+// by this VM. Rows are matched by cloudInitFileNameKey, so a configured
+// name of "user-data" updates the "/user-data" row VergeOS stored instead
+// of deleting it and creating another. A plan that matches state makes no
 // file requests: refresh has already stored the live bodies, so drift is a
 // plan change. A changed list is reconciled to the plan. Missing names are
 // created, names that left the plan are deleted, and a body that differs from
@@ -864,12 +866,13 @@ func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VM
 
 	byName := make(map[string][]vergeos.CloudInitFile, len(existing))
 	for _, file := range existing {
-		byName[file.Name] = append(byName[file.Name], file)
+		nameKey := cloudInitFileNameKey(file.Name)
+		byName[nameKey] = append(byName[nameKey], file)
 	}
 
 	// Delete rows the plan dropped before creating a file that reuses a name.
-	for name, files := range byName {
-		if _, keep := planned[name]; keep {
+	for nameKey, files := range byName {
+		if _, keep := planned[nameKey]; keep {
 			continue
 		}
 		for _, file := range files {
@@ -877,11 +880,11 @@ func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VM
 				return err
 			}
 		}
-		delete(byName, name)
+		delete(byName, nameKey)
 	}
 
-	for name, contents := range planned {
-		files := byName[name]
+	for nameKey, plannedFile := range planned {
+		files := byName[nameKey]
 		if len(files) == 0 {
 			continue
 		}
@@ -890,6 +893,7 @@ func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VM
 				return err
 			}
 		}
+		name := files[0].Name
 		key := files[0].Key.Int()
 		if key <= 0 {
 			return fmt.Errorf("cloud-init file %q has no key", name)
@@ -898,26 +902,26 @@ func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VM
 		if err != nil {
 			return fmt.Errorf("reading cloud-init file %q: %w", name, err)
 		}
-		if live == contents {
+		if live == plannedFile.contents {
 			continue
 		}
-		updated := contents
+		updated := plannedFile.contents
 		tflog.Debug(ctx, fmt.Sprintf("Updating cloud-init file %d (%q) on VM %d", key, name, vmID))
 		if _, err := va.sdk.CloudInitFiles.Update(ctx, key, &vergeos.CloudInitFileUpdateRequest{Contents: &updated}); err != nil {
 			return fmt.Errorf("updating cloud-init file %q: %w", name, err)
 		}
 	}
 
-	for name, contents := range planned {
-		if len(byName[name]) > 0 {
+	for nameKey, plannedFile := range planned {
+		if len(byName[nameKey]) > 0 {
 			continue
 		}
-		tflog.Debug(ctx, fmt.Sprintf("Creating cloud-init file %q on VM %d", name, vmID))
+		tflog.Debug(ctx, fmt.Sprintf("Creating cloud-init file %q on VM %d", plannedFile.name, vmID))
 		if _, err := va.sdk.CloudInitFiles.CreateForVM(ctx, vmID, &vergeos.CloudInitFileCreateRequest{
-			Name:     name,
-			Contents: contents,
+			Name:     plannedFile.name,
+			Contents: plannedFile.contents,
 		}); err != nil {
-			return fmt.Errorf("creating cloud-init file %q: %w", name, err)
+			return fmt.Errorf("creating cloud-init file %q: %w", plannedFile.name, err)
 		}
 	}
 	return nil
@@ -975,11 +979,27 @@ func cloudInitFilesEqual(plan, state []CloudInitFile) bool {
 	return true
 }
 
+// indexedCloudInitFile is one planned cloud-init file, keyed by
+// cloudInitFileNameKey so "user-data" and "/user-data" are one row.
+type indexedCloudInitFile struct {
+	name     string
+	contents string
+}
+
+// cloudInitFileNameKey is the identity of a cloud-init file.
+// VergeOS stores the docs' name "user-data" as "/user-data". The slash is
+// not a different file.
+func cloudInitFileNameKey(name string) string {
+	return strings.TrimPrefix(name, "/")
+}
+
 // indexCloudInitFiles maps a file name to its body.
 // A nil or empty list is an empty map. Unknown values, a blank name, and a
 // repeated name are errors so an update does not delete or create the wrong row.
-func indexCloudInitFiles(files []CloudInitFile) (map[string]string, error) {
-	out := make(map[string]string, len(files))
+// A leading slash does not make a second name: "user-data" and "/user-data"
+// are the same file.
+func indexCloudInitFiles(files []CloudInitFile) (map[string]indexedCloudInitFile, error) {
+	out := make(map[string]indexedCloudInitFile, len(files))
 	for _, file := range files {
 		if file.Name.IsUnknown() || file.Contents.IsUnknown() {
 			return nil, fmt.Errorf("cloudinit_files are not known yet")
@@ -991,10 +1011,11 @@ func indexCloudInitFiles(files []CloudInitFile) (map[string]string, error) {
 		if file.Contents.IsNull() {
 			return nil, fmt.Errorf("cloudinit_files %q is missing contents", name)
 		}
-		if _, exists := out[name]; exists {
+		nameKey := cloudInitFileNameKey(name)
+		if _, exists := out[nameKey]; exists {
 			return nil, fmt.Errorf("cloudinit_files name %q is duplicated", name)
 		}
-		out[name] = file.Contents.ValueString()
+		out[nameKey] = indexedCloudInitFile{name: name, contents: file.Contents.ValueString()}
 	}
 	return out, nil
 }
@@ -1284,43 +1305,48 @@ func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, 
 }
 
 // cloudInitFilesForState is the cloud-init list stored after a read.
-// Bodies are the ones VergeOS returned. Names that are still present stay in
-// the prior state order, so a list the API returns in another order does not
-// show as a reorder on every plan. Names that are gone are dropped. Names
-// that were not in state are appended in API order. No rows leaves null when
-// state has never stored the list, and an empty list when it had files.
+// A name VergeOS returns as "/user-data" stays "user-data" when that is the
+// name already in state, and the body is the one VergeOS returned. Matching
+// ignores one leading slash. Files stay in the prior state order, so a list
+// the API returns in another order does not show as a reorder on every plan.
+// Files the configuration never listed are left out, including the default
+// user-data and meta-data VergeOS adds when cloudinit_files is unset. No
+// prior rows leaves null when state has never stored the list, and an empty
+// list when it was cleared.
+//
+// An empty live list keeps the prior files. Power-on deletes every configured
+// file after the guest boots, and dropping them makes the next plan create
+// them again. A file missing while another row is still present is dropped,
+// so a later plan can put that one file back.
 func cloudInitFilesForState(prior, live []CloudInitFile) []CloudInitFile {
-	if len(live) == 0 {
+	if len(prior) == 0 {
 		if prior == nil {
 			return nil
 		}
 		return []CloudInitFile{}
 	}
+	if len(live) == 0 {
+		return cloneCloudInitFiles(prior)
+	}
 	byName := make(map[string][]CloudInitFile, len(live))
 	for _, file := range live {
-		name := file.Name.ValueString()
-		byName[name] = append(byName[name], file)
+		nameKey := cloudInitFileNameKey(file.Name.ValueString())
+		byName[nameKey] = append(byName[nameKey], file)
 	}
 	taken := make(map[string]int, len(prior))
-	out := make([]CloudInitFile, 0, len(live))
+	out := make([]CloudInitFile, 0, len(prior))
 	for _, file := range prior {
-		name := file.Name.ValueString()
-		rows := byName[name]
-		n := taken[name]
+		nameKey := cloudInitFileNameKey(file.Name.ValueString())
+		rows := byName[nameKey]
+		n := taken[nameKey]
 		if n >= len(rows) {
 			continue
 		}
-		out = append(out, rows[n])
-		taken[name] = n + 1
-	}
-	seen := make(map[string]int, len(live))
-	for _, file := range live {
-		name := file.Name.ValueString()
-		seen[name]++
-		if seen[name] <= taken[name] {
-			continue
-		}
-		out = append(out, file)
+		taken[nameKey] = n + 1
+		out = append(out, CloudInitFile{
+			Name:     file.Name,
+			Contents: rows[n].Contents,
+		})
 	}
 	return out
 }
