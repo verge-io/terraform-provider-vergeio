@@ -843,7 +843,9 @@ func TestAccVMResource_AddDevice(t *testing.T) {
 						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("machine")),
 						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("key")),
 						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("machine_device")),
-						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("version"), knownvalue.StringExact("2")),
+						// The plan keeps the configured label. Rewriting it to the stored
+						// key "2" is an invalid plan.
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("version"), knownvalue.StringExact("2.0")),
 					},
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
@@ -851,7 +853,8 @@ func TestAccVMResource_AddDevice(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.name", "tpm"),
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.type", "tpm"),
 					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.model", "crb"),
-					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.version", "2"),
+					// SemanticEquals keeps the configured label. The API write sends "2".
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.version", "2.0"),
 					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.key"),
 					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.machine"),
 					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.tpm_settings.key"),

@@ -572,9 +572,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 									MarkdownDescription: "TPM version. Display labels `\"2.0\"` and `\"1.2\"` are stored as `\"2\"` and `\"1\"`.",
 									Optional:            true,
 									Computed:            true,
-									PlanModifiers: []planmodifier.String{
-										tpmVersionModifier{},
-									},
+									CustomType:          TPMVersionType{},
 								},
 							},
 						},

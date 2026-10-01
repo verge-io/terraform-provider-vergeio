@@ -13,7 +13,6 @@ import (
 
 	"terraform-provider-vergeio/internal/client"
 
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/verge-io/govergeos"
@@ -53,7 +52,7 @@ type DeviceTPMSettingsModel struct {
 	Key           types.Int32  `tfsdk:"key"`
 	MachineDevice types.Int32  `tfsdk:"machine_device"`
 	Model         types.String `tfsdk:"model"`
-	Version       types.String `tfsdk:"version"`
+	Version       TPMVersion   `tfsdk:"version"`
 }
 
 type DeviceTPMSettingsAPIModel struct {
@@ -605,7 +604,7 @@ func normalizeTPMVersion(version string) string {
 
 // storedTPMVersion is the version to send. Null, unknown, and blank values
 // are omitted so an unset version keeps the VergeOS default.
-func storedTPMVersion(version types.String) (string, bool) {
+func storedTPMVersion(version TPMVersion) (string, bool) {
 	if version.IsNull() || version.IsUnknown() {
 		return "", false
 	}
@@ -614,29 +613,6 @@ func storedTPMVersion(version types.String) (string, bool) {
 		return "", false
 	}
 	return stored, true
-}
-
-var _ planmodifier.String = tpmVersionModifier{}
-
-// tpmVersionModifier plans the stored TPM version. A config of "2.0" has to
-// plan "2", which is what VergeOS writes back. Leaving the label in the plan
-// fails apply and taints the VM.
-type tpmVersionModifier struct{}
-
-func (m tpmVersionModifier) Description(context.Context) string {
-	return `Stores TPM version display labels as the VergeOS values: "2.0" as "2" and "1.2" as "1".`
-}
-
-func (m tpmVersionModifier) MarkdownDescription(ctx context.Context) string {
-	return m.Description(ctx)
-}
-
-func (m tpmVersionModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
-	stored, ok := storedTPMVersion(req.ConfigValue)
-	if !ok {
-		return
-	}
-	resp.PlanValue = types.StringValue(stored)
 }
 
 // UpdateTPMSettings updates TPM settings for the device.
@@ -701,7 +677,7 @@ func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceMo
 		data.DeviceTPMSettingsModel.MachineDevice = types.Int32Value(tpmSettingsAPIResp[0].MachineDevice)
 		if !readKeyOnly {
 			data.DeviceTPMSettingsModel.Model = types.StringValue(tpmSettingsAPIResp[0].Model)
-			data.DeviceTPMSettingsModel.Version = types.StringValue(normalizeTPMVersion(tpmSettingsAPIResp[0].Version))
+			data.DeviceTPMSettingsModel.Version = NewTPMVersionValue(normalizeTPMVersion(tpmSettingsAPIResp[0].Version))
 		}
 	}
 

@@ -293,6 +293,23 @@ func assertInt32PlanModifiers(t *testing.T, name string, got []planmodifier.Int3
 	}
 }
 
+func deviceSettingString(t *testing.T, blocks map[string]schema.Block, setting, name string) schema.StringAttribute {
+	t.Helper()
+	block, ok := blocks["vergeio_device"].(schema.ListNestedBlock)
+	if !ok {
+		t.Fatal("vergeio_device is not a list nested block")
+	}
+	parent, ok := block.NestedObject.Attributes[setting].(schema.SingleNestedAttribute)
+	if !ok {
+		t.Fatalf("vergeio_device.%s is not a single nested attribute", setting)
+	}
+	attr, ok := parent.Attributes[name].(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("vergeio_device.%s.%s is not a string attribute", setting, name)
+	}
+	return attr
+}
+
 func deviceSettingInt32(t *testing.T, blocks map[string]schema.Block, setting, name string) schema.Int32Attribute {
 	t.Helper()
 	block, ok := blocks["vergeio_device"].(schema.ListNestedBlock)

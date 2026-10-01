@@ -127,7 +127,7 @@ func configuredTPM(name string) *deviceResourceModel {
 		Type: types.StringValue("tpm"),
 		DeviceTPMSettingsModel: &DeviceTPMSettingsModel{
 			Model:   types.StringValue("crb"),
-			Version: types.StringValue("2.0"),
+			Version: NewTPMVersionValue("2.0"),
 		},
 	}
 }
