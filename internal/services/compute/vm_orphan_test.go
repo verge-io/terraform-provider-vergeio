@@ -427,7 +427,7 @@ func newVMCreateServer(t *testing.T, calls *[]string, special func(http.Response
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/vms/"):
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, vmJSON)
-		case r.Method == http.MethodGet && (r.URL.Path == "/api/v4/machine_drives" || r.URL.Path == "/api/v4/machine_nics"):
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/v4/machine_drives" || r.URL.Path == "/api/v4/machine_nics" || r.URL.Path == "/api/v4/cloudinit_files"):
 			w.WriteHeader(http.StatusOK)
 			_, _ = io.WriteString(w, `[]`)
 		default:

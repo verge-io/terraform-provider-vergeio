@@ -754,10 +754,13 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 }
 
 // syncCloudInitFiles creates, updates, and deletes the cloud-init files owned
-// by this VM. Rows are matched by name. An unchanged list makes no file
-// requests. A changed list is reconciled to the plan: missing names are
-// created, names that left the plan are deleted, and a new body is written
-// onto the existing row.
+// by this VM. Rows are matched by name. A plan that matches state makes no
+// file requests: refresh has already stored the live bodies, so drift is a
+// plan change. A changed list is reconciled to the plan. Missing names are
+// created, names that left the plan are deleted, and a body that differs from
+// the file on VergeOS is written onto the existing row. That comparison reads
+// the download body, not the prior Terraform state, so an edited file is
+// restored when another entry in the list changes.
 func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VMResourceModel) error {
 	if planData == nil {
 		return fmt.Errorf("cloud-init plan is nil")
@@ -771,10 +774,6 @@ func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VM
 	}
 
 	planned, err := indexCloudInitFiles(planData.CloudInitFiles)
-	if err != nil {
-		return err
-	}
-	previous, err := indexCloudInitFiles(stateFiles)
 	if err != nil {
 		return err
 	}
@@ -824,16 +823,20 @@ func (va *VMApi) syncCloudInitFiles(ctx context.Context, planData, stateData *VM
 				return err
 			}
 		}
-		prior, known := previous[name]
-		if known && prior == contents {
-			continue
-		}
-		if files[0].Key.Int() <= 0 {
+		key := files[0].Key.Int()
+		if key <= 0 {
 			return fmt.Errorf("cloud-init file %q has no key", name)
 		}
+		live, err := va.sdk.CloudInitFiles.GetContents(ctx, key)
+		if err != nil {
+			return fmt.Errorf("reading cloud-init file %q: %w", name, err)
+		}
+		if live == contents {
+			continue
+		}
 		updated := contents
-		tflog.Debug(ctx, fmt.Sprintf("Updating cloud-init file %d (%q) on VM %d", files[0].Key.Int(), name, vmID))
-		if _, err := va.sdk.CloudInitFiles.Update(ctx, files[0].Key.Int(), &vergeos.CloudInitFileUpdateRequest{Contents: &updated}); err != nil {
+		tflog.Debug(ctx, fmt.Sprintf("Updating cloud-init file %d (%q) on VM %d", key, name, vmID))
+		if _, err := va.sdk.CloudInitFiles.Update(ctx, key, &vergeos.CloudInitFileUpdateRequest{Contents: &updated}); err != nil {
 			return fmt.Errorf("updating cloud-init file %q: %w", name, err)
 		}
 	}
@@ -1039,8 +1042,8 @@ func usePlannedConsolePass(state, plan *VMResourceModel) {
 }
 
 // usePlannedCloudInitFiles stores the cloud-init files that update applied.
-// readVM keeps the bodies already on the model when the VM payload omits
-// them, so a contents change would otherwise be saved as the previous body.
+// readVM loads the live bodies, which can come back in a different order
+// than the configuration. Saving the plan keeps that order so apply matches.
 func usePlannedCloudInitFiles(state, plan *VMResourceModel) {
 	if state == nil || plan == nil {
 		return
@@ -1132,15 +1135,8 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 	if data.ShutdownOnDestroy.IsNull() || data.ShutdownOnDestroy.IsUnknown() {
 		data.ShutdownOnDestroy = types.StringValue(shutdownOnDestroyGracefulThenKill)
 	}
-
-	if vm.CloudInitFiles != nil {
-		for _, file := range vm.CloudInitFiles {
-			data.CloudInitFiles = append(data.CloudInitFiles, CloudInitFile{
-				Name:     types.StringValue(file.Name),
-				Contents: types.StringValue(file.Contents),
-			})
-		}
-	}
+	// Cloud-init file bodies are not on the VM payload. readVM loads them
+	// from the cloud-init file API.
 }
 
 // Read the VM from the API.
@@ -1180,10 +1176,86 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	if err := va.useMachinePowerState(ctx, data); err != nil {
 		return err
 	}
+	if err := va.readCloudInitFiles(ctx, data, vmID); err != nil {
+		return err
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
 	return nil
+}
+
+// readCloudInitFiles stores the cloud-init files owned by this VM.
+// List names the rows. The body is only on GET cloudinit_files/<key>?download=1,
+// which GetContents reads. A contents value on the list response is ignored.
+func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, vmID int) error {
+	if va.sdk == nil || va.sdk.CloudInitFiles == nil {
+		return fmt.Errorf("cloud-init client is not configured")
+	}
+	files, err := va.sdk.CloudInitFiles.ListByVM(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("listing cloud-init files for VM %d: %w", vmID, err)
+	}
+	live := make([]CloudInitFile, 0, len(files))
+	for _, file := range files {
+		id := file.Key.Int()
+		if id <= 0 {
+			return fmt.Errorf("cloud-init file %q has no key", file.Name)
+		}
+		contents, err := va.sdk.CloudInitFiles.GetContents(ctx, id)
+		if err != nil {
+			return fmt.Errorf("reading contents of cloud-init file %q (%d): %w", file.Name, id, err)
+		}
+		tflog.Debug(ctx, fmt.Sprintf("Read cloud-init file %d (%q) on VM %d", id, file.Name, vmID))
+		live = append(live, CloudInitFile{
+			Name:     types.StringValue(file.Name),
+			Contents: types.StringValue(contents),
+		})
+	}
+	data.CloudInitFiles = cloudInitFilesForState(data.CloudInitFiles, live)
+	return nil
+}
+
+// cloudInitFilesForState is the cloud-init list stored after a read.
+// Bodies are the ones VergeOS returned. Names that are still present stay in
+// the prior state order, so a list the API returns in another order does not
+// show as a reorder on every plan. Names that are gone are dropped. Names
+// that were not in state are appended in API order. No rows leaves null when
+// state has never stored the list, and an empty list when it had files.
+func cloudInitFilesForState(prior, live []CloudInitFile) []CloudInitFile {
+	if len(live) == 0 {
+		if prior == nil {
+			return nil
+		}
+		return []CloudInitFile{}
+	}
+	byName := make(map[string][]CloudInitFile, len(live))
+	for _, file := range live {
+		name := file.Name.ValueString()
+		byName[name] = append(byName[name], file)
+	}
+	taken := make(map[string]int, len(prior))
+	out := make([]CloudInitFile, 0, len(live))
+	for _, file := range prior {
+		name := file.Name.ValueString()
+		rows := byName[name]
+		n := taken[name]
+		if n >= len(rows) {
+			continue
+		}
+		out = append(out, rows[n])
+		taken[name] = n + 1
+	}
+	seen := make(map[string]int, len(live))
+	for _, file := range live {
+		name := file.Name.ValueString()
+		seen[name]++
+		if seen[name] <= taken[name] {
+			continue
+		}
+		out = append(out, file)
+	}
+	return out
 }
 
 // useMachinePowerState stores machine#status#running on powerstate.

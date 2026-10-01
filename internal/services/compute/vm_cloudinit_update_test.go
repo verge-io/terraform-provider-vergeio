@@ -196,10 +196,48 @@ func TestUpdateLeavesCloudInitFilesWhenUnchanged(t *testing.T) {
 	files := []CloudInitFile{cloudInitFile("/user-data", cloudInitFirst)}
 	fake := newFakeCloudInit(fakeCloudInitRow{key: 11, name: "/user-data", contents: cloudInitFirst})
 	got := runCloudInitUpdate(t, fake, files, files)
-	if len(fake.cloudInitCalls()) != 0 {
-		t.Fatalf("unchanged files were sent: %#v", fake.cloudInitCalls())
+	if writes := fake.mutatingCloudInitCalls(); len(writes) != 0 {
+		t.Fatalf("unchanged files were written: %#v", writes)
 	}
 	assertCloudInitFiles(t, got, files)
+}
+
+// TestUpdateRestoresDriftedCloudInitFileWhenAnotherChanges is an apply that
+// edits one file while another file was changed in VergeOS. State still has
+// the configured body for the drifted file. The update has to write that
+// body back, because the download differs from the plan.
+func TestUpdateRestoresDriftedCloudInitFileWhenAnotherChanges(t *testing.T) {
+	const changed = "#cloud-config\nhostname: CHANGED\n"
+	fake := newFakeCloudInit(
+		fakeCloudInitRow{key: 11, name: "/user-data", contents: changed},
+		fakeCloudInitRow{key: 12, name: "/meta-data", contents: cloudInitMeta},
+	)
+	got := runCloudInitUpdate(t, fake,
+		[]CloudInitFile{cloudInitFile("/user-data", cloudInitFirst), cloudInitFile("/meta-data", cloudInitMeta)},
+		[]CloudInitFile{cloudInitFile("/user-data", cloudInitFirst), cloudInitFile("/meta-data", cloudInitSecond)},
+	)
+
+	puts := fake.calls(http.MethodPut, "/api/v4/cloudinit_files/11")
+	if len(puts) != 1 {
+		t.Fatalf("drift restore = %#v, want one PUT for /user-data", fake.cloudInitCalls())
+	}
+	var body struct {
+		Contents *string `json:"contents"`
+	}
+	if err := json.Unmarshal([]byte(puts[0].body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Contents == nil || *body.Contents != cloudInitFirst {
+		t.Fatalf("contents = %#v, want the configured body", body.Contents)
+	}
+	meta := fake.calls(http.MethodPut, "/api/v4/cloudinit_files/12")
+	if len(meta) != 1 {
+		t.Fatalf("meta updates = %#v, want the planned body", fake.cloudInitCalls())
+	}
+	assertCloudInitFiles(t, got, []CloudInitFile{
+		cloudInitFile("/user-data", cloudInitFirst),
+		cloudInitFile("/meta-data", cloudInitSecond),
+	})
 }
 
 func TestUpdateCloudInitFileReorderDoesNotRewriteRows(t *testing.T) {
@@ -260,10 +298,11 @@ type fakeCloudInitRow struct {
 }
 
 type fakeCloudInitCall struct {
-	method string
-	path   string
-	filter string
-	body   string
+	method   string
+	path     string
+	filter   string
+	download string
+	body     string
 }
 
 type fakeCloudInit struct {
@@ -312,6 +351,16 @@ func (f *fakeCloudInit) cloudInitCalls() []fakeCloudInitCall {
 	return out
 }
 
+func (f *fakeCloudInit) mutatingCloudInitCalls() []fakeCloudInitCall {
+	var out []fakeCloudInitCall
+	for _, call := range f.cloudInitCalls() {
+		if call.method != http.MethodGet {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+
 func (f *fakeCloudInit) listFilters() string {
 	var filters []string
 	for _, call := range f.calls(http.MethodGet, "/api/v4/cloudinit_files") {
@@ -334,10 +383,11 @@ func (f *fakeCloudInit) handler(t *testing.T) http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.recorded = append(f.recorded, fakeCloudInitCall{
-			method: r.Method,
-			path:   r.URL.Path,
-			filter: r.URL.Query().Get("filter"),
-			body:   string(body),
+			method:   r.Method,
+			path:     r.URL.Path,
+			filter:   r.URL.Query().Get("filter"),
+			download: r.URL.Query().Get("download"),
+			body:     string(body),
 		})
 
 		w.Header().Set("Content-Type", "application/json")
@@ -351,7 +401,9 @@ func (f *fakeCloudInit) handler(t *testing.T) http.Handler {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
 			payload := make([]map[string]any, 0, len(f.files))
 			for _, file := range f.files {
-				payload = append(payload, map[string]any{"$key": file.key, "name": file.name, "owner": "vms/7"})
+				// contents here is not the stored body. VergeOS omits it from
+				// list, and a value on this response must not be treated as one.
+				payload = append(payload, map[string]any{"$key": file.key, "name": file.name, "owner": "vms/7", "contents": "from-list"})
 			}
 			encoded, err := json.Marshal(payload)
 			if err != nil {
@@ -406,7 +458,11 @@ func (f *fakeCloudInit) handleCloudInitFile(t *testing.T, w http.ResponseWriter,
 			return
 		}
 		file := f.files[index]
-		encoded, err := json.Marshal(map[string]any{"$key": file.key, "name": file.name, "owner": "vms/7"})
+		if r.URL.Query().Get("download") == "1" {
+			_, _ = w.Write([]byte(file.contents))
+			return
+		}
+		encoded, err := json.Marshal(map[string]any{"$key": file.key, "name": file.name, "owner": "vms/7", "contents": "from-list"})
 		if err != nil {
 			t.Errorf("marshal file: %v", err)
 			return
