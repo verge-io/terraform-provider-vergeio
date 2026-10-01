@@ -785,3 +785,86 @@ resource "vergeio_vm_nic" "test" {
 }
 `, networkName, vmName, driveName, nicName))
 }
+
+// TestAccVMResource_AddDevice creates a VM, then adds a TPM device.
+// The device key, machine, and TPM ids are unknown in that plan. Apply
+// stores the values VergeOS assigns, and the following plan is empty.
+func TestAccVMResource_AddDevice(t *testing.T) {
+	vmName := acctest.Name("vm")
+	without := testAccVMResourceConfig(vmName, `
+  enabled    = true
+  cpu_cores  = 1
+  ram        = 1024
+  powerstate = false
+`)
+	withDevice := testAccVMResourceConfig(vmName, `
+  enabled    = true
+  cpu_cores  = 1
+  ram        = 1024
+  powerstate = false
+
+  vergeio_device {
+    name = "tpm"
+    type = "tpm"
+    tpm_settings = {
+      model   = "crb"
+      version = "2.0"
+    }
+  }
+`)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: without,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
+					resource.TestCheckNoResourceAttr("vergeio_vm.test", "vergeio_device.0.key"),
+				),
+			},
+			{
+				Config: without,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: withDevice,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("key")),
+						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("machine")),
+						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("key")),
+						plancheck.ExpectUnknownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("machine_device")),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.#", "1"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.name", "tpm"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.type", "tpm"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.model", "crb"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.version", "2.0"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.key"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.machine"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.tpm_settings.key"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.tpm_settings.machine_device"),
+				),
+			},
+			{
+				Config: withDevice,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}

@@ -136,17 +136,22 @@ func TestVMResource_DriveAndNICPlanModifiers(t *testing.T) {
 	// plans the key unknown and must stay that way.
 	assertStringStaysUnknownWhenPriorNull(t, "boot_disk.key", bootKey.PlanModifiers)
 
-	keepState := stringplanmodifier.UseStateForUnknown().Description(context.Background())
 	keepStateInt := int32planmodifier.UseStateForUnknown().Description(context.Background())
 
+	devicePlan := deviceComputedModifier{}.Description(context.Background())
 	deviceKey := nestedStringAttr(t, resp.Schema.Blocks, "vergeio_device", "key")
-	assertPlanModifiers(t, "vergeio_device.key", deviceKey.PlanModifiers, keepState)
-	assertStringKeepsPriorState(t, "vergeio_device.key", deviceKey.PlanModifiers, "12", "13")
+	assertPlanModifiers(t, "vergeio_device.key", deviceKey.PlanModifiers, devicePlan)
 
 	deviceMachine := nestedInt32Attr(t, resp.Schema.Blocks, "vergeio_device", "machine")
-	assertInt32PlanModifiers(t, "vergeio_device.machine", deviceMachine.PlanModifiers, keepStateInt)
+	assertInt32PlanModifiers(t, "vergeio_device.machine", deviceMachine.PlanModifiers, devicePlan)
 
-	for _, setting := range []string{"usb_settings", "tpm_settings", "nvidia_vgpu_settings"} {
+	// key and machine follow the device name. TPM ids do too. USB and vGPU
+	// settings are unchanged and still copy the value at the same index.
+	tpmKey := deviceSettingInt32(t, resp.Schema.Blocks, "tpm_settings", "key")
+	assertInt32PlanModifiers(t, "vergeio_device.tpm_settings.key", tpmKey.PlanModifiers, devicePlan)
+	tpmMachine := deviceSettingInt32(t, resp.Schema.Blocks, "tpm_settings", "machine_device")
+	assertInt32PlanModifiers(t, "vergeio_device.tpm_settings.machine_device", tpmMachine.PlanModifiers, devicePlan)
+	for _, setting := range []string{"usb_settings", "nvidia_vgpu_settings"} {
 		settingKey := deviceSettingInt32(t, resp.Schema.Blocks, setting, "key")
 		assertInt32PlanModifiers(t, "vergeio_device."+setting+".key", settingKey.PlanModifiers, keepStateInt)
 		settingMachine := deviceSettingInt32(t, resp.Schema.Blocks, setting, "machine_device")
