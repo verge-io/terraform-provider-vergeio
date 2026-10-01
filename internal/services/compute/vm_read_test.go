@@ -36,6 +36,8 @@ func TestReadVMEmptyResponseDoesNotPanic(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case "/api/v4/vms/4":
 			_, _ = w.Write([]byte(`null`))
+		case "/api/v4/cloudinit_files":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
@@ -61,6 +63,8 @@ func TestReadVMAppliesSnapshotProfile(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case "/api/v4/vms/4":
 			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","snapshot_profile":12}`))
+		case "/api/v4/cloudinit_files":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
@@ -98,6 +102,8 @@ func TestReadVMRetriesSDKSetup(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case "/api/v4/vms/4":
 			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","snapshot_profile":12}`))
+		case "/api/v4/cloudinit_files":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
@@ -141,6 +147,8 @@ func TestReadVMReusesSDKClient(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case "/api/v4/vms/4":
 			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","snapshot_profile":12}`))
+		case "/api/v4/cloudinit_files":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
@@ -179,6 +187,8 @@ func TestReadVMPrefersMachineRunning(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case "/api/v4/vms/4":
 			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","powerstate":true,"running":false,"status":"stopped"}`))
+		case "/api/v4/cloudinit_files":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}
@@ -210,6 +220,8 @@ func TestReadVMKeepsPowerStateAlias(t *testing.T) {
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case "/api/v4/vms/4":
 			_, _ = w.Write([]byte(`{"$key":4,"machine":3,"name":"web","powerstate":true}`))
+		case "/api/v4/cloudinit_files":
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			http.Error(w, "unexpected", http.StatusNotFound)
 		}

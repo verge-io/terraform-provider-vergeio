@@ -161,6 +161,9 @@ func runVMPowerApply(t *testing.T, tc vmPowerApplyCase) (types.Bool, []string) {
 			actions = append(actions, string(body))
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
 			http.Error(w, "unexpected", http.StatusInternalServerError)

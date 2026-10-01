@@ -117,6 +117,9 @@ func TestAdoptDriveByNameDoesNotCreate(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
 			posts++
 			http.Error(w, "should adopt", http.StatusInternalServerError)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
 			http.Error(w, "unexpected", http.StatusInternalServerError)

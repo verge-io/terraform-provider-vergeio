@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_vm` refresh reads cloud-init file contents from VergeOS. A file edited or deleted outside Terraform shows in the plan, and a later update restores it.
 - `vergeio_cloudinit_files`, `vergeio_resource_groups`, and `vergeio_tags` return an empty list when nothing matches.
 - `vergeio_cloudinit_files` loads file contents from the download API. A `filter_name` that matches nothing returns an empty list.
 - Editing `cloudinit_files` on an existing VM creates, updates, and deletes the file rows to match the plan.

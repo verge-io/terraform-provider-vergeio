@@ -102,6 +102,9 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_devices/12":
 			w.WriteHeader(http.StatusOK)
 			response = []byte(deviceJSON)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
+			w.WriteHeader(http.StatusOK)
+			response = []byte(`[]`)
 		default:
 			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
 			http.Error(w, "unexpected", http.StatusInternalServerError)
@@ -298,6 +301,9 @@ func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
 			w.WriteHeader(http.StatusCreated)
 			response = []byte(`{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
+			w.WriteHeader(http.StatusOK)
+			response = []byte(`[]`)
 		default:
 			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
 			http.Error(w, "unexpected", http.StatusInternalServerError)

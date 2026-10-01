@@ -120,8 +120,9 @@ func (r *VMResource) adoptOrphanVM(ctx context.Context, data *VMResourceModel) e
 
 // vmConfigMatches reports whether an existing VM is the one this create
 // would have made. Only attributes the plan sets are compared, so API
-// defaults do not block adoption. The console password and cloud-init
-// files are skipped because the read does not return them. Drives and
+// defaults do not block adoption. The console password is skipped because
+// the API does not return it. Cloud-init files are skipped because this VM
+// record does not include their bodies. Drives and
 // NICs are skipped because a partial create may not have finished them.
 // A stopped VM is still a match when the plan powers it on; create
 // turns it on after the devices exist.

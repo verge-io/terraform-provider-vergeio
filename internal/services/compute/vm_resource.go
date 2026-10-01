@@ -909,6 +909,10 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	if !data.PowerState.IsNull() {
 		desiredPowerState = data.PowerState.ValueBool()
 	}
+	// readVM replaces cloud-init files with the live rows. Create still
+	// stores the plan: power-on deletes the files after the guest boots,
+	// and the apply has to match the configuration.
+	plannedCloudInitFiles := cloneCloudInitFiles(data.CloudInitFiles)
 
 	// Create a new VM. A name collision means a previous create left the VM
 	// in VergeOS without writing state. Adopt it when it matches this plan.
@@ -995,7 +999,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		// so the guest will read them during boot regardless. Deleting the
 		// cloud-init files prevents the VM from depending on them on subsequent
 		// boots.
-		if data.CloudInitFiles != nil && len(data.CloudInitFiles) > 0 {
+		if len(plannedCloudInitFiles) > 0 {
 			tflog.Debug(ctx, "Waiting 1 second before detaching cloud-init")
 			time.Sleep(1 * time.Second)
 
@@ -1058,12 +1062,13 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		fmt.Println(i)
 	}
 
-	// Preserve cloud-init config values before the final read.
+	// Preserve the cloud-init datasource before the final read.
 	// If we detached cloud-init, the API now returns "none" but Terraform
 	// expects the planned value ("nocloud"/"config_drive_v2") for consistency.
 	// On subsequent Read() calls, ignore_changes prevents drift.
+	// File rows are the plan captured above. The final read would otherwise
+	// store the live list, which is empty after detach.
 	plannedCloudInitDS := data.CloudInitDataSource
-	plannedCloudInitFiles := data.CloudInitFiles
 
 	// read the final state of the VM
 	if readError := r.vmApi.readVM(ctx, &data); readError != nil {
@@ -1255,8 +1260,8 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		return
 	}
 
-	// The file rows were written above. The VM read still has the previous
-	// bodies, and saving those fails apply with an inconsistent result.
+	// The file rows were written above. readVM loads those bodies, possibly
+	// in API order. Saving the plan keeps the configured order.
 	usePlannedCloudInitFiles(&stateData, &planData)
 
 	// Save updated data into Terraform state
