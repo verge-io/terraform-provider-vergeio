@@ -492,13 +492,17 @@ func deleteTenant(ctx context.Context, client *vergeos.Client, id int) error {
 	return ignoreNotFound(client.Tenants.Delete(ctx, id), "tenant", id)
 }
 
+// deleteVM removes a test VM. Delete is refused while the VM is running.
+// Empty acceptance VMs have no OS and ignore ACPI, so VMs.PowerOff waits
+// out its timeout and the VM stays running. VMs.Kill stops the machine
+// immediately, then delete is retried.
 func deleteVM(ctx context.Context, client *vergeos.Client, id int) error {
 	err := client.VMs.Delete(ctx, id)
 	if err == nil || vergeos.IsNotFoundError(err) {
 		return nil
 	}
-	if offErr := client.VMs.PowerOff(ctx, id); offErr != nil && !vergeos.IsNotFoundError(offErr) {
-		return fmt.Errorf("delete vm %d: %w (power off: %v)", id, err, offErr)
+	if killErr := client.VMs.Kill(ctx, id); killErr != nil && !vergeos.IsNotFoundError(killErr) {
+		return fmt.Errorf("delete vm %d: %w (kill: %v)", id, err, killErr)
 	}
 	return ignoreNotFound(client.VMs.Delete(ctx, id), "vm", id)
 }
