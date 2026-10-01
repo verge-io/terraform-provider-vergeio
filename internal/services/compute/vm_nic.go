@@ -420,6 +420,13 @@ func preserveNICConfigFields(prior, current []*nicResourceModel) {
 // deleteNIC unplugs a NIC that is still attached, waits until it is down,
 // and then deletes it. The unplug action is sent once. Sending it again
 // while the guest is still releasing the NIC returns 422.
+//
+// Terraform destroys vergeio_vm_nic before vergeio_vm. A guest that ignores
+// the unplug, such as firmware with no OS, leaves the NIC up. Failing that
+// delete skips the VM, so the VM and its network stay behind. That guest is
+// powered off with kill and the NIC is deleted. A guest that enters hotplug
+// is left running and waited on for deviceDetachTimeout. A stopped VM has
+// no guest to release the NIC, so the NIC is deleted without an unplug.
 func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId types.String) error {
 
 	tflog.Debug(ctx, "Deleting the nic")
@@ -432,40 +439,110 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 
 	tflog.Debug(ctx, fmt.Sprintf("Current NIC power state is %v", powerState))
 
-	if !strings.EqualFold(strings.TrimSpace(powerState), "down") {
-		if err := sendUnplug(ctx, powerState, func() error {
-			vmAPI, err := NewVMApi(na.client)
-			if err != nil {
-				return err
-			}
-			return vmAPI.hotplugNIC(ctx, id, vmId, true)
-		}); err != nil {
-			return fmt.Errorf("failed to unplug NIC: %v", err)
-		}
-
-		name := ""
-		if !data.Name.IsNull() && !data.Name.IsUnknown() {
-			name = data.Name.ValueString()
-		}
-		if err := waitUntilDetached(ctx, func() (string, error) {
-			var current string
-			readErr := na.checkNICPowerState(ctx, id, &current)
-			return current, readErr
-		}, "down", "NIC", name, id, "id"); err != nil {
-			return err
-		}
+	name := ""
+	if !data.Name.IsNull() && !data.Name.IsUnknown() {
+		name = data.Name.ValueString()
 	}
 
-	// Call the API
-	_, apiErr := na.client.Delete(ctx, vergeio.ObjectPath(NICEndpoint, id))
+	if strings.EqualFold(strings.TrimSpace(powerState), "down") {
+		return na.removeNIC(ctx, id)
+	}
 
+	running, err := readVMPowerState(ctx, na.client, vmId)
+	if err != nil {
+		return fmt.Errorf("checking VM power state before deleting NIC: %w", err)
+	}
+	if !running {
+		tflog.Debug(ctx, fmt.Sprintf("VM %s is stopped; deleting NIC %s without waiting for a guest unplug", vmId.ValueString(), detachLabel(name, id, "id")))
+		return na.removeStoppedVMNIC(ctx, id, name)
+	}
+
+	if err := sendUnplug(ctx, powerState, func() error {
+		vmAPI, err := NewVMApi(na.client)
+		if err != nil {
+			return err
+		}
+		return vmAPI.hotplugNIC(ctx, id, vmId, true)
+	}); err != nil {
+		return fmt.Errorf("failed to unplug NIC: %v", err)
+	}
+
+	if err := waitUntilNICDown(ctx, func() (string, error) {
+		var current string
+		readErr := na.checkNICPowerState(ctx, id, &current)
+		return current, readErr
+	}, name, id); err != nil {
+		if !errors.Is(err, errNICUnplugIgnored) {
+			return err
+		}
+		tflog.Debug(ctx, fmt.Sprintf("NIC %s stayed up after unplug; killing VM %s so the NIC can be deleted", detachLabel(name, id, "id"), vmId.ValueString()))
+		if err := na.killVMForNICDelete(ctx, vmId); err != nil {
+			return err
+		}
+		return na.removeStoppedVMNIC(ctx, id, name)
+	}
+
+	return na.removeNIC(ctx, id)
+}
+
+// killVMForNICDelete powers the VM off so a NIC the guest will not release
+// can be deleted. A VM that is already stopped is left alone. Two NIC
+// deletes can run at once; a kill that loses that race still continues
+// when the VM is stopped.
+func (na *NICApi) killVMForNICDelete(ctx context.Context, vmId types.String) error {
+	running, err := readVMPowerState(ctx, na.client, vmId)
+	if err != nil {
+		return fmt.Errorf("checking VM power state before killing it: %w", err)
+	}
+	if !running {
+		tflog.Debug(ctx, fmt.Sprintf("VM %s is already stopped", vmId.ValueString()))
+		return nil
+	}
+
+	vmAPI, err := NewVMApi(na.client)
+	if err != nil {
+		return err
+	}
+	if err := vmAPI.killVM(ctx, &VMResourceModel{Id: vmId}); err != nil {
+		stillRunning, readErr := readVMPowerState(ctx, na.client, vmId)
+		if readErr == nil && !stillRunning {
+			tflog.Debug(ctx, fmt.Sprintf("VM %s is stopped after kill returned %v", vmId.ValueString(), err))
+			return nil
+		}
+		return fmt.Errorf("killing VM %s so the NIC can be deleted: %w", vmId.ValueString(), err)
+	}
+	return nil
+}
+
+func (na *NICApi) removeNIC(ctx context.Context, id string) error {
+	_, apiErr := na.client.Delete(ctx, vergeio.ObjectPath(NICEndpoint, id))
 	if apiErr != nil {
 		return errors.New("Error deleting the NIC: " + apiErr.Error())
 	}
-
 	tflog.Debug(ctx, "NIC was successfully deleted")
-
 	return nil
+}
+
+// removeStoppedVMNIC deletes a NIC whose VM is not running.
+// Power-off may not have flipped the status to down yet, so this polls
+// briefly. The NIC is still deleted if it stays up: no guest is left to
+// finish the unplug, and failing here blocks VM destroy.
+func (na *NICApi) removeStoppedVMNIC(ctx context.Context, id, name string) error {
+	status, err := waitForStatusWithin(ctx, func() (string, error) {
+		var current string
+		readErr := na.checkNICPowerState(ctx, id, &current)
+		return current, readErr
+	}, "down", nicIgnoredUnplugTimeout, deviceDetachInterval)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if status == "" {
+			return fmt.Errorf("NIC %s status could not be read after the VM stopped: %w", detachLabel(name, id, "id"), err)
+		}
+		tflog.Debug(ctx, fmt.Sprintf("NIC %s stayed %q with the VM stopped; deleting it", detachLabel(name, id, "id"), status))
+	}
+	return na.removeNIC(ctx, id)
 }
 
 // nicBlockID is the NIC id stored in state. An empty id means the block has
