@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"terraform-provider-vergeio/internal/client"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/verge-io/govergeos"
@@ -451,7 +453,8 @@ func (da *DeviceApi) syncDevices(ctx context.Context, planData *[]*deviceResourc
 						(plan.DeviceUSBSettingsModel.GuestReset != state.DeviceUSBSettingsModel.GuestReset ||
 							plan.DeviceUSBSettingsModel.GuestResetsAll != state.DeviceUSBSettingsModel.GuestResetsAll)) ||
 					(plan.Type.ValueString() == "tpm" &&
-						(plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model)) ||
+						(plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model ||
+							plan.DeviceTPMSettingsModel.Version != state.DeviceTPMSettingsModel.Version)) ||
 					(plan.Type.ValueString() == "node_nvidia_vgpu_devices" &&
 						(plan.DeviceNvidiaVGPUSettingsModel.ProfileType != state.DeviceNvidiaVGPUSettingsModel.ProfileType ||
 							// plan.DeviceNvidiaVGPUSettingsModel.AttachDrivers != state.DeviceNvidiaVGPUSettingsModel.AttachDrivers ||
@@ -585,6 +588,57 @@ func (da *DeviceApi) readUSBSettings(ctx context.Context, data *deviceResourceMo
 	return nil
 }
 
+// normalizeTPMVersion maps a TPM version to the value VergeOS stores.
+// The field list is {'2':'2.0','1':'1.2'}. VergeOS accepts the display
+// label or the stored key and keeps the key. "2" and "1" pass through.
+// Any other value is returned unchanged.
+func normalizeTPMVersion(version string) string {
+	switch strings.TrimSpace(version) {
+	case "2.0", "2":
+		return "2"
+	case "1.2", "1":
+		return "1"
+	default:
+		return version
+	}
+}
+
+// storedTPMVersion is the version to send. Null, unknown, and blank values
+// are omitted so an unset version keeps the VergeOS default.
+func storedTPMVersion(version types.String) (string, bool) {
+	if version.IsNull() || version.IsUnknown() {
+		return "", false
+	}
+	stored := normalizeTPMVersion(version.ValueString())
+	if strings.TrimSpace(stored) == "" {
+		return "", false
+	}
+	return stored, true
+}
+
+var _ planmodifier.String = tpmVersionModifier{}
+
+// tpmVersionModifier plans the stored TPM version. A config of "2.0" has to
+// plan "2", which is what VergeOS writes back. Leaving the label in the plan
+// fails apply and taints the VM.
+type tpmVersionModifier struct{}
+
+func (m tpmVersionModifier) Description(context.Context) string {
+	return `Stores TPM version display labels as the VergeOS values: "2.0" as "2" and "1.2" as "1".`
+}
+
+func (m tpmVersionModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (m tpmVersionModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	stored, ok := storedTPMVersion(req.ConfigValue)
+	if !ok {
+		return
+	}
+	resp.PlanValue = types.StringValue(stored)
+}
+
 // UpdateTPMSettings updates TPM settings for the device.
 func (da *DeviceApi) updateTPMSettings(ctx context.Context, data *deviceResourceModel, key types.Int32) error {
 	tflog.Debug(ctx, "Updating TPM settings for device: "+data.Name.ValueString())
@@ -592,7 +646,9 @@ func (da *DeviceApi) updateTPMSettings(ctx context.Context, data *deviceResource
 	// Prepare the API data packet
 	apiData := map[string]interface{}{
 		"model": data.DeviceTPMSettingsModel.Model.ValueString(),
-		// "version": data.DeviceTPMSettingsModel.Version.ValueString(),
+	}
+	if version, ok := storedTPMVersion(data.DeviceTPMSettingsModel.Version); ok {
+		apiData["version"] = version
 	}
 
 	// Encode the API data
@@ -645,7 +701,7 @@ func (da *DeviceApi) readTPMSettings(ctx context.Context, data *deviceResourceMo
 		data.DeviceTPMSettingsModel.MachineDevice = types.Int32Value(tpmSettingsAPIResp[0].MachineDevice)
 		if !readKeyOnly {
 			data.DeviceTPMSettingsModel.Model = types.StringValue(tpmSettingsAPIResp[0].Model)
-			data.DeviceTPMSettingsModel.Version = types.StringValue(tpmSettingsAPIResp[0].Version)
+			data.DeviceTPMSettingsModel.Version = types.StringValue(normalizeTPMVersion(tpmSettingsAPIResp[0].Version))
 		}
 	}
 

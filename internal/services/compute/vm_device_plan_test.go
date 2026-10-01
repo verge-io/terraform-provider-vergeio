@@ -274,6 +274,8 @@ func splitDeviceAttr(name string) []string {
 		return []string{"tpm_settings", "key"}
 	case "tpm_settings.machine_device":
 		return []string{"tpm_settings", "machine_device"}
+	case "tpm_settings.version":
+		return []string{"tpm_settings", "version"}
 	default:
 		return []string{name}
 	}
