@@ -542,9 +542,18 @@ const (
 // or NIC to leave the guest. On VergeOS 26.1 a guest stayed in hotplug for
 // several minutes, so this is a deadline rather than a few short retries.
 // The first status read is immediate. Tests shorten these.
+//
+// nicIgnoredUnplugTimeout is how long a NIC may stay "up" after that unplug
+// before the guest is treated as ignoring it. A guest that handles unplug
+// goes down (an Ubuntu guest did this in about two seconds) or enters
+// hotplug, which then waits for deviceDetachTimeout. A VM with no OS stays
+// "up". Destroy removes the NIC before the VM, so that case powers the VM
+// off instead of failing the NIC delete and leaving the VM running.
+// Tests shorten this.
 var (
-	deviceDetachTimeout  = 5 * time.Minute
-	deviceDetachInterval = 2 * time.Second
+	deviceDetachTimeout     = 5 * time.Minute
+	deviceDetachInterval    = 2 * time.Second
+	nicIgnoredUnplugTimeout = 15 * time.Second
 )
 
 // deviceShouldAttach reports whether a newly created drive or NIC should be
@@ -708,6 +717,64 @@ func detachLabel(name, id, idKind string) string {
 		return fmt.Sprintf("%s %s", idKind, id)
 	default:
 		return "unknown"
+	}
+}
+
+// errNICUnplugIgnored means the NIC stayed up after one unplug and never
+// entered hotplug. The guest is not releasing it. deleteNIC kills the VM
+// and then deletes the NIC so destroy can continue.
+var errNICUnplugIgnored = errors.New("guest ignored NIC unplug")
+
+// waitUntilNICDown polls until the NIC is down. A status that shows unplug
+// progress waits for deviceDetachTimeout. A status that stays up past
+// nicIgnoredUnplugTimeout returns errNICUnplugIgnored. The first read is
+// immediate. Context cancel is returned as-is.
+func waitUntilNICDown(ctx context.Context, read func() (string, error), name, id string) error {
+	label := detachLabel(name, id, "id")
+	started := time.Now()
+	ackDeadline := started.Add(nicIgnoredUnplugTimeout)
+	detachDeadline := started.Add(deviceDetachTimeout)
+	sawProgress := false
+	var last string
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		status, err := read()
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return fmt.Errorf("NIC %s was unplugged but its status could not be read: %w", label, err)
+		}
+		last = strings.TrimSpace(status)
+		if strings.EqualFold(last, "down") {
+			return nil
+		}
+		if deviceUnplugInProgress(last) {
+			sawProgress = true
+		}
+		now := time.Now()
+		if !sawProgress && !now.Before(ackDeadline) {
+			return errNICUnplugIgnored
+		}
+		if !now.Before(detachDeadline) {
+			return fmt.Errorf("NIC %s stayed %q after unplug and did not reach down before the timeout", label, last)
+		}
+		deadline := detachDeadline
+		if !sawProgress && ackDeadline.Before(detachDeadline) {
+			deadline = ackDeadline
+		}
+		wait := deviceDetachInterval
+		if remaining := time.Until(deadline); remaining < wait {
+			wait = remaining
+		}
+		if wait < 0 {
+			wait = 0
+		}
+		if err := sleepContext(ctx, wait); err != nil {
+			return err
+		}
 	}
 }
 

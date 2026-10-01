@@ -12,6 +12,8 @@ A NIC attached to a VergeOS VM. The NIC references the VM with `vm_id` and is ma
 
 A NIC added while the VM is already running is hotplugged. A NIC created while the VM is stopped is present at the next boot. Renaming the NIC updates it in place and keeps its id and MAC address.
 
+Deleting a NIC from a running VM sends one hot unplug and waits for the guest to release it. A guest that starts releasing the NIC is left running. A guest that leaves the NIC up, such as a VM with no OS sitting in firmware, is powered off with kill and the NIC is then deleted. Terraform destroys this resource before the VM, so that power-off is what lets destroy continue to the VM and the network. `shutdown_on_destroy` is not used for this power-off.
+
 Import with the NIC id, or with `<vm_id>/<name>`.
 
 ## Example Usage

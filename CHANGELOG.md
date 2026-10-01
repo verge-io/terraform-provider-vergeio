@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- Deleting `vergeio_vm_nic` powers off a running VM whose guest leaves the NIC up after hot unplug, then deletes the NIC. Destroy no longer fails at the NIC and leaves the VM and network running. A guest that releases the NIC is left running.
 - `vergeio_vm` refresh reads cloud-init file contents from VergeOS. A file edited or deleted outside Terraform shows in the plan, and a later update restores it.
 - `vergeio_cloudinit_files`, `vergeio_resource_groups`, and `vergeio_tags` return an empty list when nothing matches.
 - `vergeio_cloudinit_files` loads file contents from the download API. A `filter_name` that matches nothing returns an empty list.

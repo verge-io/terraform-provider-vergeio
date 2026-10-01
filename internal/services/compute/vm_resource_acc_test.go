@@ -189,6 +189,66 @@ func TestAccVMResource_DriveAndNIC(t *testing.T) {
 	})
 }
 
+// TestAccVMResource_DestroyRunningEmptyVMWithNIC creates a running VM with
+// no drives and one NIC, then destroys it. The guest never boots, so it does
+// not release the NIC. Destroy must still remove the NIC, the VM, and the network.
+func TestAccVMResource_DestroyRunningEmptyVMWithNIC(t *testing.T) {
+	vmName := acctest.Name("vm")
+	networkName := acctest.Name("network")
+	config := testAccRunningEmptyVMWithNICConfig(vmName, networkName)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMAndNetworkDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					testAccCheckVMPower("vergeio_vm.test", true),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "name", "lan"),
+					resource.TestCheckResourceAttrPair("vergeio_vm_nic.test", "vnet", "vergeio_network.test", "id"),
+				),
+			},
+		},
+	})
+}
+
+func testAccRunningEmptyVMWithNICConfig(vmName, networkName string) string {
+	if err := acctest.RequirePrefix(vmName); err != nil {
+		panic(err)
+	}
+	if err := acctest.RequirePrefix(networkName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_network" "test" {
+  name       = %q
+  type       = "internal"
+  enabled    = true
+  powerstate = false
+}
+
+resource "vergeio_vm" "test" {
+  name                = %q
+  enabled             = true
+  cpu_cores           = 1
+  ram                 = 1024
+  powerstate          = true
+  shutdown_on_destroy = "kill"
+}
+
+resource "vergeio_vm_nic" "test" {
+  vm_id     = vergeio_vm.test.id
+  name      = "lan"
+  interface = "virtio"
+  vnet      = tonumber(vergeio_network.test.id)
+}
+`, networkName, vmName))
+}
+
 func testAccCheckVMAndNetworkDestroy(s *terraform.State) error {
 	if err := testAccCheckVMDestroy(s); err != nil {
 		return err

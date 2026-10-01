@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -257,6 +258,9 @@ func TestDeleteNICUnplugsOnceThenWaits(t *testing.T) {
 		case r.URL.Path == "/version.json":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"powerstate":true}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
 			statusReads++
 			payload := `{"powerstate":"up"}`
@@ -269,6 +273,9 @@ func TestDeleteNICUnplugsOnceThenWaits(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(payload))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			if strings.Contains(string(body), `"action":"kill"`) {
+				t.Errorf("running guest that released the NIC was killed: %s", body)
+			}
 			unplugBodies = append(unplugBodies, string(body))
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{}`))
@@ -309,20 +316,36 @@ func TestDeleteNICUnplugsOnceThenWaits(t *testing.T) {
 func TestDeleteNICTimeoutNamesNICAndStatus(t *testing.T) {
 	shortenDetachWait(t, 0, time.Hour)
 
+	nicReads := 0
 	unplugs := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
 		}
 
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
 		switch {
 		case r.URL.Path == "/version.json":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"powerstate":"up"}`))
+			_, _ = w.Write([]byte(`{"powerstate":true}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
+			nicReads++
+			payload := `{"powerstate":"up"}`
+			if nicReads > 1 {
+				payload = `{"powerstate":"hotplug"}`
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(payload))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			if strings.Contains(string(body), `"action":"kill"`) {
+				t.Errorf("guest that entered hotplug was killed: %s", body)
+			}
 			unplugs++
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{}`))
@@ -345,12 +368,180 @@ func TestDeleteNICTimeoutNamesNICAndStatus(t *testing.T) {
 		t.Fatal("expected a timeout")
 	}
 	msg := err.Error()
-	for _, want := range []string{"lan", "98", "up", "down"} {
+	for _, want := range []string{"lan", "98", "hotplug", "down"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error %q missing %q", msg, want)
 		}
 	}
 	if unplugs != 1 {
 		t.Fatalf("unplug calls = %d, want 1", unplugs)
+	}
+}
+
+func TestDeleteNICKillsVMWhenGuestLeavesNICUp(t *testing.T) {
+	shortenDetachWait(t, time.Minute, time.Hour)
+	origAck := nicIgnoredUnplugTimeout
+	t.Cleanup(func() { nicIgnoredUnplugTimeout = origAck })
+	nicIgnoredUnplugTimeout = 0
+
+	var actions []string
+	killed := false
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"powerstate":"up"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			fields := r.URL.Query().Get("fields")
+			payload := `{"powerstate":true,"running":true,"status":"running"}`
+			if killed && strings.Contains(fields, "as running") {
+				payload = `{"running":false,"status":"stopped"}`
+			}
+			if killed && strings.Contains(fields, "powerstate") {
+				payload = `{"powerstate":false}`
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(payload))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			actions = append(actions, string(body))
+			if strings.Contains(string(body), `"action":"kill"`) {
+				killed = true
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/machine_nics/98":
+			if !killed {
+				t.Errorf("NIC deleted before the VM was killed")
+			}
+			deleted = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &NICApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	if err := api.deleteNIC(t.Context(), &nicResourceModel{
+		Id:   types.StringValue("98"),
+		Name: types.StringValue("lan"),
+	}, types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("NIC was not deleted after the VM was killed")
+	}
+	if len(actions) != 2 {
+		t.Fatalf("actions = %#v, want one unplug and one kill", actions)
+	}
+	if !strings.Contains(actions[0], `"action":"hotplugnic"`) || !strings.Contains(actions[0], `"unplug":true`) || !strings.Contains(actions[0], `"device":"98"`) {
+		t.Fatalf("first action = %s, want hotplugnic unplug", actions[0])
+	}
+	if !strings.Contains(actions[1], `"action":"kill"`) || !strings.Contains(actions[1], `"vm":7`) {
+		t.Fatalf("second action = %s, want kill of VM 7", actions[1])
+	}
+}
+
+func TestDeleteNICDeletesUpNICWhenVMIsStopped(t *testing.T) {
+	shortenDetachWait(t, time.Minute, time.Hour)
+	origAck := nicIgnoredUnplugTimeout
+	t.Cleanup(func() { nicIgnoredUnplugTimeout = origAck })
+	nicIgnoredUnplugTimeout = 0
+
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_nics/98":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"powerstate":"up"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"powerstate":false}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			t.Errorf("stopped VM was sent an action: %s", body)
+			http.Error(w, "unexpected action", http.StatusInternalServerError)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/machine_nics/98":
+			deleted = true
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	api := &NICApi{client: vergeio.NewClient(server.URL, "user", "pass", true)}
+	if err := api.deleteNIC(t.Context(), &nicResourceModel{
+		Id:   types.StringValue("98"),
+		Name: types.StringValue("lan"),
+	}, types.StringValue("7")); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("NIC was not deleted on a stopped VM")
+	}
+}
+
+func TestWaitUntilNICDownIgnoredWhenStatusStaysUp(t *testing.T) {
+	shortenDetachWait(t, time.Minute, time.Hour)
+	origAck := nicIgnoredUnplugTimeout
+	t.Cleanup(func() { nicIgnoredUnplugTimeout = origAck })
+	nicIgnoredUnplugTimeout = 0
+
+	reads := 0
+	err := waitUntilNICDown(t.Context(), func() (string, error) {
+		reads++
+		return "up", nil
+	}, "lan", "98")
+	if !errors.Is(err, errNICUnplugIgnored) {
+		t.Fatalf("err = %v, want ignored unplug", err)
+	}
+	if reads != 1 {
+		t.Fatalf("reads = %d, want one read before giving up on an up NIC", reads)
+	}
+}
+
+func TestWaitUntilNICDownKeepsWaitingInHotplug(t *testing.T) {
+	shortenDetachWait(t, 0, time.Hour)
+	origAck := nicIgnoredUnplugTimeout
+	t.Cleanup(func() { nicIgnoredUnplugTimeout = origAck })
+	nicIgnoredUnplugTimeout = 0
+
+	err := waitUntilNICDown(t.Context(), func() (string, error) {
+		return "hotplug", nil
+	}, "lan", "98")
+	if err == nil {
+		t.Fatal("expected a timeout")
+	}
+	if errors.Is(err, errNICUnplugIgnored) {
+		t.Fatal("hotplug should wait out the detach timeout")
+	}
+	for _, want := range []string{"lan", "98", "hotplug", "down"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
 	}
 }
