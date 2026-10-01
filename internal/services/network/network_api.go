@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -32,14 +33,16 @@ func NewNetworkApi(c *vergeio.Client) (*NetworkApi, error) {
 		return nil, err
 	}
 	return &NetworkApi{
-		name: "Network Api",
-		sdk:  sdk,
+		name:   "Network Api",
+		client: c,
+		sdk:    sdk,
 	}, nil
 }
 
 type NetworkApi struct {
-	name string
-	sdk  *vergeos.Client
+	name   string
+	client *vergeio.Client
+	sdk    *vergeos.Client
 }
 
 func (nc *NetworkApi) Name() string {
@@ -115,9 +118,15 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 		return err
 	}
 
-	_, err = nc.sdk.Networks.Update(ctx, networkIDInt, req)
-	if err != nil {
+	// Networks.Update marshals NetworkUpdateRequest, which has no
+	// ipaddress_type. A changed value is sent on its own PUT.
+	if _, err := nc.sdk.Networks.Update(ctx, networkIDInt, &req.NetworkUpdateRequest); err != nil {
 		return err
+	}
+	if req.IPAddressType != nil {
+		if err := nc.putIPAddressType(ctx, networkIDInt, *req.IPAddressType); err != nil {
+			return err
+		}
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", req))
@@ -164,9 +173,19 @@ func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateReq
 	return decodeNetworkRequest[vergeos.NetworkCreateRequest](apiData)
 }
 
-// networkUpdateRequest builds the SDK update body from attributes that differ
+// networkUpdateBody is the change for an existing network.
+// govergeos NetworkUpdateRequest has no ipaddress_type. Decoding the
+// provider model into that type drops the field, so it is kept here.
+// Networks.Update sends the embedded request. A set IPAddressType is
+// sent on its own PUT.
+type networkUpdateBody struct {
+	vergeos.NetworkUpdateRequest
+	IPAddressType *string `json:"ipaddress_type,omitempty"`
+}
+
+// networkUpdateRequest builds the update body from attributes that differ
 // from state. Type is readonly and is not sent.
-func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkResourceModel) (*vergeos.NetworkUpdateRequest, int, error) {
+func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkResourceModel) (*networkUpdateBody, int, error) {
 	apiData := NetworkAPIResourceModel{
 		Name:            vergeio.ChangedString(planData.Name, stateData.Name),
 		Description:     vergeio.ChangedString(planData.Description, stateData.Description),
@@ -204,7 +223,30 @@ func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkReso
 	if err != nil {
 		return nil, 0, fmt.Errorf("invalid network ID format: %v", err)
 	}
-	return req, networkIDInt, nil
+	return &networkUpdateBody{
+		NetworkUpdateRequest: *req,
+		IPAddressType:        apiData.IPaddress_Type,
+	}, networkIDInt, nil
+}
+
+// putIPAddressType sends ipaddress_type. NetworkUpdateRequest cannot.
+func (nc *NetworkApi) putIPAddressType(ctx context.Context, id int, ipType string) error {
+	if nc == nil || nc.client == nil {
+		return errors.New("network API client is not configured")
+	}
+	raw, err := json.Marshal(struct {
+		IPAddressType string `json:"ipaddress_type"`
+	}{IPAddressType: ipType})
+	if err != nil {
+		return fmt.Errorf("failed to encode network ipaddress_type: %w", err)
+	}
+	resp, err := nc.client.Put(ctx, fmt.Sprintf("%s/vnets/%d", vergeio.APIEndpoint, id), bytes.NewBuffer(raw))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
 
 func decodeNetworkRequest[T any](apiData NetworkAPIResourceModel) (*T, error) {
@@ -410,7 +452,13 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.MTU = types.Int32Value(1500)
 	data.RateLimit = types.Int64Value(network.RateLimit)
 	data.Interface_Vnet = types.Int32Value(0)
-	data.IPaddress_Type = types.StringValue("static")
+	// An empty response keeps the historical default. A reported value, such
+	// as none, is stored so apply does not write static over the plan.
+	ipType := strings.TrimSpace(network.IPAddressType)
+	if ipType == "" {
+		ipType = "static"
+	}
+	data.IPaddress_Type = types.StringValue(ipType)
 	data.Layer2_Type = types.StringValue("vlan")
 	data.Enable_Bonding = types.BoolValue(false)
 	data.PowerState = types.BoolValue(network.Running)
