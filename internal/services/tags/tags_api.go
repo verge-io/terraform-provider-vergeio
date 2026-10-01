@@ -140,6 +140,10 @@ func (ta *TagsApi) readTags(ctx context.Context, data *TagsDataSourceModel) erro
 
 	// Set the tags in the data model
 	data.Tags = tagsList
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.Tags == nil {
+		data.Tags = []TagModel{}
+	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Successfully converted %d tags to resource", len(tagsList)))
 

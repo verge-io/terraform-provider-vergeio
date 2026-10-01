@@ -101,6 +101,10 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 		})
 
 	}
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.CloudinitFiles == nil {
+		data.CloudinitFiles = []*CloudinitFileModel{}
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
