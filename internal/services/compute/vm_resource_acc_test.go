@@ -301,8 +301,9 @@ func testAccPowerOnVMOutsideTerraform(id string) error {
 
 // TestAccVMResource_PowerState powers a VM on and off from configuration,
 // and corrects a power change made outside Terraform.
-// An empty VM may ignore ACPI, so force_power_off stops it if the guest
-// does not. The test is skipped unless TF_ACC=1.
+// An empty VM ignores ACPI. force_power_off stops it when configuration
+// powers it off, and the simulated UI shutdown uses Kill for the same
+// reason. The test is skipped unless TF_ACC=1.
 func TestAccVMResource_PowerState(t *testing.T) {
 	vmName := acctest.Name("vm")
 	off := testAccVMPowerConfig(vmName, false)
@@ -416,6 +417,10 @@ func testAccVMPowerConfig(vmName string, power bool) string {
 `, powerValue))
 }
 
+// testAccPowerOffVMOutsideTerraform stops a VM outside Terraform.
+// Empty test VMs ignore ACPI, so VMs.PowerOff waits until it times out.
+// VMs.Kill cuts power immediately, the same hard stop a guest that never
+// shuts down needs.
 func testAccPowerOffVMOutsideTerraform(id string) error {
 	vmID, err := strconv.Atoi(id)
 	if err != nil {
@@ -426,7 +431,7 @@ func testAccPowerOffVMOutsideTerraform(id string) error {
 		return err
 	}
 	ctx := context.Background()
-	if err := client.VMs.PowerOff(ctx, vmID); err != nil {
+	if err := client.VMs.Kill(ctx, vmID); err != nil {
 		return err
 	}
 	vm, err := client.VMs.Get(ctx, vmID)
