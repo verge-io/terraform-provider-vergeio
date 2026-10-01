@@ -221,7 +221,7 @@ Optional:
   - `enable_profiling` (Boolean) - Enable profiling
 - `tpm_settings` (Object) - Settings for TPM devices:
   - `model` (String) - TPM model (e.g., `"crb"`)
-  - `version` (String) - TPM version (e.g., `"2.0"`)
+  - `version` (String) - TPM version. `"2.0"` and `"1.2"` are display labels stored as `"2"` and `"1"`. `"2"` and `"1"` are accepted unchanged.
 - `usb_settings` (Object) - Settings for USB devices:
   - `guest_reset` (Boolean) - Allow guest to reset device
   - `guest_resets_all` (Boolean) - Guest reset affects all USB devices
