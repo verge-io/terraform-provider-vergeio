@@ -46,7 +46,7 @@ func TestReadUsersEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewUsersApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewUsersApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &UsersDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readUsers(t.Context(), data); err != nil {
 				t.Fatal(err)

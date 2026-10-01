@@ -153,7 +153,15 @@ func (r *PermissionResource) Configure(ctx context.Context, req resource.Configu
 		)
 		return
 	}
-	r.api = NewPermissionApi(client)
+	api, err := NewPermissionApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.api = api
 }
 
 func (r *PermissionResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {

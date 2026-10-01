@@ -2,6 +2,8 @@ package system
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -73,7 +75,12 @@ func TestClusterDataSource_Schema(t *testing.T) {
 
 func TestClusterDataSource_Configure_WithValidClient(t *testing.T) {
 	dataSource := &ClusterDataSource{}
-	client := vergeio.NewClient("test.example.com", "testuser", "testpass", true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+	}))
+	t.Cleanup(server.Close)
+	client := vergeio.NewClient(server.URL, "testuser", "testpass", true)
 
 	req := datasource.ConfigureRequest{
 		ProviderData: client,

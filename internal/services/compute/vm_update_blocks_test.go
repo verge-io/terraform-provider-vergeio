@@ -112,10 +112,10 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 	ctx := t.Context()
 	client := vergeio.NewClient(server.URL, "user", "pass", true)
 	vmResource := &VMResource{
-		vmApi:     NewVMApi(client),
-		diskApi:   NewDiskApi(client),
-		nicApi:    NewNICApi(client),
-		deviceApi: NewDeviceApi(client),
+		vmApi:     mustAPI(NewVMApi(client)),
+		diskApi:   mustAPI(NewDiskApi(client)),
+		nicApi:    mustAPI(NewNICApi(client)),
+		deviceApi: mustAPI(NewDeviceApi(client)),
 	}
 
 	schemaResp := &fwresource.SchemaResponse{}
@@ -304,10 +304,10 @@ func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
 	ctx := t.Context()
 	client := vergeio.NewClient(server.URL, "user", "pass", true)
 	vmResource := &VMResource{
-		vmApi:     NewVMApi(client),
-		diskApi:   NewDiskApi(client),
-		nicApi:    NewNICApi(client),
-		deviceApi: NewDeviceApi(client),
+		vmApi:     mustAPI(NewVMApi(client)),
+		diskApi:   mustAPI(NewDiskApi(client)),
+		nicApi:    mustAPI(NewNICApi(client)),
+		deviceApi: mustAPI(NewDeviceApi(client)),
 	}
 
 	schemaResp := &fwresource.SchemaResponse{}

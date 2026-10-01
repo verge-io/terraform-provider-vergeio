@@ -17,13 +17,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &GroupsApi{}
 
-func NewGroupsApi(c *vergeio.Client) *GroupsApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewGroupsApi(c *vergeio.Client) (*GroupsApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &GroupsApi{
 		name:   "Group Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type GroupsApi struct {

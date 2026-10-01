@@ -20,17 +20,19 @@ import (
 
 var _ vergeio.IClient = &TagsApi{}
 
-func NewTagsApi(c *vergeio.Client) *TagsApi {
-	api := &TagsApi{
+func NewTagsApi(c *vergeio.Client) (*TagsApi, error) {
+	// Share the cached govergeos client. A setup error is returned so
+	// Configure can report it. readTag still retries when an API value was
+	// built with the VergeOS client and no SDK yet.
+	sdk, err := c.CachedVergeosClient()
+	if err != nil {
+		return nil, err
+	}
+	return &TagsApi{
 		name:   "Tags Api",
 		client: c,
-	}
-	if c != nil {
-		// Keep the VergeOS client when govergeos setup fails. readTag retries
-		// through Client.SDK so import Read is not stuck with a nil service.
-		api.sdk, _ = c.SDK()
-	}
-	return api
+		sdk:    sdk,
+	}, nil
 }
 
 type TagsApi struct {

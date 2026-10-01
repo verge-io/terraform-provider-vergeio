@@ -76,7 +76,15 @@ func (d *VersionDataSource) Configure(ctx context.Context, req datasource.Config
 		return
 	}
 
-	d.versionApi = NewVersionApi(client)
+	versionApi, err := NewVersionApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.versionApi = versionApi
 }
 
 func (d *VersionDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

@@ -101,7 +101,7 @@ func TestGroupCreateReadUpdateDelete(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewGroupApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewGroupApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &GroupResourceModel{
 		Name:        types.StringValue("ops"),
 		Description: types.StringValue("operators"),
@@ -151,7 +151,7 @@ func TestReadGroupNotFound(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewGroupApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewGroupApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	err := api.readGroup(t.Context(), &GroupResourceModel{Id: types.StringValue("9")})
 	if err == nil {
 		t.Fatal("expected not found")

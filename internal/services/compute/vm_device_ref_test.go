@@ -121,7 +121,7 @@ func TestAdoptDriveByNameDoesNotCreate(t *testing.T) {
 	defer server.Close()
 
 	apiClient := vergeio.NewClient(server.URL, "user", "pass", true)
-	drive := &VMDriveResource{vmApi: NewVMApi(apiClient), diskApi: NewDiskApi(apiClient)}
+	drive := &VMDriveResource{vmApi: mustAPI(NewVMApi(apiClient)), diskApi: mustAPI(NewDiskApi(apiClient))}
 	ctx := context.Background()
 	machine, err := drive.vmApi.machineIDForVM(ctx, "7")
 	if err != nil {

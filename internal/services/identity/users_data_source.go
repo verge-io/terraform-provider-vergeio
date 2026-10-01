@@ -102,7 +102,15 @@ func (d *UsersDataSource) Configure(ctx context.Context, req datasource.Configur
 		)
 		return
 	}
-	d.api = NewUsersApi(client)
+	api, err := NewUsersApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.api = api
 }
 
 func (d *UsersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

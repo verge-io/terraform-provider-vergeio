@@ -22,13 +22,16 @@ import (
 
 var _ vergeio.IClient = &PermissionApi{}
 
-func NewPermissionApi(c *vergeio.Client) *PermissionApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewPermissionApi(c *vergeio.Client) (*PermissionApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &PermissionApi{
 		name:   "Permission Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 // PermissionApi is the govergeos PermissionService client for vergeio_permission.

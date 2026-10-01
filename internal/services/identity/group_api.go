@@ -16,12 +16,15 @@ import (
 
 var _ vergeio.IClient = &GroupApi{}
 
-func NewGroupApi(c *vergeio.Client) *GroupApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewGroupApi(c *vergeio.Client) (*GroupApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &GroupApi{
 		name: "Group Api",
 		sdk:  sdk,
-	}
+	}, nil
 }
 
 // GroupApi is the govergeos GroupService client for vergeio_group.

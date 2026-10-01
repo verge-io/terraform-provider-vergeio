@@ -128,7 +128,7 @@ func TestValidateDiskInterfaceUsesAPIList(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	vmResource := &VMResource{diskApi: NewDiskApi(vergeio.NewClient(server.URL, "user", "pass", true))}
+	vmResource := &VMResource{diskApi: mustAPI(NewDiskApi(vergeio.NewClient(server.URL, "user", "pass", true)))}
 	ctx := context.Background()
 	for _, iface := range diskInterfaces() {
 		if err := vmResource.validateDiskInterface(ctx, types.StringValue(iface)); err != nil {
@@ -154,7 +154,7 @@ func TestValidateDiskInterfaceRejectsValueMissingFromAPI(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	vmResource := &VMResource{diskApi: NewDiskApi(vergeio.NewClient(server.URL, "user", "pass", true))}
+	vmResource := &VMResource{diskApi: mustAPI(NewDiskApi(vergeio.NewClient(server.URL, "user", "pass", true)))}
 	err := vmResource.validateDiskInterface(context.Background(), types.StringValue("usb"))
 	if err == nil {
 		t.Fatal("usb should be rejected when this VergeOS system does not list it")

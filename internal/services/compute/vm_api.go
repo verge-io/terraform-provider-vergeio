@@ -29,17 +29,19 @@ const (
 
 var _ vergeio.IClient = &VMApi{}
 
-func NewVMApi(c *vergeio.Client) *VMApi {
-	api := &VMApi{
+func NewVMApi(c *vergeio.Client) (*VMApi, error) {
+	// Share the cached govergeos client. A setup error is returned so
+	// Configure can report it. readVM still retries when an API value was
+	// built with the VergeOS client and no SDK yet.
+	sdk, err := c.CachedVergeosClient()
+	if err != nil {
+		return nil, err
+	}
+	return &VMApi{
 		name:   "VM Api",
 		client: c,
-	}
-	if c != nil {
-		// A setup error is retried by readVM. Do not drop the VergeOS client
-		// when the first govergeos client cannot be built.
-		api.sdk, _ = c.SDK()
-	}
-	return api
+		sdk:    sdk,
+	}, nil
 }
 
 type VMApi struct {

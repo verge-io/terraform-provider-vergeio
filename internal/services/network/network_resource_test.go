@@ -2,6 +2,8 @@ package network
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
@@ -284,7 +286,12 @@ func assertNetworkInt32KeepsState(t *testing.T, name string, mods []planmodifier
 
 func TestNetworkResource_Configure_WithValidClient(t *testing.T) {
 	networkResource := &NetworkResource{}
-	client := vergeio.NewClient("test.example.com", "testuser", "testpass", true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+	}))
+	t.Cleanup(server.Close)
+	client := vergeio.NewClient(server.URL, "testuser", "testpass", true)
 
 	req := fwresource.ConfigureRequest{
 		ProviderData: client,

@@ -98,7 +98,15 @@ func (r *GroupResource) Configure(ctx context.Context, req resource.ConfigureReq
 		)
 		return
 	}
-	r.api = NewGroupApi(client)
+	api, err := NewGroupApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.api = api
 }
 
 func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

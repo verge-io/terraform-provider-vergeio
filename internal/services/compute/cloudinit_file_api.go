@@ -17,13 +17,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &CloudinitFileApi{}
 
-func NewCloudinitFileApi(c *vergeio.Client) *CloudinitFileApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewCloudinitFileApi(c *vergeio.Client) (*CloudinitFileApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &CloudinitFileApi{
 		name:   "CloudinitFile Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type CloudinitFileApi struct {

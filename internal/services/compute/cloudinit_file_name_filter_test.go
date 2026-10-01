@@ -43,7 +43,7 @@ func TestReadCloudinitFilesEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewCloudinitFileApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewCloudinitFileApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &CloudinitFileDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readCloudinitFiles(t.Context(), data); err != nil {
 				t.Fatal(err)

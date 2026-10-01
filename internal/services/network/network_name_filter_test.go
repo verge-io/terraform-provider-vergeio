@@ -43,7 +43,7 @@ func TestReadNetworksEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewNetworkApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewNetworkApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &NetworkDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readNetworks(t.Context(), data); err != nil {
 				t.Fatal(err)
@@ -90,7 +90,7 @@ func TestReadNetworksEscapesTypeFilterAndKeepsExactType(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewNetworkApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewNetworkApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &NetworkDataSourceModel{FilterType: types.StringValue(networkType)}
 			if err := api.readNetworks(t.Context(), data); err != nil {
 				t.Fatal(err)

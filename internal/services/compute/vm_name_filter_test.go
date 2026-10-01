@@ -43,7 +43,7 @@ func TestReadVMsEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &VMDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readVMs(t.Context(), data); err != nil {
 				t.Fatal(err)

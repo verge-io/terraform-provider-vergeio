@@ -94,7 +94,15 @@ func (d *NodeDataSource) Configure(ctx context.Context, req datasource.Configure
 		return
 	}
 
-	d.nodeApi = NewNodeApi(client)
+	nodeApi, err := NewNodeApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.nodeApi = nodeApi
 }
 
 func (d *NodeDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

@@ -177,7 +177,7 @@ func runVMDelete(t *testing.T, tc vmDeleteCase) ([]string, int) {
 
 	ctx := t.Context()
 	client := vergeio.NewClient(server.URL, "user", "pass", true)
-	vmResource := &VMResource{vmApi: NewVMApi(client)}
+	vmResource := &VMResource{vmApi: mustAPI(NewVMApi(client))}
 
 	schemaResp := &fwresource.SchemaResponse{}
 	vmResource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)

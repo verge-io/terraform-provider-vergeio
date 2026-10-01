@@ -108,7 +108,15 @@ func (d *TenantsDataSource) Configure(ctx context.Context, req datasource.Config
 		)
 		return
 	}
-	d.api = NewAPI(client)
+	api, err := NewAPI(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.api = api
 }
 
 func (d *TenantsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

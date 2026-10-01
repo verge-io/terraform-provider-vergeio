@@ -2,6 +2,8 @@ package compute
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -413,7 +415,12 @@ func assertInt32StaysUnknownOnCreate(t *testing.T, name string, mods []planmodif
 
 func TestVMResource_Configure_WithValidClient(t *testing.T) {
 	vmResource := &VMResource{}
-	client := vergeio.NewClient("test.example.com", "testuser", "testpass", true)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+	}))
+	t.Cleanup(server.Close)
+	client := vergeio.NewClient(server.URL, "testuser", "testpass", true)
 
 	req := fwresource.ConfigureRequest{
 		ProviderData: client,

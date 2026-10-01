@@ -98,7 +98,15 @@ func (d *MediasourceDataSource) Configure(ctx context.Context, req datasource.Co
 		return
 	}
 
-	d.mediasourceApi = NewMediasourceApi(client)
+	mediasourceApi, err := NewMediasourceApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.mediasourceApi = mediasourceApi
 }
 
 // Read refreshes the Terraform state with the latest data.

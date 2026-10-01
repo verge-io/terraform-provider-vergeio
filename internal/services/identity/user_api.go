@@ -24,13 +24,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &UserApi{}
 
-func NewUserApi(c *vergeio.Client) *UserApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewUserApi(c *vergeio.Client) (*UserApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &UserApi{
 		name:   "User Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type UserApi struct {

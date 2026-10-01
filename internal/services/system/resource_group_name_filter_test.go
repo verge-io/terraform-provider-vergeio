@@ -43,7 +43,7 @@ func TestReadResourceGroupsEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewResourceGroupsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewResourceGroupsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &ResourceGroupDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readResourceGroups(t.Context(), data); err != nil {
 				t.Fatal(err)

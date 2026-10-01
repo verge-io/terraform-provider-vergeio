@@ -43,7 +43,7 @@ func TestReadGroupsEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewGroupsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewGroupsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &GroupDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readGroups(t.Context(), data); err != nil {
 				t.Fatal(err)

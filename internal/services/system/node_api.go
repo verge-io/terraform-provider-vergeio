@@ -16,13 +16,16 @@ import (
 
 var _ vergeio.IClient = &NodeApi{}
 
-func NewNodeApi(c *vergeio.Client) *NodeApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewNodeApi(c *vergeio.Client) (*NodeApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &NodeApi{
 		name:   "Node Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type NodeApi struct {

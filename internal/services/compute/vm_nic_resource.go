@@ -213,8 +213,24 @@ func (r *VMNICResource) Configure(ctx context.Context, req resource.ConfigureReq
 		)
 		return
 	}
-	r.vmApi = NewVMApi(client)
-	r.nicApi = NewNICApi(client)
+	vmApi, err := NewVMApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	nicApi, err := NewNICApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.vmApi = vmApi
+	r.nicApi = nicApi
 }
 
 func (r *VMNICResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
