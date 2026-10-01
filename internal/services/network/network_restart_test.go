@@ -339,6 +339,90 @@ func TestRestartAfterUpdateErrorsWhenFlagStaysSet(t *testing.T) {
 	}
 }
 
+func TestReadNetworkStoresReportedMTUAndLayer2(t *testing.T) {
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/vnets/12" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		fields := r.URL.Query().Get("fields")
+		for _, name := range []string{"mtu", "layer2_id", "layer2_type", "interface_vnet", "enable_bonding"} {
+			if !strings.Contains(fields, name) {
+				t.Errorf("get fields %q does not request %s", fields, name)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		const body = `{"$key":12,"name":"lan","enabled":true,"running":false,"mtu":9000,"layer2_id":18,"layer2_type":"vxlan","interface_vnet":null,"enable_bonding":false}`
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	})
+
+	data := &NetworkResourceModel{Id: types.StringValue("12")}
+	if err := api.readNetwork(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.MTU.IsNull() || data.MTU.ValueInt32() != 9000 {
+		t.Fatalf("mtu = %#v, want 9000", data.MTU)
+	}
+	if data.VLAN_TAG.IsNull() || data.VLAN_TAG.ValueInt32() != 18 {
+		t.Fatalf("layer2_id = %#v, want 18", data.VLAN_TAG)
+	}
+	if data.Layer2_Type.IsNull() || data.Layer2_Type.ValueString() != "vxlan" {
+		t.Fatalf("layer2_type = %#v, want vxlan", data.Layer2_Type)
+	}
+	if !data.Interface_Vnet.IsNull() || data.Interface_Vnet.IsUnknown() {
+		t.Fatalf("interface_vnet = %#v, want null", data.Interface_Vnet)
+	}
+	if data.Enable_Bonding.IsNull() || data.Enable_Bonding.ValueBool() {
+		t.Fatalf("enable_bonding = %#v, want false", data.Enable_Bonding)
+	}
+}
+
+func TestReadNetworkStoresInterfaceVnetAndBonding(t *testing.T) {
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v4/vnets/12" {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		const body = `{"$key":12,"name":"ext","enabled":true,"running":false,"mtu":1500,"layer2_id":1000,"layer2_type":"vlan","interface_vnet":4,"enable_bonding":true}`
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	})
+
+	data := &NetworkResourceModel{Id: types.StringValue("12")}
+	if err := api.readNetwork(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.MTU.IsNull() || data.MTU.ValueInt32() != 1500 {
+		t.Fatalf("mtu = %#v, want 1500", data.MTU)
+	}
+	if data.VLAN_TAG.IsNull() || data.VLAN_TAG.ValueInt32() != 1000 {
+		t.Fatalf("layer2_id = %#v, want 1000", data.VLAN_TAG)
+	}
+	if data.Layer2_Type.ValueString() != "vlan" {
+		t.Fatalf("layer2_type = %#v, want vlan", data.Layer2_Type)
+	}
+	if data.Interface_Vnet.IsNull() || data.Interface_Vnet.ValueInt32() != 4 {
+		t.Fatalf("interface_vnet = %#v, want 4", data.Interface_Vnet)
+	}
+	if data.Enable_Bonding.IsNull() || !data.Enable_Bonding.ValueBool() {
+		t.Fatalf("enable_bonding = %#v, want true", data.Enable_Bonding)
+	}
+}
+
 func TestReadNetworkUsesReportedIPAddressType(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
