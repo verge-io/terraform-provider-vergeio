@@ -23,7 +23,7 @@ func mustAPI[T any](api T, err error) T {
 }
 
 func TestIdentityConstructorsReturnClientError(t *testing.T) {
-	bad := versionClient(t, "27.0.0")
+	bad := versionClient(t, "25.0.0")
 	good := versionClient(t, "26.0.0")
 
 	group, err := NewGroupApi(nil)
@@ -77,7 +77,7 @@ func TestIdentityConstructorsReturnClientError(t *testing.T) {
 func TestGroupResourceConfigureReportsClientError(t *testing.T) {
 	r := &GroupResource{}
 	resp := &resource.ConfigureResponse{}
-	r.Configure(t.Context(), resource.ConfigureRequest{ProviderData: versionClient(t, "27.0.0")}, resp)
+	r.Configure(t.Context(), resource.ConfigureRequest{ProviderData: versionClient(t, "25.0.0")}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected a client diagnostic")
 	}
@@ -96,6 +96,10 @@ func TestGroupResourceConfigureReportsClientError(t *testing.T) {
 func versionClient(t *testing.T, version string) *vergeio.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
 	}))

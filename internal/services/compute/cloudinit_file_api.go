@@ -75,7 +75,7 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 	var cloudinitFileAPIResp []CloudinitFileAPIResourceModel
 	for _, file := range cloudinitFiles {
 		cloudinitFileAPIResp = append(cloudinitFileAPIResp, CloudinitFileAPIResourceModel{
-			Id:                fmt.Sprintf("%d", file.ID.Int()),
+			Id:                fmt.Sprintf("%d", file.Key.Int()),
 			Name:              file.Name,
 			Filesize:          file.FileSize,
 			Contents:          file.Contents,

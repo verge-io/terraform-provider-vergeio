@@ -84,7 +84,7 @@ func (nc *MemberApi) createMember(ctx context.Context, data *MemberResourceModel
 	}
 
 	// Extract the id and put it in the state
-	data.Id = types.StringValue(fmt.Sprintf("%d", member.ID.Int()))
+	data.Id = types.StringValue(fmt.Sprintf("%d", member.Key.Int()))
 
 	tflog.Debug(ctx, fmt.Sprintf("Created a member with Id %v", data.Id))
 
@@ -107,7 +107,7 @@ func (nc *MemberApi) readMember(ctx context.Context, data *MemberResourceModel) 
 
 	// Convert SDK member to API model for existing field mapping logic
 	memberAPIResp := MemberAPIResourceModel{
-		Id:     fmt.Sprintf("%d", member.ID.Int()),
+		Id:     fmt.Sprintf("%d", member.Key.Int()),
 		Group:  int32(member.Group.Int()),
 		Member: member.Member,
 	}

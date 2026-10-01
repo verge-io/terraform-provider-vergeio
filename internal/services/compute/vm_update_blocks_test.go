@@ -32,6 +32,10 @@ func TestVMUpdateSyncsNilDriveNICAndDeviceLists(t *testing.T) {
 	driveDeleted := false
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -222,6 +226,10 @@ func TestVMUpdateSyncsDrivesAndNICsBeforePowerOn(t *testing.T) {
 	nicCreated := false
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)

@@ -22,6 +22,10 @@ func TestReadTagsEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}
 			var gotFilter string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/version.json":
@@ -69,6 +73,10 @@ func TestGetCategoryIDByNameSDKEscapesAndMatches(t *testing.T) {
 			}
 			var gotFilter string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/version.json":
@@ -109,6 +117,10 @@ func TestGetCategoryIDByNameSDKEscapesAndMatches(t *testing.T) {
 
 func TestGetCategoryIDByNameSDKRejectsStrippedName(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":

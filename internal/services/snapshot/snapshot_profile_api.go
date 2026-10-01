@@ -247,7 +247,6 @@ func (api *SnapshotProfileApi) createPeriod(ctx context.Context, profileID int, 
 		DayOfMonth:   period.DayOfMonth,
 		Month:        period.Month,
 		Retention:    period.Retention,
-		SkipMissed:   period.SkipMissed,
 		MaxTier:      period.MaxTier,
 		Quiesce:      period.Quiesce,
 		MinSnapshots: period.MinSnapshots,
@@ -304,10 +303,6 @@ func periodUpdateRequest(current vergeos.SnapshotProfilePeriod, period periodInp
 	if period.Retention != current.Retention {
 		retention := period.Retention
 		req.Retention = &retention
-		changed = true
-	}
-	if skip := changedBool(period.SkipMissed, current.SkipMissed); skip != nil {
-		req.SkipMissed = skip
 		changed = true
 	}
 	if tier := changedString(period.MaxTier, current.MaxTier); tier != nil {
@@ -411,17 +406,19 @@ func orderedPeriods(profileID int, prior []periodModel, periods []vergeos.Snapsh
 
 func periodModelFromAPI(period vergeos.SnapshotProfilePeriod) periodModel {
 	return periodModel{
-		Key:          idString(period.Key.Int()),
-		Name:         types.StringValue(period.Name),
-		Frequency:    types.StringValue(period.Frequency),
-		Hour:         types.Int32Value(int32(period.Hour)),
-		Minute:       types.Int32Value(int32(period.Minute)),
-		DayOfWeek:    stringValueOrNull(period.DayOfWeek),
-		DayOfMonth:   types.Int32Value(int32(period.DayOfMonth)),
-		Month:        types.Int32Value(int32(period.Month)),
-		Retention:    types.Int64Value(int64(period.Retention)),
-		Quiesce:      types.BoolValue(period.Quiesce),
-		SkipMissed:   types.BoolValue(period.SkipMissed),
+		Key:        idString(period.Key.Int()),
+		Name:       types.StringValue(period.Name),
+		Frequency:  types.StringValue(period.Frequency),
+		Hour:       types.Int32Value(int32(period.Hour)),
+		Minute:     types.Int32Value(int32(period.Minute)),
+		DayOfWeek:  stringValueOrNull(period.DayOfWeek),
+		DayOfMonth: types.Int32Value(int32(period.DayOfMonth)),
+		Month:      types.Int32Value(int32(period.Month)),
+		Retention:  types.Int64Value(int64(period.Retention)),
+		Quiesce:    types.BoolValue(period.Quiesce),
+		// snapshot_profile_periods has no skip_missed column. The SDK dropped
+		// the field; a read was always false.
+		SkipMissed:   types.BoolValue(false),
 		MaxTier:      stringValueOrNull(period.MaxTier),
 		MinSnapshots: types.Int32Value(int32(period.MinSnapshots)),
 		Immutable:    types.BoolValue(period.Immutable),

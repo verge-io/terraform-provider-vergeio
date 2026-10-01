@@ -221,6 +221,10 @@ func knownTagMemberPlanValue() tftypes.Value {
 func TestTagMemberResource_Configure_WithValidClient(t *testing.T) {
 	tagMemberResource := &TagMemberResource{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))

@@ -284,8 +284,24 @@ func (nc *NICApi) readNIC(ctx context.Context, data *nicResourceModel) error {
 // machineID is the VM's machine id, not the VM row key. Order is name, then
 // id, so two reads return the same block order.
 func (na *NICApi) readNICsByMachine(ctx context.Context, machineID int32) ([]*nicResourceModel, error) {
-	nics, err := na.sdk.VMNICs.List(ctx, int(machineID))
+	// VMNICs.List takes a VM $key and resolves the machine. Callers have the
+	// machine id, which is what govergeos v0.3.0 filtered on directly.
+	apiResp, err := na.client.Get(ctx, NICEndpoint, &vergeio.Options{
+		Fields: "$key,name",
+		Filter: fmt.Sprintf("machine eq %d", machineID),
+	})
 	if err != nil {
+		return nil, fmt.Errorf("listing NICs for machine %d: %w", machineID, err)
+	}
+	if apiResp == nil {
+		return nil, fmt.Errorf("listing NICs for machine %d: missing response", machineID)
+	}
+	defer apiResp.Body.Close()
+	if apiResp.StatusCode != 200 {
+		return nil, fmt.Errorf("listing NICs for machine %d: status %d", machineID, apiResp.StatusCode)
+	}
+	var nics []vergeos.VMNIC
+	if err := json.NewDecoder(apiResp.Body).Decode(&nics); err != nil {
 		return nil, fmt.Errorf("listing NICs for machine %d: %w", machineID, err)
 	}
 	sortNICsForState(nics)
@@ -295,9 +311,9 @@ func (na *NICApi) readNICsByMachine(ctx context.Context, machineID int32) ([]*ni
 
 	models := make([]*nicResourceModel, 0, len(nics))
 	for _, nic := range nics {
-		model := &nicResourceModel{Id: types.StringValue(strconv.Itoa(nic.ID.Int()))}
+		model := &nicResourceModel{Id: types.StringValue(strconv.Itoa(nic.Key.Int()))}
 		if err := na.readNIC(ctx, model); err != nil {
-			return nil, fmt.Errorf("reading NIC %d: %w", nic.ID.Int(), err)
+			return nil, fmt.Errorf("reading NIC %d: %w", nic.Key.Int(), err)
 		}
 		// createNIC leaves ipaddress null when no address is assigned. Match
 		// that so an import compares equal to the state left by create.
@@ -338,7 +354,7 @@ func sortNICsForState(nics []vergeos.VMNIC) {
 		if nics[i].Name != nics[j].Name {
 			return nics[i].Name < nics[j].Name
 		}
-		return nics[i].ID.Int() < nics[j].ID.Int()
+		return nics[i].Key.Int() < nics[j].Key.Int()
 	})
 }
 

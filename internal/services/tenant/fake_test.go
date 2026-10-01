@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
 )
 
 type recordedBody struct {
@@ -135,6 +137,10 @@ func (f *fakeVerge) bodiesFor(method, path string) []map[string]any {
 }
 
 func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	if r.URL.Path == "/version.json" {
 		writeJSON(f.t, w, http.StatusOK, map[string]string{"version": "26.1.8"})
 		return
@@ -259,6 +265,10 @@ func (f *fakeVerge) serveTenants(w http.ResponseWriter, r *http.Request, id int,
 }
 
 func (f *fakeVerge) serveStatus(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		f.t.Errorf("unexpected tenant_status %s", r.Method)
 		http.Error(w, "method", http.StatusMethodNotAllowed)

@@ -15,6 +15,10 @@ import (
 func TestSyncDevicesCreatesFirstWhenStateIsEmpty(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -63,6 +67,10 @@ func TestSyncDevicesCreatesFirstWhenStateIsEmpty(t *testing.T) {
 func TestSyncDevicesDeletesLastWhenPlanIsEmpty(t *testing.T) {
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		calls = append(calls, r.Method+" "+r.URL.Path)
 		if r.Method == http.MethodDelete && r.URL.Path == "/api/v4/machine_devices/12" {
 			w.WriteHeader(http.StatusOK)

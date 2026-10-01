@@ -25,7 +25,7 @@ func TestTagsConstructorReturnsClientError(t *testing.T) {
 	api, err := NewTagsApi(nil)
 	assertNoAPI(t, api, err)
 
-	api, err = NewTagsApi(versionClient(t, "27.0.0"))
+	api, err = NewTagsApi(versionClient(t, "25.0.0"))
 	assertNoAPI(t, api, err)
 	if !vergeos.IsUnsupportedVersionError(err) {
 		t.Fatalf("error = %v", err)
@@ -40,6 +40,10 @@ func TestTagsConstructorReturnsClientError(t *testing.T) {
 func versionClient(t *testing.T, version string) *vergeio.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
 	}))

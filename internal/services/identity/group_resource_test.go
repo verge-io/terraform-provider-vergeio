@@ -47,6 +47,10 @@ func TestGroupResourceSchema(t *testing.T) {
 
 func TestGroupResourceConfigure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -79,6 +83,10 @@ func TestGroupResourceConfigure(t *testing.T) {
 func TestGroupCreateKeepsIDWhenRefreshFails(t *testing.T) {
 	var gets atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":
@@ -141,6 +149,10 @@ func TestGroupCreateKeepsIDWhenRefreshFails(t *testing.T) {
 
 func TestGroupReadRemovesMissingGroup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":

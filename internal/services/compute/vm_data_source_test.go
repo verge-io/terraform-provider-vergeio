@@ -103,6 +103,10 @@ func TestVMDataSource_Schema(t *testing.T) {
 func TestVMDataSource_Configure_WithValidClient(t *testing.T) {
 	dataSource := &VMDataSource{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))

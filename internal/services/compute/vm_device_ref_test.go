@@ -95,6 +95,10 @@ func TestAdoptDriveByNameDoesNotCreate(t *testing.T) {
 	const driveJSON = `{"$key":"46","machine":1,"name":"os","interface":"virtio","disksize":5368709120,"enabled":true,"preferred_tier":"3"}`
 	var posts int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		switch {

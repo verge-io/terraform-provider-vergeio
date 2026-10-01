@@ -47,6 +47,10 @@ func TestPostCreateMasksSecretsInDebugLog(t *testing.T) {
 
 	var sent []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -103,6 +107,10 @@ func TestPostCreateMasksSecretsInErrorBody(t *testing.T) {
 	const userPassword = "user-secret-error-9f3c1e7a"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		if _, err := w.Write([]byte(`{"password":"` + userPassword + `","err":"invalid"}`)); err != nil {

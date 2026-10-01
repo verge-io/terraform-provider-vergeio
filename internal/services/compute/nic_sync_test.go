@@ -16,6 +16,10 @@ func TestSyncNICsRenamePutsInPlace(t *testing.T) {
 	const mac = "52:54:00:11:22:33"
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -75,6 +79,10 @@ func TestSyncNICsRenamePutsInPlace(t *testing.T) {
 
 func TestSyncNICsUnrelatedVMUpdateDoesNotRewrite(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		http.Error(w, "unexpected", http.StatusInternalServerError)
 	}))
@@ -126,6 +134,10 @@ func TestSyncNICsCreatesFirstWhenStateIsEmpty(t *testing.T) {
 	const mac = "52:54:00:aa:bb:cc"
 	var calls []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -187,6 +199,10 @@ func TestSyncNICsHotplugsCreatedNICOnRunningVM(t *testing.T) {
 	var calls []string
 	var hotplugBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -259,6 +275,10 @@ func TestSyncNICsHotplugsCreatedNICOnRunningVM(t *testing.T) {
 
 func TestSyncNICsHotplugRefusalRequiresPowerCycle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		switch {
 		case r.URL.Path == "/version.json":
 			w.WriteHeader(http.StatusOK)

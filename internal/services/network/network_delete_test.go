@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"terraform-provider-vergeio/internal/client"
 )
 
 func shortenNetworkStop(t *testing.T, timeout, interval time.Duration) {
@@ -30,6 +32,10 @@ func TestStopNetworkBeforeDeleteKillsOnceThenWaits(t *testing.T) {
 	var killBodies []string
 	reads := 0
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -37,9 +43,9 @@ func TestStopNetworkBeforeDeleteKillsOnceThenWaits(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets":
 			reads++
-			payload := `[{"$key":12,"name":"lan","powerstate":true}]`
+			payload := `[{"$key":12,"name":"lan","running":true}]`
 			if reads > 2 {
-				payload = `[{"$key":12,"name":"lan","powerstate":false}]`
+				payload = `[{"$key":12,"name":"lan","running":false}]`
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
@@ -85,11 +91,15 @@ func TestStopNetworkBeforeDeleteTimeoutNamesNetworkAndStatus(t *testing.T) {
 
 	kills := 0
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte(`[{"$key":12,"name":"lan","powerstate":true}]`)); err != nil {
+			if _, err := w.Write([]byte(`[{"$key":12,"name":"lan","running":true}]`)); err != nil {
 				t.Errorf("write response: %v", err)
 			}
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
@@ -124,6 +134,10 @@ func TestStopNetworkBeforeDeleteTimeoutNamesNetworkAndStatus(t *testing.T) {
 
 func TestStopNetworkBeforeDeleteSkipsKillWhenStopped(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		if r.Method == http.MethodPost {
 			t.Errorf("stopped network was killed")
 			http.Error(w, "unexpected kill", http.StatusInternalServerError)
@@ -132,7 +146,7 @@ func TestStopNetworkBeforeDeleteSkipsKillWhenStopped(t *testing.T) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte(`[{"$key":12,"name":"lan","powerstate":false}]`)); err != nil {
+			if _, err := w.Write([]byte(`[{"$key":12,"name":"lan","running":false}]`)); err != nil {
 				t.Errorf("write response: %v", err)
 			}
 			return

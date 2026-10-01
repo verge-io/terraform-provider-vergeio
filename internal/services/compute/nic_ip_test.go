@@ -39,6 +39,10 @@ func TestCreateNICPostsRequestedIP(t *testing.T) {
 	const wantIP = "10.0.0.50"
 	var posted []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -98,6 +102,10 @@ func TestCreateNICPostsRequestedIP(t *testing.T) {
 func TestCreateNICAssignOmitsUnsetIP(t *testing.T) {
 	var posted []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			t.Errorf("read body: %v", err)
@@ -162,6 +170,10 @@ func TestCreateNICLeavesIPNullWhenUnassigned(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+
 				body, err := io.ReadAll(r.Body)
 				if err != nil {
 					t.Errorf("read body: %v", err)

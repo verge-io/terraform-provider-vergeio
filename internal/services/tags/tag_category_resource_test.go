@@ -86,6 +86,10 @@ func TestTagCategoryResourceSchema(t *testing.T) {
 
 func TestTagCategoryResourceConfigure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -141,6 +145,10 @@ func TestTagCategoryImportState(t *testing.T) {
 func TestTagCategoryCreateKeepsIDWhenRefreshFails(t *testing.T) {
 	var gets atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":
@@ -189,6 +197,10 @@ func TestTagCategoryCreateKeepsIDWhenRefreshFails(t *testing.T) {
 
 func TestTagCategoryReadRemovesMissingCategory(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/version.json":
@@ -227,6 +239,10 @@ func TestTagCategoryReadRemovesMissingCategory(t *testing.T) {
 func TestTagCategoryDeleteWarnsAboutCascade(t *testing.T) {
 	var deleted atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":

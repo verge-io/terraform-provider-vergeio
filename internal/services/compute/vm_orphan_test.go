@@ -86,7 +86,7 @@ func TestVMConfigMatches(t *testing.T) {
 		Description: types.StringNull(),
 	}
 	existing := &vergeos.VM{
-		ID:          7,
+		Key:         7,
 		Name:        "web",
 		CPUCores:    2,
 		RAM:         2048,
@@ -181,6 +181,10 @@ func TestFindVMByNameEscapesFilter(t *testing.T) {
 	name := "O'Brien"
 	var gotFilter string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/version.json":
@@ -201,7 +205,7 @@ func TestFindVMByNameEscapesFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vm == nil || vm.ID.Int() != 4 {
+	if vm == nil || vm.Key.Int() != 4 {
 		t.Fatalf("vm = %#v", vm)
 	}
 	if gotFilter != `name eq 'O\'Brien'` {
@@ -395,6 +399,10 @@ func newVMCreateServer(t *testing.T, calls *[]string, special func(http.Response
 	t.Helper()
 	var mu sync.Mutex
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		if calls != nil {
 			mu.Lock()
 			*calls = append(*calls, r.Method+" "+r.URL.Path)

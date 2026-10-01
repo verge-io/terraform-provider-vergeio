@@ -79,6 +79,10 @@ func TestSnapshotProfileResourceSchema(t *testing.T) {
 
 func TestSnapshotProfileResourceConfigure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 	}))
@@ -429,6 +433,10 @@ func newProfileFake() *profileFake {
 }
 
 func (f *profileFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if r.URL.Path == "/version.json" {
 		_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
@@ -459,6 +467,10 @@ func (f *profileFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) createProfile(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	var req vergeos.SnapshotProfileCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -473,6 +485,10 @@ func (f *profileFake) createProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) getProfile(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	id := pathID(r.URL.Path)
 	f.mu.Lock()
 	profile, ok := f.profiles[id]
@@ -485,6 +501,10 @@ func (f *profileFake) getProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) updateProfile(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	var req vergeos.SnapshotProfileUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -512,6 +532,10 @@ func (f *profileFake) updateProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) deleteProfile(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	id := pathID(r.URL.Path)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -524,6 +548,10 @@ func (f *profileFake) deleteProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) listPeriods(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	profileID := filterProfileID(r.URL.Query().Get("filter"))
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -541,6 +569,10 @@ func (f *profileFake) listPeriods(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) createPeriod(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -576,7 +608,6 @@ func (f *profileFake) createPeriod(w http.ResponseWriter, r *http.Request) {
 		Month:        intOrZero(req.Month),
 		Retention:    req.Retention,
 		Quiesce:      boolOrFalse(req.Quiesce),
-		SkipMissed:   boolOrFalse(req.SkipMissed),
 		MaxTier:      stringOrEmpty(req.MaxTier),
 		MinSnapshots: intOrZero(req.MinSnapshots),
 		Immutable:    boolOrFalse(req.Immutable),
@@ -585,6 +616,10 @@ func (f *profileFake) createPeriod(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) getPeriod(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	id := pathID(r.URL.Path)
 	f.mu.Lock()
 	period, ok := f.periods[id]
@@ -597,6 +632,10 @@ func (f *profileFake) getPeriod(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) updatePeriod(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	var req vergeos.SnapshotProfilePeriodUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -638,9 +677,6 @@ func (f *profileFake) updatePeriod(w http.ResponseWriter, r *http.Request) {
 	if req.Quiesce != nil {
 		period.Quiesce = *req.Quiesce
 	}
-	if req.SkipMissed != nil {
-		period.SkipMissed = *req.SkipMissed
-	}
 	if req.MaxTier != nil {
 		period.MaxTier = *req.MaxTier
 	}
@@ -655,6 +691,10 @@ func (f *profileFake) updatePeriod(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *profileFake) deletePeriod(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+
 	id := pathID(r.URL.Path)
 	f.mu.Lock()
 	defer f.mu.Unlock()

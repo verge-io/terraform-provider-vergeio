@@ -80,7 +80,7 @@ func (va *GroupsApi) readGroups(ctx context.Context, data *GroupDataSourceModel)
 	var groupsAPIResp []GroupsAPIDataSourceModel
 	for _, group := range groups {
 		groupsAPIResp = append(groupsAPIResp, GroupsAPIDataSourceModel{
-			Id:          int32(group.ID.Int()),
+			Id:          int32(group.Key.Int()),
 			Name:        group.Name,
 			Description: group.Description,
 			Enabled:     group.Enabled,

@@ -84,7 +84,7 @@ func (va *ResourceGroupsApi) readResourceGroups(ctx context.Context, data *Resou
 	var resourceGroupsAPIResp []ResourceGroupsAPIDataSourceModel
 	for _, rg := range resourceGroups {
 		resourceGroupsAPIResp = append(resourceGroupsAPIResp, ResourceGroupsAPIDataSourceModel{
-			Id:          rg.ID,
+			Id:          rg.Key,
 			Name:        rg.Name,
 			Description: rg.Description,
 			Enabled:     rg.Enabled,

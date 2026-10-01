@@ -10,7 +10,7 @@ require (
 	github.com/hashicorp/terraform-plugin-go v0.31.0
 	github.com/hashicorp/terraform-plugin-log v0.11.0
 	github.com/hashicorp/terraform-plugin-testing v1.16.0
-	github.com/verge-io/govergeos v0.3.0
+	github.com/verge-io/govergeos v0.3.2-0.20261001024048-1c7e528018de
 	github.com/zclconf/go-cty v1.18.1
 )
 

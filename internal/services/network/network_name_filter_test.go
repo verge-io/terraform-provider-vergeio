@@ -21,6 +21,10 @@ func TestReadNetworksEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}
 			var gotFilter string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/version.json":
@@ -68,6 +72,10 @@ func TestReadNetworksEscapesTypeFilterAndKeepsExactType(t *testing.T) {
 			}
 			var gotFilter string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/version.json":

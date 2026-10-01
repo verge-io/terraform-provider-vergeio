@@ -60,14 +60,14 @@ func Sweep(ctx context.Context) error {
 		if vm.IsSnapshot || !HasPrefix(vm.Name) {
 			continue
 		}
-		vmIDs[vm.ID.Int()] = vm.Name
+		vmIDs[vm.Key.Int()] = vm.Name
 	}
 	networkIDs := map[int]string{}
 	for _, network := range networks {
 		if !HasPrefix(network.Name) {
 			continue
 		}
-		networkIDs[network.ID.Int()] = network.Name
+		networkIDs[network.Key.Int()] = network.Name
 	}
 	userIDs := map[int]string{}
 	for _, user := range users {
@@ -81,7 +81,7 @@ func Sweep(ctx context.Context) error {
 		if !HasPrefix(group.Name) {
 			continue
 		}
-		groupIDs[group.ID.Int()] = group.Name
+		groupIDs[group.Key.Int()] = group.Name
 	}
 
 	permissions, err := client.Permissions.List(ctx)
@@ -122,7 +122,7 @@ func Sweep(ctx context.Context) error {
 		if !ownedGroup && !HasPrefix(member.Member) && !referencesSweptObject(member.Member, vmIDs, networkIDs, userIDs, groupIDs) {
 			continue
 		}
-		id := member.ID.Int()
+		id := member.Key.Int()
 		log.Printf("[SWEEP] deleting member %d (%s)", id, member.Member)
 		record(ignoreNotFound(client.Members.Delete(ctx, id), "member", id))
 	}
@@ -134,7 +134,7 @@ func Sweep(ctx context.Context) error {
 				continue
 			}
 		}
-		id := file.ID.Int()
+		id := file.Key.Int()
 		log.Printf("[SWEEP] deleting cloud-init file %d (%s)", id, file.Name)
 		record(ignoreNotFound(client.CloudInitFiles.Delete(ctx, id), "cloud-init file", id))
 	}
@@ -177,7 +177,7 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	}
 	for _, vm := range vms {
 		if !vm.IsSnapshot && HasPrefix(vm.Name) {
-			left = append(left, fmt.Sprintf("vm %s (%d)", vm.Name, vm.ID.Int()))
+			left = append(left, fmt.Sprintf("vm %s (%d)", vm.Name, vm.Key.Int()))
 		}
 	}
 
@@ -187,7 +187,7 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	}
 	for _, network := range networks {
 		if HasPrefix(network.Name) {
-			left = append(left, fmt.Sprintf("network %s (%d)", network.Name, network.ID.Int()))
+			left = append(left, fmt.Sprintf("network %s (%d)", network.Name, network.Key.Int()))
 		}
 	}
 
@@ -207,7 +207,7 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	}
 	for _, group := range groups {
 		if HasPrefix(group.Name) {
-			left = append(left, fmt.Sprintf("group %s (%d)", group.Name, group.ID.Int()))
+			left = append(left, fmt.Sprintf("group %s (%d)", group.Name, group.Key.Int()))
 		}
 	}
 
@@ -217,7 +217,7 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	}
 	for _, file := range files {
 		if HasPrefix(file.Name) {
-			left = append(left, fmt.Sprintf("cloud-init file %s (%d)", file.Name, file.ID.Int()))
+			left = append(left, fmt.Sprintf("cloud-init file %s (%d)", file.Name, file.Key.Int()))
 		}
 	}
 

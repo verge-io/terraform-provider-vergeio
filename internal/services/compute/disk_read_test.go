@@ -9,16 +9,16 @@ import (
 
 func TestSortDrivesForState(t *testing.T) {
 	drives := []vergeos.VMDrive{
-		{ID: vergeos.FlexInt(4), Name: "data", OrderID: 1},
-		{ID: vergeos.FlexInt(2), Name: "os", OrderID: 0},
-		{ID: vergeos.FlexInt(9), Name: "extra", OrderID: 1},
-		{ID: vergeos.FlexInt(3), Name: "data", OrderID: 1},
+		{Key: vergeos.FlexInt(4), Name: "data", OrderID: 1},
+		{Key: vergeos.FlexInt(2), Name: "os", OrderID: 0},
+		{Key: vergeos.FlexInt(9), Name: "extra", OrderID: 1},
+		{Key: vergeos.FlexInt(3), Name: "data", OrderID: 1},
 	}
 	sortDrivesForState(drives)
 	want := []int{2, 3, 4, 9}
 	for i, id := range want {
-		if drives[i].ID.Int() != id {
-			t.Fatalf("drive %d id = %d, want %d", i, drives[i].ID.Int(), id)
+		if drives[i].Key.Int() != id {
+			t.Fatalf("drive %d id = %d, want %d", i, drives[i].Key.Int(), id)
 		}
 	}
 }

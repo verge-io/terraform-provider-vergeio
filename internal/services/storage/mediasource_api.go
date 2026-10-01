@@ -81,7 +81,7 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 	var mediasourceAPIResp []MediasourceAPIDataSourceModel
 	for _, file := range files {
 		mediasourceAPIResp = append(mediasourceAPIResp, MediasourceAPIDataSourceModel{
-			Id:          int32(file.ID.Int()),
+			Id:          int32(file.Key.Int()),
 			Name:        file.Name,
 			Description: file.Description,
 			Filesize:    file.Filesize,

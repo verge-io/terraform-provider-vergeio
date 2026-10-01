@@ -440,7 +440,9 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 // than by keys already stored in state. Order is orderid, then name, then key
 // so two reads return the same block order.
 func (da *DiskApi) readDisksByMachine(ctx context.Context, machineID int32) ([]*diskResourceModel, error) {
-	drives, err := da.sdk.VMDrives.List(ctx, int(machineID))
+	// List takes a VM $key and resolves the machine. Callers have the machine
+	// id, which is what govergeos v0.3.0 filtered on directly.
+	drives, err := da.sdk.VMDrives.ListAll(ctx, vergeos.WithFilter(fmt.Sprintf("machine eq %d", machineID)))
 	if err != nil {
 		return nil, fmt.Errorf("listing drives for machine %d: %w", machineID, err)
 	}
@@ -451,9 +453,9 @@ func (da *DiskApi) readDisksByMachine(ctx context.Context, machineID int32) ([]*
 
 	disks := make([]*diskResourceModel, 0, len(drives))
 	for _, drive := range drives {
-		disk := &diskResourceModel{Key: types.StringValue(strconv.Itoa(drive.ID.Int()))}
+		disk := &diskResourceModel{Key: types.StringValue(strconv.Itoa(drive.Key.Int()))}
 		if err := da.readDisk(ctx, disk); err != nil {
-			return nil, fmt.Errorf("reading drive %d: %w", drive.ID.Int(), err)
+			return nil, fmt.Errorf("reading drive %d: %w", drive.Key.Int(), err)
 		}
 		disks = append(disks, disk)
 	}
@@ -494,7 +496,7 @@ func sortDrivesForState(drives []vergeos.VMDrive) {
 		if drives[i].Name != drives[j].Name {
 			return drives[i].Name < drives[j].Name
 		}
-		return drives[i].ID.Int() < drives[j].ID.Int()
+		return drives[i].Key.Int() < drives[j].Key.Int()
 	})
 }
 
