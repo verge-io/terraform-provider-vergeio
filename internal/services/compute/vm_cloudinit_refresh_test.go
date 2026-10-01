@@ -43,20 +43,57 @@ func TestReadVMStoresCloudInitFileEditedOutsideTerraform(t *testing.T) {
 	}
 }
 
-func TestReadVMDropsCloudInitFileDeletedOutsideTerraform(t *testing.T) {
+func TestReadVMKeepsCloudInitFilesRemovedFromVergeOS(t *testing.T) {
+	// Power-on deletes every configured file after the guest boots. Refresh
+	// has to keep them, or the next plan creates the rows again.
 	fake := newFakeCloudInit()
+	prior := []CloudInitFile{
+		cloudInitFile("/user-data", cloudInitFirst),
+		cloudInitFile("/meta-data", cloudInitMeta),
+	}
+	got := runCloudInitRead(t, fake, prior)
+	assertCloudInitFiles(t, got, prior)
+	for _, call := range fake.cloudInitCalls() {
+		if call.download == "1" {
+			t.Fatalf("downloaded a missing file: %#v", fake.cloudInitCalls())
+		}
+	}
+}
+
+func TestReadVMDropsCloudInitFileDeletedWhileAnotherRemains(t *testing.T) {
+	fake := newFakeCloudInit(fakeCloudInitRow{key: 12, name: "/meta-data", contents: cloudInitMeta})
 	got := runCloudInitRead(t, fake, []CloudInitFile{
 		cloudInitFile("/user-data", cloudInitFirst),
 		cloudInitFile("/meta-data", cloudInitMeta),
 	})
-	if len(got.CloudInitFiles) != 0 {
-		t.Fatalf("files = %#v, want none after the rows were deleted", got.CloudInitFiles)
+	assertCloudInitFiles(t, got, []CloudInitFile{cloudInitFile("/meta-data", cloudInitMeta)})
+}
+
+func TestReadVMKeepsConfiguredCloudInitNameWithoutLeadingSlash(t *testing.T) {
+	const changed = "#cloud-config\nhostname: CHANGED\n"
+	fake := newFakeCloudInit(fakeCloudInitRow{key: 11, name: "/user-data", contents: changed})
+	got := runCloudInitRead(t, fake, []CloudInitFile{cloudInitFile("user-data", cloudInitFirst)})
+	assertCloudInitFiles(t, got, []CloudInitFile{cloudInitFile("user-data", changed)})
+}
+
+func TestReadVMDoesNotAdoptDefaultCloudInitFiles(t *testing.T) {
+	fake := newFakeCloudInit(
+		fakeCloudInitRow{key: 11, name: "/user-data", contents: "#cloud-config\n"},
+		fakeCloudInitRow{key: 12, name: "/meta-data", contents: "instance-id: ${YB_UUID}\n"},
+	)
+	got := runCloudInitRead(t, fake, nil)
+	if got.CloudInitFiles != nil {
+		t.Fatalf("files = %#v, want null when configuration sets none", got.CloudInitFiles)
 	}
-	for _, call := range fake.cloudInitCalls() {
-		if call.download == "1" {
-			t.Fatalf("downloaded a deleted file: %#v", fake.cloudInitCalls())
-		}
-	}
+}
+
+func TestReadVMDoesNotAppendUnconfiguredCloudInitFile(t *testing.T) {
+	fake := newFakeCloudInit(
+		fakeCloudInitRow{key: 11, name: "/user-data", contents: cloudInitFirst},
+		fakeCloudInitRow{key: 12, name: "/meta-data", contents: cloudInitMeta},
+	)
+	got := runCloudInitRead(t, fake, []CloudInitFile{cloudInitFile("user-data", cloudInitFirst)})
+	assertCloudInitFiles(t, got, []CloudInitFile{cloudInitFile("user-data", cloudInitFirst)})
 }
 
 func TestReadVMKeepsCloudInitOrderWhenVergeOSReturnsAnotherOrder(t *testing.T) {

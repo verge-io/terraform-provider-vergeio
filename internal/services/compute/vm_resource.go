@@ -1078,7 +1078,9 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	// expects the planned value ("nocloud"/"config_drive_v2") for consistency.
 	// On subsequent Read() calls, ignore_changes prevents drift.
 	// File rows are the plan captured above. The final read would otherwise
-	// store the live list, which is empty after detach.
+	// store the live list, which is empty after detach. A later refresh keeps
+	// that list when VergeOS has no cloud-init rows left, so the next plan
+	// does not create them again.
 	plannedCloudInitDS := data.CloudInitDataSource
 
 	// read the final state of the VM

@@ -62,6 +62,14 @@ func TestIndexCloudInitFilesRejectsBlankAndDuplicateNames(t *testing.T) {
 	}
 
 	_, err = indexCloudInitFiles([]CloudInitFile{
+		cloudInitFile("user-data", "a"),
+		cloudInitFile("/user-data", "b"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Fatalf("slash-equivalent name error = %v", err)
+	}
+
+	_, err = indexCloudInitFiles([]CloudInitFile{
 		{Name: types.StringUnknown(), Contents: types.StringValue("a")},
 	})
 	if err == nil || !strings.Contains(err.Error(), "not known") {
@@ -158,6 +166,48 @@ func TestUpdateCloudInitFilesCreatesAndDeletesRows(t *testing.T) {
 		cloudInitFile("/meta-data", cloudInitMeta),
 		cloudInitFile("/vendor-data", cloudInitVendor),
 	})
+}
+
+func TestUpdateCloudInitFileMatchesNameWithoutLeadingSlash(t *testing.T) {
+	fake := newFakeCloudInit(fakeCloudInitRow{key: 11, name: "/user-data", contents: cloudInitFirst})
+	got := runCloudInitUpdate(t, fake,
+		[]CloudInitFile{cloudInitFile("user-data", cloudInitFirst)},
+		[]CloudInitFile{cloudInitFile("user-data", cloudInitSecond)},
+	)
+	puts := fake.calls(http.MethodPut, "/api/v4/cloudinit_files/11")
+	if len(puts) != 1 {
+		t.Fatalf("content updates = %#v, want one PUT for /user-data", fake.cloudInitCalls())
+	}
+	if len(fake.calls(http.MethodPost, "/api/v4/cloudinit_files")) != 0 || len(fake.calls(http.MethodDelete, "")) != 0 {
+		t.Fatalf("slash-equivalent name was recreated: %#v", fake.cloudInitCalls())
+	}
+	assertCloudInitFiles(t, got, []CloudInitFile{cloudInitFile("user-data", cloudInitSecond)})
+}
+
+func TestUpdateCloudInitFileNameSlashDoesNotRewriteRow(t *testing.T) {
+	fake := newFakeCloudInit(fakeCloudInitRow{key: 11, name: "/user-data", contents: cloudInitFirst})
+	got := runCloudInitUpdate(t, fake,
+		[]CloudInitFile{cloudInitFile("/user-data", cloudInitFirst)},
+		[]CloudInitFile{cloudInitFile("user-data", cloudInitFirst)},
+	)
+	if writes := fake.mutatingCloudInitCalls(); len(writes) != 0 {
+		t.Fatalf("name spelling rewrote the row: %#v", writes)
+	}
+	assertCloudInitFiles(t, got, []CloudInitFile{cloudInitFile("user-data", cloudInitFirst)})
+}
+
+func TestUpdateDeletesSlashEquivalentCloudInitFileWhenCleared(t *testing.T) {
+	fake := newFakeCloudInit(fakeCloudInitRow{key: 11, name: "/user-data", contents: cloudInitFirst})
+	got := runCloudInitUpdate(t, fake,
+		[]CloudInitFile{cloudInitFile("user-data", cloudInitFirst)},
+		nil,
+	)
+	if len(fake.calls(http.MethodDelete, "/api/v4/cloudinit_files/11")) != 1 {
+		t.Fatalf("calls = %#v, want /user-data deleted", fake.cloudInitCalls())
+	}
+	if got.CloudInitFiles != nil {
+		t.Fatalf("state files = %#v, want none", got.CloudInitFiles)
+	}
 }
 
 func TestUpdateCloudInitFileRecreatesAMissingRow(t *testing.T) {
