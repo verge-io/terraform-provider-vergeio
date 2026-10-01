@@ -132,7 +132,15 @@ func (r *UserResource) Configure(ctx context.Context, req resource.ConfigureRequ
 		return
 	}
 
-	r.userApi = NewUserApi(client)
+	userApi, err := NewUserApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.userApi = userApi
 }
 
 // Create a new user.

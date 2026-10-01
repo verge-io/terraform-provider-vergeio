@@ -17,8 +17,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/verge-io/govergeos"
-
-	"terraform-provider-vergeio/internal/client"
 )
 
 func TestTenantPoweredOn(t *testing.T) {
@@ -133,7 +131,7 @@ func TestTenantConfigure(t *testing.T) {
 	}
 	ok := &resource.ConfigureResponse{}
 	r.Configure(context.Background(), resource.ConfigureRequest{
-		ProviderData: vergeio.NewClient("https://example.test", "user", "pass", true),
+		ProviderData: tenantTestClient(t),
 	}, ok)
 	if ok.Diagnostics.HasError() {
 		t.Fatal(ok.Diagnostics)

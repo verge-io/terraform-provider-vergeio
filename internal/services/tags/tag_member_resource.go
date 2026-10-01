@@ -94,7 +94,15 @@ func (r *TagMemberResource) Configure(ctx context.Context, req resource.Configur
 		return
 	}
 
-	r.tagsApi = NewTagsApi(client)
+	tagsApi, err := NewTagsApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.tagsApi = tagsApi
 }
 
 // Create a new tag member assignment.

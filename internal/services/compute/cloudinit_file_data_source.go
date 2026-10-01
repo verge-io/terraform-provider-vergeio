@@ -103,7 +103,15 @@ func (d *CloudinitFileDataSource) Configure(ctx context.Context, req datasource.
 		return
 	}
 
-	d.cloudinitFileApi = NewCloudinitFileApi(client)
+	cloudinitFileApi, err := NewCloudinitFileApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.cloudinitFileApi = cloudinitFileApi
 }
 
 // Read refreshes the Terraform state with the latest data.

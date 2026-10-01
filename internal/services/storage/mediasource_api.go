@@ -19,13 +19,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &MediasourceApi{}
 
-func NewMediasourceApi(c *vergeio.Client) *MediasourceApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewMediasourceApi(c *vergeio.Client) (*MediasourceApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &MediasourceApi{
 		name:   "Mediasource Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type MediasourceApi struct {

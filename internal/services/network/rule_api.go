@@ -21,9 +21,12 @@ type RuleApi struct {
 	sdk *vergeos.Client
 }
 
-func NewRuleApi(c *vergeio.Client) *RuleApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
-	return &RuleApi{sdk: sdk}
+func NewRuleApi(c *vergeio.Client) (*RuleApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
+	return &RuleApi{sdk: sdk}, nil
 }
 
 type firewallNotice struct {

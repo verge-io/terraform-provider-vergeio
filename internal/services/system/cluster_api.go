@@ -17,13 +17,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &ClusterApi{}
 
-func NewClusterApi(c *vergeio.Client) *ClusterApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewClusterApi(c *vergeio.Client) (*ClusterApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &ClusterApi{
 		name:   "Cluster Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type ClusterApi struct {

@@ -167,7 +167,7 @@ func TestTagCategoryUpdateOmitsUnchangedFalseOnWire(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	state := withTaggableFlags(TagCategoryResourceModel{
 		Id:          types.StringValue("4"),
 		Name:        types.StringValue("env"),
@@ -204,7 +204,7 @@ func TestTagCategoryReadNotFound(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	err := api.readTagCategory(t.Context(), &TagCategoryResourceModel{Id: types.StringValue("9")})
 	if err == nil {
 		t.Fatal("expected not found")
@@ -227,7 +227,7 @@ func TestTagCategoryDeleteNotFound(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	if err := api.deleteTagCategory(t.Context(), &TagCategoryResourceModel{Id: types.StringValue("9")}); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +262,7 @@ func postTagCategory(t *testing.T, data *TagCategoryResourceModel) map[string]an
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	if err := api.createTagCategory(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}

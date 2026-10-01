@@ -16,13 +16,16 @@ import (
 
 var _ vergeio.IClient = &VersionApi{}
 
-func NewVersionApi(c *vergeio.Client) *VersionApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewVersionApi(c *vergeio.Client) (*VersionApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &VersionApi{
 		name:   "Version Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type VersionApi struct {

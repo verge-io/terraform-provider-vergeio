@@ -83,7 +83,15 @@ func (r *NetworkRulesResource) Configure(ctx context.Context, req resource.Confi
 		)
 		return
 	}
-	r.api = NewRuleApi(client)
+	api, err := NewRuleApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.api = api
 }
 
 func (r *NetworkRulesResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

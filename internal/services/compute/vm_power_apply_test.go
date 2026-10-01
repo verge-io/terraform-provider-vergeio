@@ -167,8 +167,8 @@ func runVMPowerApply(t *testing.T, tc vmPowerApplyCase) (types.Bool, []string) {
 	ctx := t.Context()
 	vergeClient := vergeio.NewClient(server.URL, "user", "pass", true)
 	vmResource := &VMResource{
-		vmApi:     NewVMApi(vergeClient),
-		deviceApi: NewDeviceApi(vergeClient),
+		vmApi:     mustAPI(NewVMApi(vergeClient)),
+		deviceApi: mustAPI(NewDeviceApi(vergeClient)),
 	}
 
 	schemaResp := &fwresource.SchemaResponse{}

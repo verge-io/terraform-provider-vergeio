@@ -50,3 +50,32 @@ func (c *Client) SDK() (*vergeos.Client, error) {
 	c.sdk = sdk
 	return sdk, nil
 }
+
+// NewVergeosClient creates a govergeos client for this connection.
+// The client is not cached. A nil connection, a failed version check, and a
+// nil SDK all return an error so callers never store a nil client.
+func (c *Client) NewVergeosClient() (*vergeos.Client, error) {
+	if c == nil {
+		return nil, fmt.Errorf("vergeio client is nil")
+	}
+	return requireVergeosClient(vergeos.NewClient(c.SDKOptions()...))
+}
+
+// CachedVergeosClient returns the shared govergeos client for this connection.
+// A failed attempt is not cached. The returned client is never nil.
+func (c *Client) CachedVergeosClient() (*vergeos.Client, error) {
+	if c == nil {
+		return nil, fmt.Errorf("vergeio client is nil")
+	}
+	return requireVergeosClient(c.SDK())
+}
+
+func requireVergeosClient(sdk *vergeos.Client, err error) (*vergeos.Client, error) {
+	if err != nil {
+		return nil, fmt.Errorf("failed to create VergeOS client: %w", err)
+	}
+	if sdk == nil {
+		return nil, fmt.Errorf("failed to create VergeOS client")
+	}
+	return sdk, nil
+}

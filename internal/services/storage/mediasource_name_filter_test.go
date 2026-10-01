@@ -43,7 +43,7 @@ func TestReadMediasourcesEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewMediasourceApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewMediasourceApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &MediasourceDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readMediasources(t.Context(), data); err != nil {
 				t.Fatal(err)

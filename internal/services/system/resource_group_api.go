@@ -19,13 +19,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &ResourceGroupsApi{}
 
-func NewResourceGroupsApi(c *vergeio.Client) *ResourceGroupsApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewResourceGroupsApi(c *vergeio.Client) (*ResourceGroupsApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &ResourceGroupsApi{
 		name:   "Resource Groups Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type ResourceGroupsApi struct {

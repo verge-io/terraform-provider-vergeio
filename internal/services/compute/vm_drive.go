@@ -134,13 +134,16 @@ const (
 
 var _ vergeio.IClient = &DiskApi{}
 
-func NewDiskApi(c *vergeio.Client) *DiskApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewDiskApi(c *vergeio.Client) (*DiskApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &DiskApi{
 		name:   "Disk Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type DiskApi struct {
@@ -535,7 +538,11 @@ func (da *DiskApi) deleteDisk(ctx context.Context, data *diskResourceModel, vmId
 
 	if !strings.EqualFold(strings.TrimSpace(powerState), "offline") {
 		if err := sendUnplug(ctx, powerState, func() error {
-			return NewVMApi(da.client).hotplugDrive(ctx, key, vmId, true)
+			vmAPI, err := NewVMApi(da.client)
+			if err != nil {
+				return err
+			}
+			return vmAPI.hotplugDrive(ctx, key, vmId, true)
 		}); err != nil {
 			return fmt.Errorf("failed to unplug drive: %v", err)
 		}
@@ -730,7 +737,10 @@ func (da *DiskApi) attachCreatedDrive(ctx context.Context, disk *diskResourceMod
 
 	name := disk.Name.ValueString()
 	iface := disk.Interface.ValueString()
-	vmAPI := NewVMApi(da.client)
+	vmAPI, err := NewVMApi(da.client)
+	if err != nil {
+		return err
+	}
 	if err := vmAPI.hotplugDrive(ctx, disk.Key.ValueString(), vmId, false); err != nil {
 		return fmt.Errorf("drive %q (interface %q) was created on running VM %s, but VergeOS refused to hotplug it: %w. Some interfaces, such as IDE, cannot be hotplugged and stay offline until the VM is power cycled", name, iface, vmId.ValueString(), err)
 	}

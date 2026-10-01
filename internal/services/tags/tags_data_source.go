@@ -109,7 +109,15 @@ func (d *TagsDataSource) Configure(ctx context.Context, req datasource.Configure
 		return
 	}
 
-	d.tagsApi = NewTagsApi(client)
+	tagsApi, err := NewTagsApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.tagsApi = tagsApi
 }
 
 func (d *TagsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

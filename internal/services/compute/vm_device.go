@@ -130,13 +130,16 @@ const (
 
 var _ vergeio.IClient = &DeviceApi{}
 
-func NewDeviceApi(c *vergeio.Client) *DeviceApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewDeviceApi(c *vergeio.Client) (*DeviceApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &DeviceApi{
 		name:   "Device Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type DeviceApi struct {

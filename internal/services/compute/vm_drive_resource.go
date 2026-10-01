@@ -231,8 +231,24 @@ func (r *VMDriveResource) Configure(ctx context.Context, req resource.ConfigureR
 		)
 		return
 	}
-	r.vmApi = NewVMApi(client)
-	r.diskApi = NewDiskApi(client)
+	vmApi, err := NewVMApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	diskApi, err := NewDiskApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.vmApi = vmApi
+	r.diskApi = diskApi
 }
 
 func (r *VMDriveResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

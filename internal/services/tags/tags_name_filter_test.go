@@ -44,7 +44,7 @@ func TestReadTagsEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &TagsDataSourceModel{Filter: types.StringValue(name)}
 			if err := api.readTags(t.Context(), data); err != nil {
 				t.Fatal(err)
@@ -91,7 +91,7 @@ func TestGetCategoryIDByNameSDKEscapesAndMatches(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			id, err := api.getCategoryIDByNameSDK(t.Context(), name)
 			if err != nil {
 				t.Fatal(err)
@@ -121,7 +121,7 @@ func TestGetCategoryIDByNameSDKRejectsStrippedName(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	_, err := api.getCategoryIDByNameSDK(t.Context(), "Core{x}")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want category not found", err)

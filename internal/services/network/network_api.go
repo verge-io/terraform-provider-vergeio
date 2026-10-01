@@ -26,13 +26,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &NetworkApi{}
 
-func NewNetworkApi(c *vergeio.Client) *NetworkApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewNetworkApi(c *vergeio.Client) (*NetworkApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &NetworkApi{
 		name:   "Network Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type NetworkApi struct {

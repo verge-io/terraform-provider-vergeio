@@ -43,7 +43,7 @@ func TestReadNodesEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewNodeApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewNodeApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &NodeDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readNodes(t.Context(), data); err != nil {
 				t.Fatal(err)

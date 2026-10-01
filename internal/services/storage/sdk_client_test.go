@@ -1,0 +1,58 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MIT
+
+package storage
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
+)
+
+func mustAPI[T any](api T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return api
+}
+
+func TestMediasourceConstructorReturnsClientError(t *testing.T) {
+	bad := versionClient(t, "27.0.0")
+	api, err := NewMediasourceApi(nil)
+	assertNoAPI(t, api, err)
+	api, err = NewMediasourceApi(bad)
+	assertNoAPI(t, api, err)
+	if !vergeos.IsUnsupportedVersionError(err) {
+		t.Fatalf("error = %v", err)
+	}
+
+	api, err = NewMediasourceApi(versionClient(t, "26.0.0"))
+	if err != nil || api == nil || api.sdk == nil {
+		t.Fatalf("api=%v err=%v", api, err)
+	}
+}
+
+func versionClient(t *testing.T, version string) *vergeio.Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"version":"` + version + `"}`))
+	}))
+	t.Cleanup(server.Close)
+	return vergeio.NewClient(server.URL, "user", "pass", true)
+}
+
+func assertNoAPI[T any](t *testing.T, api *T, err error) {
+	t.Helper()
+	if err == nil || api != nil {
+		t.Fatalf("api=%v err=%v, want an error and no API", api, err)
+	}
+	if !strings.Contains(err.Error(), "failed to create VergeOS client") && !strings.Contains(err.Error(), "vergeio client is nil") {
+		t.Fatalf("error = %v", err)
+	}
+}

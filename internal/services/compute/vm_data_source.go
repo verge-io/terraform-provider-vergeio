@@ -243,7 +243,15 @@ func (d *VMDataSource) Configure(ctx context.Context, req datasource.ConfigureRe
 		return
 	}
 
-	d.vmApi = NewVMApi(client)
+	vmApi, err := NewVMApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.vmApi = vmApi
 }
 
 func (d *VMDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

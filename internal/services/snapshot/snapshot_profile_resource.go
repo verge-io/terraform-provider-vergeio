@@ -201,7 +201,15 @@ func (r *SnapshotProfileResource) Configure(ctx context.Context, req resource.Co
 		)
 		return
 	}
-	r.api = NewSnapshotProfileApi(client)
+	api, err := NewSnapshotProfileApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.api = api
 }
 
 func (r *SnapshotProfileResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

@@ -20,12 +20,15 @@ type API struct {
 	sdk  *vergeos.Client
 }
 
-func NewAPI(c *vergeio.Client) *API {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewAPI(c *vergeio.Client) (*API, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &API{
 		name: "Tenant Api",
 		sdk:  sdk,
-	}
+	}, nil
 }
 
 func (a *API) Name() string {

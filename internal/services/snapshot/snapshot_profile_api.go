@@ -19,16 +19,17 @@ import (
 
 var _ vergeio.IClient = &SnapshotProfileApi{}
 
-func NewSnapshotProfileApi(c *vergeio.Client) *SnapshotProfileApi {
-	api := &SnapshotProfileApi{
+func NewSnapshotProfileApi(c *vergeio.Client) (*SnapshotProfileApi, error) {
+	// Share the govergeos client with the VM resource in the same provider
+	// connection. A setup error is returned so Configure can report it.
+	sdk, err := c.CachedVergeosClient()
+	if err != nil {
+		return nil, err
+	}
+	return &SnapshotProfileApi{
 		name: "Snapshot Profile Api",
-	}
-	if c != nil {
-		// Share the govergeos client with the VM resource in the same
-		// provider connection. The VM read uses that client.
-		api.sdk, _ = c.SDK()
-	}
-	return api
+		sdk:  sdk,
+	}, nil
 }
 
 // SnapshotProfileApi is the govergeos snapshot profile and period client.

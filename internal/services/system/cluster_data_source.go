@@ -94,7 +94,15 @@ func (d *ClusterDataSource) Configure(ctx context.Context, req datasource.Config
 		return
 	}
 
-	d.clusterApi = NewClusterApi(client)
+	clusterApi, err := NewClusterApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	d.clusterApi = clusterApi
 }
 
 // Read refreshes the Terraform state with the latest data.

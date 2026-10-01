@@ -75,7 +75,7 @@ func TestCreateObjectPermissionUsesIdentityAndRow(t *testing.T) {
 		}
 		return false
 	})
-	api := NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &PermissionResourceModel{
 		UserID:   types.StringValue("7"),
 		GroupID:  types.StringNull(),
@@ -115,7 +115,7 @@ func TestCreateTablePermissionPostsRowZero(t *testing.T) {
 		}
 		return false
 	})
-	api := NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &PermissionResourceModel{
 		UserID:   types.StringNull(),
 		GroupID:  types.StringValue("4"),
@@ -146,7 +146,7 @@ func TestCreateTablePermissionPostsRowZero(t *testing.T) {
 
 func TestReadPermissionKeepsConfiguredUser(t *testing.T) {
 	server := permissionServer(t, nil)
-	api := NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &PermissionResourceModel{
 		Id:       types.StringValue("3"),
 		UserID:   types.StringValue("7"),
@@ -167,7 +167,7 @@ func TestReadPermissionKeepsConfiguredUser(t *testing.T) {
 
 func TestImportPermissionResolvesUserByIdentity(t *testing.T) {
 	server := permissionServer(t, nil)
-	api := NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewPermissionApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &PermissionResourceModel{Id: types.StringValue("3")}
 	if err := api.readPermission(t.Context(), data); err != nil {
 		t.Fatal(err)

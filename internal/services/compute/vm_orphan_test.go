@@ -196,7 +196,7 @@ func TestFindVMByNameEscapesFilter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	api := NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	vm, err := api.findVMByName(ctx, name)
 	if err != nil {
 		t.Fatal(err)
@@ -371,10 +371,10 @@ func createVM(t *testing.T, ctx context.Context, host string, planModel VMResour
 	t.Helper()
 	client := vergeio.NewClient(host, "user", "pass", true)
 	vmResource := &VMResource{
-		vmApi:     NewVMApi(client),
-		diskApi:   NewDiskApi(client),
-		nicApi:    NewNICApi(client),
-		deviceApi: NewDeviceApi(client),
+		vmApi:     mustAPI(NewVMApi(client)),
+		diskApi:   mustAPI(NewDiskApi(client)),
+		nicApi:    mustAPI(NewNICApi(client)),
+		deviceApi: mustAPI(NewDeviceApi(client)),
 	}
 	schemaResp := &fwresource.SchemaResponse{}
 	vmResource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)

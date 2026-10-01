@@ -23,13 +23,16 @@ import (
 // IClient interface.
 var _ vergeio.IClient = &MemberApi{}
 
-func NewMemberApi(c *vergeio.Client) *MemberApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewMemberApi(c *vergeio.Client) (*MemberApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &MemberApi{
 		name:   "Member Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type MemberApi struct {

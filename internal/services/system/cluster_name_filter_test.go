@@ -43,7 +43,7 @@ func TestReadClustersEscapesNameFilterAndKeepsExactName(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 
-			api := NewClusterApi(vergeio.NewClient(server.URL, "user", "pass", true))
+			api := mustAPI(NewClusterApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 			data := &ClusterDataSourceModel{FilterName: types.StringValue(name)}
 			if err := api.readClusters(t.Context(), data); err != nil {
 				t.Fatal(err)

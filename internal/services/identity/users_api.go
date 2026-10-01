@@ -16,12 +16,15 @@ import (
 
 var _ vergeio.IClient = &UsersApi{}
 
-func NewUsersApi(c *vergeio.Client) *UsersApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewUsersApi(c *vergeio.Client) (*UsersApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &UsersApi{
 		name: "Users Api",
 		sdk:  sdk,
-	}
+	}, nil
 }
 
 // UsersApi is the govergeos UserService client for the vergeio_users data source.

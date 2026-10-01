@@ -112,7 +112,7 @@ func TestTagCreateReadUpdateDelete(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &TagResourceModel{
 		Category:    types.Int32Value(4),
 		Name:        types.StringValue("production"),
@@ -197,7 +197,7 @@ func TestReadTagEmptyHTTPBodyDoesNotPanic(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	err := api.readTag(t.Context(), &TagResourceModel{Id: types.StringValue("4")})
 	if err == nil {
 		t.Fatal("empty tag response should be an error")
@@ -253,7 +253,7 @@ func TestReadTagNotFound(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	api := NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true))
+	api := mustAPI(NewTagsApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	err := api.readTag(t.Context(), &TagResourceModel{Id: types.StringValue("9")})
 	if err == nil {
 		t.Fatal("expected not found")

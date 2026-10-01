@@ -83,13 +83,16 @@ const (
 
 var _ vergeio.IClient = &NICApi{}
 
-func NewNICApi(c *vergeio.Client) *NICApi {
-	sdk, _ := vergeos.NewClient(c.SDKOptions()...)
+func NewNICApi(c *vergeio.Client) (*NICApi, error) {
+	sdk, err := c.NewVergeosClient()
+	if err != nil {
+		return nil, err
+	}
 	return &NICApi{
 		name:   "NIC Api",
 		client: c,
 		sdk:    sdk,
-	}
+	}, nil
 }
 
 type NICApi struct {
@@ -415,7 +418,11 @@ func (na *NICApi) deleteNIC(ctx context.Context, data *nicResourceModel, vmId ty
 
 	if !strings.EqualFold(strings.TrimSpace(powerState), "down") {
 		if err := sendUnplug(ctx, powerState, func() error {
-			return NewVMApi(na.client).hotplugNIC(ctx, id, vmId, true)
+			vmAPI, err := NewVMApi(na.client)
+			if err != nil {
+				return err
+			}
+			return vmAPI.hotplugNIC(ctx, id, vmId, true)
 		}); err != nil {
 			return fmt.Errorf("failed to unplug NIC: %v", err)
 		}
@@ -650,7 +657,10 @@ func (na *NICApi) attachCreatedNIC(ctx context.Context, nic *nicResourceModel, v
 
 	name := nic.Name.ValueString()
 	iface := nic.Interface.ValueString()
-	vmAPI := NewVMApi(na.client)
+	vmAPI, err := NewVMApi(na.client)
+	if err != nil {
+		return err
+	}
 	if err := vmAPI.hotplugNIC(ctx, nic.Id.ValueString(), vmId, false); err != nil {
 		return fmt.Errorf("NIC %q (interface %q) was created on running VM %s, but VergeOS refused to hotplug it: %w. Power cycle the VM so the guest can see the NIC", name, iface, vmId.ValueString(), err)
 	}

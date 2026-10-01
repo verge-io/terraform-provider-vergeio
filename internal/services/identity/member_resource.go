@@ -90,7 +90,15 @@ func (r *MemberResource) Configure(ctx context.Context, req resource.ConfigureRe
 		return
 	}
 
-	r.memberApi = NewMemberApi(client)
+	memberApi, err := NewMemberApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to Create VergeOS API Client",
+			err.Error(),
+		)
+		return
+	}
+	r.memberApi = memberApi
 }
 
 func (r *MemberResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
