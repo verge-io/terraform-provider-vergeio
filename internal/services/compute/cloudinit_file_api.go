@@ -71,14 +71,21 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 
 	cloudinitFiles = vergeio.KeepExact(cloudinitFiles, fn, func(file vergeos.CloudInitFile) string { return file.Name })
 
-	// Convert SDK cloudinitFiles to API model for existing field mapping logic
+	// Convert SDK cloudinitFiles to API model for existing field mapping logic.
+	// List and a plain get omit the body, including fields=all. VergeOS
+	// returns it only from GET cloudinit_files/<key>?download=1.
 	var cloudinitFileAPIResp []CloudinitFileAPIResourceModel
 	for _, file := range cloudinitFiles {
+		id := file.Key.Int()
+		contents, err := va.sdk.CloudInitFiles.GetContents(ctx, id)
+		if err != nil {
+			return fmt.Errorf("read contents of cloud-init file %q (%d): %w", file.Name, id, err)
+		}
 		cloudinitFileAPIResp = append(cloudinitFileAPIResp, CloudinitFileAPIResourceModel{
-			Id:                fmt.Sprintf("%d", file.Key.Int()),
+			Id:                fmt.Sprintf("%d", id),
 			Name:              file.Name,
 			Filesize:          file.FileSize,
-			Contents:          file.Contents,
+			Contents:          contents,
 			ContainsVariables: file.ContainsVariables,
 		})
 	}
