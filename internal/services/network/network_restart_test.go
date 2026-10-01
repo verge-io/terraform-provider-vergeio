@@ -395,9 +395,8 @@ func newRestartTestAPI(t *testing.T, handler http.HandlerFunc) *NetworkApi {
 		t.Fatal(err)
 	}
 	return &NetworkApi{
-		name:   "Network Api",
-		client: vergeio.NewClient(server.URL, "user", "pass", true),
-		sdk:    sdk,
+		name: "Network Api",
+		sdk:  sdk,
 	}
 }
 

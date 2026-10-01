@@ -32,16 +32,14 @@ func NewNetworkApi(c *vergeio.Client) (*NetworkApi, error) {
 		return nil, err
 	}
 	return &NetworkApi{
-		name:   "Network Api",
-		client: c,
-		sdk:    sdk,
+		name: "Network Api",
+		sdk:  sdk,
 	}, nil
 }
 
 type NetworkApi struct {
-	name   string
-	client *vergeio.Client
-	sdk    *vergeos.Client
+	name string
+	sdk  *vergeos.Client
 }
 
 func (nc *NetworkApi) Name() string {
@@ -66,7 +64,6 @@ type NetworkAPIResourceModel struct {
 	DNSList              *string `json:"dnslist,omitempty"`
 	Domain               *string `json:"domain,omitempty"`
 	On_Power_Loss        *string `json:"on_power_loss,omitempty"`
-	PowerState           *bool   `json:"powerstate,omitempty"`
 	Type                 *string `json:"type,omitempty"`
 	VLAN_TAG             *int32  `json:"layer2_id,omitempty"`
 	MTU                  *int32  `json:"mtu,omitempty"`
@@ -84,14 +81,9 @@ type NetworkAPIDataSourceModel struct {
 	Description string `json:"description"`
 }
 
-// VNetAction represents the structure for virtual network action requests.
-type VNetAction struct {
-	VNet   int             `json:"vnet"`
-	Action string          `json:"action"`
-	Params json.RawMessage `json:"params"`
-}
-
 // createNetwork creates a new network.
+// powerstate is not a field on the create body. A true value powers the
+// network on after the row exists, and waits until the machine is running.
 func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceModel) error {
 	req, err := networkCreateRequest(data)
 	if err != nil {
@@ -105,6 +97,13 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 
 	data.Id = types.StringValue(fmt.Sprintf("%d", network.Key.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
+
+	if _, on := networkPowerRequested(data.PowerState); on {
+		tflog.Debug(ctx, fmt.Sprintf("Powering on network %s after create", data.Id.ValueString()))
+		if err := nc.sdk.Networks.PowerOn(ctx, network.Key.Int()); err != nil {
+			return fmt.Errorf("network %s was created but did not power on: %w", data.Id.ValueString(), err)
+		}
+	}
 
 	return nil
 }
@@ -123,7 +122,8 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", req))
 
-	return nil
+	// A powerstate change is not in the PUT. VergeOS ignores that field.
+	return nc.applyPlannedPowerState(ctx, planData)
 }
 
 // networkCreateRequest builds the SDK create body.
@@ -145,7 +145,6 @@ func networkCreateRequest(data *NetworkResourceModel) (*vergeos.NetworkCreateReq
 		DNSList:         vergeio.KnownString(data.DNSList),
 		Domain:          vergeio.KnownString(data.Domain),
 		On_Power_Loss:   vergeio.KnownString(data.On_Power_Loss),
-		PowerState:      vergeio.KnownBool(data.PowerState),
 		Type:            vergeio.KnownString(data.Type),
 		VLAN_TAG:        vergeio.KnownInt32(data.VLAN_TAG),
 		MTU:             vergeio.KnownInt32(data.MTU),
@@ -183,7 +182,6 @@ func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkReso
 		DNSList:         vergeio.ChangedString(planData.DNSList, stateData.DNSList),
 		Domain:          vergeio.ChangedString(planData.Domain, stateData.Domain),
 		On_Power_Loss:   vergeio.ChangedString(planData.On_Power_Loss, stateData.On_Power_Loss),
-		PowerState:      vergeio.ChangedBool(planData.PowerState, stateData.PowerState),
 		VLAN_TAG:        vergeio.ChangedInt32(planData.VLAN_TAG, stateData.VLAN_TAG),
 		MTU:             vergeio.ChangedInt32(planData.MTU, stateData.MTU),
 		RateLimit:       vergeio.ChangedInt64(planData.RateLimit, stateData.RateLimit),
@@ -359,40 +357,18 @@ func networkStopLabel(data *NetworkResourceModel) string {
 	}
 }
 
-// killNetwork Powers off a network.
+// killNetwork powers a network off immediately.
+// The vnets powerstate column is ignored by VergeOS, so this posts kill.
 func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceModel) error {
 
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill Network API for Network %v", data.Id.ValueString()))
 
-	// Convert networkID string to int
 	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
 	if err != nil {
 		return fmt.Errorf("invalid Network ID format: %v", err)
 	}
 
-	// Create the action payload according to vnet_actions schema
-	actionPayload := VNetAction{
-		VNet:   networkIDInt,
-		Action: "kill",
-		Params: json.RawMessage("{}"), // Empty params for kill action
-	}
-
-	// Convert to JSON payload
-	bytedata, err := json.Marshal(actionPayload)
-	if err != nil {
-		return err
-	}
-
-	// Note: Using legacy HTTP client for actions until SDK adds network actions support
-	req, err := nc.client.Post(ctx, "api/v4/vnet_actions", bytes.NewBuffer(bytedata))
-	if err != nil {
-		return err
-	}
-	if req.StatusCode != 201 {
-		return fmt.Errorf("failed to kill Network: status code %v", req.StatusCode)
-	}
-
-	return nil
+	return nc.sdk.Networks.Kill(ctx, networkIDInt)
 }
 
 // Read the Network (Vnet) from the API.

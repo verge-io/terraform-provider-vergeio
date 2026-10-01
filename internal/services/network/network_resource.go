@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -164,9 +165,14 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Computed: true,
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the network is powered on. Read from the API powerstate boolean after create and import.",
+				MarkdownDescription: "Whether the network is powered on. Stored from the router machine running state. true powers the network on after create, and on update when the machine is stopped. false kills a running network. Destroy kills a running network before delete. Omit to leave the current power unchanged.",
 				Optional:            true,
 				Computed:            true,
+				// Keep the prior value when configuration omits powerstate.
+				// Otherwise the framework marks it unknown on every update.
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"restart_on_change": schema.BoolAttribute{
 				MarkdownDescription: "Restart a running network after an update that VergeOS stages with need_restart, such as a DHCP range or address change. Defaults to true. Set to false to keep the network up until a maintenance window.",

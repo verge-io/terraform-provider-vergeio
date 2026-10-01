@@ -263,8 +263,26 @@ func TestNetworkCreateRequestAcceptsBoolPowerState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The SDK create body has no powerstate field, so a bool does not
-	// become the string "false" on the wire.
+	// Power is a vnet action after create. The create body has no powerstate field.
+	requireAbsent(t, decodeJSON(t, marshalRequest(t, req)), "powerstate")
+}
+
+func TestNetworkUpdateRequestOmitsPowerState(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:         types.StringValue("12"),
+		Name:       types.StringValue("tf-acc-net"),
+		PowerState: types.BoolValue(true),
+	}
+	state := &NetworkResourceModel{
+		Id:         types.StringValue("12"),
+		Name:       types.StringValue("tf-acc-net"),
+		PowerState: types.BoolValue(false),
+	}
+
+	req, _, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
 	requireAbsent(t, decodeJSON(t, marshalRequest(t, req)), "powerstate")
 }
 

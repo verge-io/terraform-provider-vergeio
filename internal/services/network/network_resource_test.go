@@ -82,6 +82,9 @@ func TestNetworkResource_Schema(t *testing.T) {
 	if !powerAttr.IsOptional() || !powerAttr.IsComputed() {
 		t.Error("powerstate should be optional and computed")
 	}
+	if len(powerAttr.PlanModifiers) != 1 {
+		t.Fatalf("powerstate should keep prior state when omitted, got %d plan modifiers", len(powerAttr.PlanModifiers))
+	}
 	if resp.Schema.Version != 1 {
 		t.Fatalf("schema version = %d, want 1", resp.Schema.Version)
 	}
