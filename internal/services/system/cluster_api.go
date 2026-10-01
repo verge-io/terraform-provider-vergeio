@@ -94,6 +94,10 @@ func (va *ClusterApi) readClusters(ctx context.Context, data *ClusterDataSourceM
 		})
 
 	}
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.Clusters == nil {
+		data.Clusters = []*ClusterModel{}
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 

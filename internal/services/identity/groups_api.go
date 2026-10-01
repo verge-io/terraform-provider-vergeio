@@ -97,6 +97,10 @@ func (va *GroupsApi) readGroups(ctx context.Context, data *GroupDataSourceModel)
 		})
 
 	}
+	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
+	if data.Groups == nil {
+		data.Groups = []*GroupModel{}
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
