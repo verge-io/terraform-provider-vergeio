@@ -339,6 +339,32 @@ func TestRestartAfterUpdateErrorsWhenFlagStaysSet(t *testing.T) {
 	}
 }
 
+func TestReadNetworkUsesReportedIPAddressType(t *testing.T) {
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(`{"$key":12,"name":"lan","ipaddress_type":"none","enabled":true,"running":false}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	})
+
+	data := &NetworkResourceModel{Id: types.StringValue("12")}
+	if err := api.readNetwork(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.IPaddress_Type.ValueString() != "none" {
+		t.Fatalf("ipaddress_type = %q, want none", data.IPaddress_Type.ValueString())
+	}
+}
+
 func TestReadNetworkDefaultsRestartOnChange(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
@@ -395,8 +421,9 @@ func newRestartTestAPI(t *testing.T, handler http.HandlerFunc) *NetworkApi {
 		t.Fatal(err)
 	}
 	return &NetworkApi{
-		name: "Network Api",
-		sdk:  sdk,
+		name:   "Network Api",
+		client: vergeio.NewClient(server.URL, "user", "pass", true),
+		sdk:    sdk,
 	}
 }
 

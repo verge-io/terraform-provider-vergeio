@@ -2,6 +2,8 @@ package network
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -265,6 +267,112 @@ func TestNetworkCreateRequestAcceptsBoolPowerState(t *testing.T) {
 	}
 	// Power is a vnet action after create. The create body has no powerstate field.
 	requireAbsent(t, decodeJSON(t, marshalRequest(t, req)), "powerstate")
+}
+
+func TestNetworkUpdateRequestSendsIPAddressType(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		IPaddress_Type: types.StringValue("none"),
+	}
+	state := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		IPaddress_Type: types.StringValue("static"),
+	}
+
+	req, id, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 12 {
+		t.Fatalf("network id = %d, want 12", id)
+	}
+	if req.IPAddressType == nil || *req.IPAddressType != "none" {
+		t.Fatalf("ipaddress_type pointer = %v, want none", req.IPAddressType)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireString(t, obj, "ipaddress_type", "none")
+	requireAbsent(t, obj, "name")
+}
+
+func TestNetworkUpdateRequestOmitsUnchangedIPAddressType(t *testing.T) {
+	plan := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("renamed"),
+		IPaddress_Type: types.StringValue("static"),
+	}
+	state := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		IPaddress_Type: types.StringValue("static"),
+	}
+
+	req, _, err := networkUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := decodeJSON(t, marshalRequest(t, req))
+	requireString(t, obj, "name", "renamed")
+	requireAbsent(t, obj, "ipaddress_type")
+}
+
+func TestUpdateNetworkSendsIPAddressType(t *testing.T) {
+	var bodies []string
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnets/12":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read body: %v", err)
+			}
+			bodies = append(bodies, string(body))
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write([]byte(`{"$key":12,"name":"renamed"}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	})
+
+	plan := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("renamed"),
+		IPaddress_Type: types.StringValue("none"),
+		PowerState:     types.BoolNull(),
+	}
+	state := &NetworkResourceModel{
+		Id:             types.StringValue("12"),
+		Name:           types.StringValue("tf-acc-net"),
+		IPaddress_Type: types.StringValue("static"),
+		PowerState:     types.BoolNull(),
+	}
+	if err := api.updateNetwork(t.Context(), plan, state); err != nil {
+		t.Fatal(err)
+	}
+
+	var sawName, sawType bool
+	for _, body := range bodies {
+		obj := decodeJSON(t, body)
+		if _, ok := obj["name"]; ok {
+			requireString(t, obj, "name", "renamed")
+			sawName = true
+		}
+		if _, ok := obj["ipaddress_type"]; ok {
+			requireString(t, obj, "ipaddress_type", "none")
+			sawType = true
+		}
+	}
+	if !sawName || !sawType {
+		t.Fatalf("update bodies = %#v, want name and ipaddress_type", bodies)
+	}
 }
 
 func TestNetworkUpdateRequestOmitsPowerState(t *testing.T) {
