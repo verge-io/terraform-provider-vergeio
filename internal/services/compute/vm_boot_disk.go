@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -202,4 +205,48 @@ func (r *VMResource) refreshBootDisk(ctx context.Context, data *VMResourceModel)
 	}
 	data.BootDisk = bootDiskFromDisk(disk, &prior)
 	return nil
+}
+
+// bootDiskMediaRequiresReplace replaces the VM when boot_disk.media changes
+// after it is already in state. A null prior value is the first plan after
+// import or the 2.x upgrade, which leave boot_disk empty so the next apply
+// can adopt the existing drive by name. Filling media in then must not
+// destroy the VM.
+func bootDiskMediaRequiresReplace() planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(
+		func(_ context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+			if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+				return
+			}
+			if req.PlanValue.IsUnknown() {
+				return
+			}
+			if req.PlanValue.IsNull() || !req.PlanValue.Equal(req.StateValue) {
+				resp.RequiresReplace = true
+			}
+		},
+		"Changing boot_disk.media replaces the VM. Adding media when adopting an existing boot disk does not.",
+		"Changing `boot_disk.media` replaces the VM. Adding media when adopting an existing boot disk does not.",
+	)
+}
+
+// bootDiskSourceRequiresReplace replaces the VM when boot_disk.source changes
+// after it is already in state. A null prior value is the first plan after
+// import or the 2.x upgrade. Filling source in then must not destroy the VM.
+func bootDiskSourceRequiresReplace() planmodifier.Int32 {
+	return int32planmodifier.RequiresReplaceIf(
+		func(_ context.Context, req planmodifier.Int32Request, resp *int32planmodifier.RequiresReplaceIfFuncResponse) {
+			if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+				return
+			}
+			if req.PlanValue.IsUnknown() {
+				return
+			}
+			if req.PlanValue.IsNull() || !req.PlanValue.Equal(req.StateValue) {
+				resp.RequiresReplace = true
+			}
+		},
+		"Changing boot_disk.source replaces the VM. Adding source when adopting an existing boot disk does not.",
+		"Changing `boot_disk.source` replaces the VM. Adding source when adopting an existing boot disk does not.",
+	)
 }

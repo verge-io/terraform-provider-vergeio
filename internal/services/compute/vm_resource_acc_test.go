@@ -1186,3 +1186,110 @@ func testAccCheckVMCloudInitFileCount(resourceName string, want int) resource.Te
 		return nil
 	}
 }
+
+// TestAccVMResource_BootDiskMediaSourceAdopt covers the import (and 2.x
+// upgrade) path for a boot disk that declares media and source. Import leaves
+// boot_disk null; the next apply must adopt by name with 0 destroy instead of
+// RequiresReplace on null→media/source.
+//
+// Create uses media alone (VergeOS rejects media_source on media=disk). After
+// import, configuration adds both media and source so the plan hits both
+// RequiresReplaceIf modifiers the way a 2.x import/upgrade config does.
+func TestAccVMResource_BootDiskMediaSourceAdopt(t *testing.T) {
+	vmName := acctest.Name("vm-bd-media")
+	created := testAccVMBootDiskMediaOnlyConfig(vmName)
+	adopt := testAccVMBootDiskMediaSourceConfig(vmName)
+
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: created,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "boot_disk.name", "os"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "boot_disk.media", "disk"),
+					testAccCaptureResourceAttr("vergeio_vm.test", "id", &vmID),
+				),
+			},
+			{
+				ResourceName:            "vergeio_vm.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"boot_disk"},
+			},
+			{
+				Config: adopt,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccExpectCapturedAttr("vergeio_vm.test", "id", &vmID),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "boot_disk.name", "os"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "boot_disk.media", "disk"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "boot_disk.source"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "boot_disk.key"),
+				),
+			},
+			{
+				Config: adopt,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccVMBootDiskMediaOnlyConfig(vmName string) string {
+	if err := acctest.RequirePrefix(vmName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_vm" "test" {
+  name      = %q
+  enabled   = true
+  cpu_cores = 1
+  ram       = 1024
+
+  boot_disk {
+    name  = "os"
+    size  = 5
+    media = "disk"
+  }
+}
+`, vmName))
+}
+
+func testAccVMBootDiskMediaSourceConfig(vmName string) string {
+	if err := acctest.RequirePrefix(vmName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+data "vergeio_mediasources" "img" {
+  filter_name = "debian13-golden.ova"
+}
+
+resource "vergeio_vm" "test" {
+  name      = %q
+  enabled   = true
+  cpu_cores = 1
+  ram       = 1024
+
+  boot_disk {
+    name   = "os"
+    size   = 5
+    media  = "disk"
+    source = data.vergeio_mediasources.img.mediasources[0].id
+  }
+}
+`, vmName))
+}
