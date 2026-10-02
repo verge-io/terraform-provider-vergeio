@@ -419,7 +419,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				},
 			},
 			"boot_disk": schema.SingleNestedBlock{
-				MarkdownDescription: "Boot disk owned by this VM. Set size, and source when the disk is cloned or imported from media. The provider matches an existing drive by name and adopts it instead of creating a second disk. Other drives belong to vergeio_vm_drive. Do not give a vergeio_vm_drive the same name. Changing media or source replaces the VM.",
+				MarkdownDescription: "Boot disk owned by this VM. Set size, and source when the disk is cloned or imported from media. The provider matches an existing drive by name and adopts it instead of creating a second disk. Other drives belong to vergeio_vm_drive. Do not give a vergeio_vm_drive the same name. Changing media or source on an owned boot disk replaces the VM. Adding media or source when adopting an existing disk after import or a 2.x upgrade does not.",
 				Attributes: map[string]schema.Attribute{
 					"key": schema.StringAttribute{
 						MarkdownDescription: "Drive key assigned by VergeOS.",
@@ -445,17 +445,17 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 						Computed:            true,
 					},
 					"source": schema.Int32Attribute{
-						MarkdownDescription: "Media source id used to clone or import the boot disk. Changing source replaces the VM.",
+						MarkdownDescription: "Media source id used to clone or import the boot disk. Changing source on an owned boot disk replaces the VM. Setting source when adopting after import or a 2.x upgrade does not.",
 						Optional:            true,
 						PlanModifiers: []planmodifier.Int32{
-							int32planmodifier.RequiresReplace(),
+							bootDiskSourceRequiresReplace(),
 						},
 					},
 					"media": schema.StringAttribute{
-						MarkdownDescription: "Media type. Defaults to a new disk when omitted. Changing media replaces the VM.",
+						MarkdownDescription: "Media type. Defaults to a new disk when omitted. Changing media on an owned boot disk replaces the VM. Setting media when adopting after import or a 2.x upgrade does not.",
 						Optional:            true,
 						PlanModifiers: []planmodifier.String{
-							stringplanmodifier.RequiresReplace(),
+							bootDiskMediaRequiresReplace(),
 						},
 						Validators: []validator.String{
 							stringvalidator.OneOf(getValidDiskMedia()...),
