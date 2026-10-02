@@ -46,7 +46,7 @@ func (r *NetworkRuleAliasResource) Metadata(ctx context.Context, req resource.Me
 
 func (r *NetworkRuleAliasResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "A named address or port group. Firewall rules reference it as `alias:<name>` in source_ip, destination_ip, source_ports, or destination_ports. Aliases are global on the system. Changing an alias does not refresh a network; the next firewall apply uses the new value.",
+		MarkdownDescription: "A named address or port group. Firewall rules reference it as `alias:<id>` in source_ip, destination_ip, source_ports, or destination_ports, where `<id>` is this resource's id (the vnet_rule_aliases key), for example `alias:${vergeio_network_rule_alias.example.id}`. VergeOS rejects `alias:<name>`. Aliases are global on the system. Changing an alias does not refresh a network; the next firewall apply uses the new value.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Alias id, the vnet_rule_aliases key.",
@@ -56,7 +56,7 @@ func (r *NetworkRuleAliasResource) Schema(ctx context.Context, req resource.Sche
 				},
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "Alias name, unique on the system. Rules reference it as alias:<name>.",
+				MarkdownDescription: "Alias name, unique on the system. Rules reference the alias by id (`alias:${...id}`), not by this name.",
 				Required:            true,
 			},
 			"description": schema.StringAttribute{

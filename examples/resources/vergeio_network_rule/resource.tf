@@ -1,5 +1,6 @@
 # One firewall rule. apply defaults to true and refreshes the network after the change.
 # Do not use vergeio_network_rule on a network that also has vergeio_network_rules.
+# To match an alias, set source_ip / destination_ip / ports to alias:${vergeio_network_rule_alias.example.id}.
 
 resource "vergeio_network" "lan" {
   name = "Example LAN"

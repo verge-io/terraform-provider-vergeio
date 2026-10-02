@@ -1,4 +1,4 @@
-# A named address group. Rules reference it as alias:mgmt-nets.
+# A named address group. Rules reference it as alias:${vergeio_network_rule_alias.mgmt.id}.
 
 resource "vergeio_network_rule_alias" "mgmt" {
   name             = "mgmt-nets"

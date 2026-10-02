@@ -23,6 +23,7 @@ Allow SSH from a management subnet.
 ```terraform
 # One firewall rule. apply defaults to true and refreshes the network after the change.
 # Do not use vergeio_network_rule on a network that also has vergeio_network_rules.
+# To match an alias, set source_ip / destination_ip / ports to alias:${vergeio_network_rule_alias.example.id}.
 
 resource "vergeio_network" "lan" {
   name = "Example LAN"
@@ -80,8 +81,8 @@ resource "vergeio_network_rule" "https" {
 - `apply` (Boolean) Refresh the network's firewall rules after this rule changes. Defaults to true. Set false to stage several vergeio_network_rule resources, then leave it true on the last one, which depends_on the others. Each refresh reloads the whole network, so prefer vergeio_network_rules when one configuration owns the policy. Do not use both resources on the same network. A stopped network is not refreshed; it loads staged rules when it starts.
 - `ct_state` (String) Connection tracking state filter, for example new or established.
 - `description` (String) Rule description.
-- `destination_ip` (String) Destination address filter. A literal, a special value, or alias:<name>.
-- `destination_ports` (String) Destination port filter. An alias is written alias:<name>.
+- `destination_ip` (String) Destination address filter. A literal, a special value, or alias:<id> where <id> is the vergeio_network_rule_alias id (the vnet_rule_aliases key).
+- `destination_ports` (String) Destination port filter. An alias is written alias:<id> with the alias resource id.
 - `direction` (String) Traffic direction. Defaults to incoming.
 - `drop_throttle` (Boolean) Add a drop rule when throttle is exceeded. Defaults to false.
 - `enabled` (Boolean) Whether the rule is enabled. Defaults to true.
@@ -90,8 +91,8 @@ resource "vergeio_network_rule" "https" {
 - `orderid` (Number) Explicit orderid. Omit to leave the current position unchanged. Lower is earlier.
 - `pin` (String) Pin the rule to the top or bottom of the non-system rules. no leaves it in orderid order.
 - `protocol` (String) Protocol to match. Defaults to any. Numeric values are OSPF (89), IGMP (2), GRE (47), ESP (50), and AH (51).
-- `source_ip` (String) Source address filter. A literal, a special value such as vnetself, or alias:<name>.
-- `source_ports` (String) Source port filter, for example 22 or 80,443. An alias is written alias:<name>.
+- `source_ip` (String) Source address filter. A literal, a special value such as vnetself, or alias:<id> where <id> is the vergeio_network_rule_alias id (the vnet_rule_aliases key).
+- `source_ports` (String) Source port filter, for example 22 or 80,443. An alias is written alias:<id> with the alias resource id.
 - `statistics` (Boolean) Track packet and byte counters for the rule. Defaults to false.
 - `target_ip` (String) Target address for translate and route actions.
 - `target_ports` (String) Target port for translate.

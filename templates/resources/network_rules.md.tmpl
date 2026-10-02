@@ -14,7 +14,7 @@ This is the resource to use when one configuration owns the policy. Do not combi
 
 VergeOS stages rule edits and sets `need_fw_apply` until the network refreshes. A stopped network cannot refresh, and it does not need to: it loads the staged rules when it starts. Terraform warns in that case and does not call the refresh.
 
-Rules reference a [`vergeio_network_rule_alias`](network_rule_alias.md) as `alias:<name>` in `source_ip`, `destination_ip`, `source_ports`, or `destination_ports`.
+Rules reference a [`vergeio_network_rule_alias`](network_rule_alias.md) as `alias:<id>` in `source_ip`, `destination_ip`, `source_ports`, or `destination_ports`, where `<id>` is the alias resource id (the `vnet_rule_aliases` key). Use `alias:${vergeio_network_rule_alias.example.id}`. VergeOS rejects `alias:<name>`.
 
 ## Example Usage
 

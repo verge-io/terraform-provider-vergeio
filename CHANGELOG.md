@@ -19,7 +19,7 @@ BREAKING CHANGES:
 FEATURES:
 
 - **New Resource:** `vergeio_vm_drive` and `vergeio_vm_nic`. A drive or NIC added while the VM is already running is hotplugged.
-- **New Resource:** `vergeio_network_rule` (one firewall rule, matched by name), `vergeio_network_rules` (every non-system rule on one network, written together and refreshed once), and `vergeio_network_rule_alias` (a named address or port group referenced as `alias:<name>`).
+- **New Resource:** `vergeio_network_rule` (one firewall rule, matched by name), `vergeio_network_rules` (every non-system rule on one network, written together and refreshed once), and `vergeio_network_rule_alias` (a named address or port group referenced as `alias:<id>`).
 - **New Resource:** `vergeio_tenant`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. **New Data Source:** `vergeio_tenants`. Network blocks and external IPs are not resources.
 - **New Resource:** `vergeio_group` and `vergeio_permission`. **New Data Source:** `vergeio_users`. A permission grants a user or a group list, read, create, modify, and delete on a table or one object.
 - **New Resource:** `vergeio_tag_category` and `vergeio_tag`. Deleting a category deletes its tags and their assignments. A `taggable_*` flag is sent only when the configuration sets it.
@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- Docs and examples for `vergeio_network_rule`, `vergeio_network_rules`, and `vergeio_network_rule_alias` now document alias references as `alias:<id>` (the alias resource id / `vnet_rule_aliases` key). VergeOS rejects `alias:<name>`; the provider passes the value through unchanged.
 - `vergeio_vm` refresh detects when every configured `cloudinit_files` entry was deleted outside Terraform while those files were still expected to be live (for example after create with `powerstate = false`). Power-on detach still keeps an empty plan so the provider does not recreate files it removed after the first boot.
 - `vergeio_network.interface_vnet` set to `0` is treated as unset toward VergeOS (create and update omit it). Refresh stores `0` when VergeOS has no parent, so a configured `0` keeps a valid empty plan without rewriting the planned value.
 - `vergeio_network` refresh stores `mtu`, `layer2_id`, `layer2_type`, `interface_vnet`, and `enable_bonding` from VergeOS. A configured MTU applies. A missing parent is stored as `interface_vnet = 0`.
