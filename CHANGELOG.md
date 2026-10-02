@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_tenant_storage`, `vergeio_tenant_node`, and `vergeio_network_rule_alias` refresh no longer adopt a foreign row when VergeOS reuses the stored key after an outside delete. A mismatched `tenant_id` (storage/node) or alias `name` is treated as gone so the next apply creates instead of RequiresReplace-deleting the other object (#227).
 - `vergeio_version` docs example output now shows a VergeOS 26+ version string and the real schema attributes (`name`, `version`, `hash`). The old example used VergeOS 4.x and a non-existent `id` attribute (#221).
 - `vergeio_tenant` destroy waits for the tenant network (`Running=false`) after the tenant is offline, killing the vnet when needed, so `Tenants.Delete` no longer returns 405 while the network is still stopping (#205).
 - `vergeio_tenant` create with `powerstate = true` before any `vergeio_tenant_node` exists defers power-on instead of waiting two minutes and leaving an orphan running tenant network (#207). A later apply powers the tenant on once a node exists.
