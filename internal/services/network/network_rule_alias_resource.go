@@ -34,6 +34,7 @@ type NetworkRuleAliasResource struct {
 
 type networkRuleAliasModel struct {
 	ID              types.String `tfsdk:"id"`
+	AliasID         types.String `tfsdk:"alias_id"`
 	Name            types.String `tfsdk:"name"`
 	Description     types.String `tfsdk:"description"`
 	Value           types.String `tfsdk:"value"`
@@ -50,6 +51,13 @@ func (r *NetworkRuleAliasResource) Schema(ctx context.Context, req resource.Sche
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Alias id, the vnet_rule_aliases key.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"alias_id": schema.StringAttribute{
+				MarkdownDescription: "Readonly SHA1 hex id VergeOS assigns to the alias row. Distinct from id (the reusable table key). Used to detect key reuse after an outside delete.",
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),

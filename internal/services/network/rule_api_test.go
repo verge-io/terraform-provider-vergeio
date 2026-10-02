@@ -4,7 +4,10 @@
 package network
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -263,6 +266,9 @@ func TestAliasCreateUpdateDelete(t *testing.T) {
 	if data.ID.ValueString() == "" {
 		t.Fatal("alias id was not stored")
 	}
+	if data.AliasID.ValueString() == "" {
+		t.Fatal("alias_id was not stored")
+	}
 	plan := *data
 	plan.Value = types.StringValue("192.0.2.0/24,198.51.100.0/24")
 	if err := api.updateAlias(t.Context(), &plan, data); err != nil {
@@ -279,7 +285,7 @@ func TestAliasCreateUpdateDelete(t *testing.T) {
 	}
 }
 
-func TestReadAliasRejectsForeignName(t *testing.T) {
+func TestReadAliasRejectsForeignAliasID(t *testing.T) {
 	fix := newRuleFixture(t, true)
 	api := newRuleTestAPI(t, fix.serve)
 	data := &networkRuleAliasModel{
@@ -290,22 +296,30 @@ func TestReadAliasRejectsForeignName(t *testing.T) {
 	if err := api.createAlias(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
+	ownedID := data.AliasID.ValueString()
+	if ownedID == "" {
+		t.Fatal("expected alias_id after create")
+	}
 	id, err := parsePositiveID(data.ID.ValueString())
 	if err != nil {
 		t.Fatal(err)
 	}
+	fix.aliases[id]["id"] = "ffffffffffffffffffffffffffffffffffffffff"
 	fix.aliases[id]["name"] = "someone-elses-alias"
 
 	err = api.readAlias(t.Context(), data)
 	if err == nil || !vergeos.IsNotFoundError(err) {
 		t.Fatalf("read foreign key = %v, want NotFound", err)
 	}
+	if data.AliasID.ValueString() != ownedID {
+		t.Fatalf("state alias_id was overwritten to %q", data.AliasID.ValueString())
+	}
 	if data.Name.ValueString() != "mgmt-nets" {
 		t.Fatalf("state name was overwritten to %q", data.Name.ValueString())
 	}
 }
 
-func TestReadAliasAllowsMatchingName(t *testing.T) {
+func TestReadAliasAllowsMatchingAliasID(t *testing.T) {
 	fix := newRuleFixture(t, true)
 	api := newRuleTestAPI(t, fix.serve)
 	data := &networkRuleAliasModel{
@@ -316,8 +330,12 @@ func TestReadAliasAllowsMatchingName(t *testing.T) {
 	if err := api.createAlias(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
+	ownedID := data.AliasID.ValueString()
 	if err := api.readAlias(t.Context(), data); err != nil {
 		t.Fatal(err)
+	}
+	if data.AliasID.ValueString() != ownedID {
+		t.Fatalf("alias_id = %q, want %q", data.AliasID.ValueString(), ownedID)
 	}
 	if data.Name.ValueString() != "mgmt-nets" {
 		t.Fatalf("name = %q", data.Name.ValueString())
@@ -341,6 +359,40 @@ func TestReadAliasSkipsOwnershipOnImport(t *testing.T) {
 	}
 	if data.Name.ValueString() != "mgmt-nets" {
 		t.Fatalf("imported name = %q", data.Name.ValueString())
+	}
+	if data.AliasID.ValueString() == "" {
+		t.Fatal("imported alias_id empty")
+	}
+}
+
+// TestReadAliasAllowsNameDriftSameAliasID covers in-place renames: same
+// alias_id with a different name must refresh, not return NotFound (#231).
+func TestReadAliasAllowsNameDriftSameAliasID(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	data := &networkRuleAliasModel{
+		Name:            types.StringValue("mgmt-nets"),
+		Value:           types.StringValue("192.0.2.0/24"),
+		PublishingScope: types.StringValue("private"),
+	}
+	if err := api.createAlias(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	ownedID := data.AliasID.ValueString()
+	id, err := parsePositiveID(data.ID.ValueString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fix.aliases[id]["name"] = "mgmt-nets-renamed"
+
+	if err := api.readAlias(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "mgmt-nets-renamed" {
+		t.Fatalf("name = %q, want renamed", data.Name.ValueString())
+	}
+	if data.AliasID.ValueString() != ownedID {
+		t.Fatalf("alias_id = %q, want %q", data.AliasID.ValueString(), ownedID)
 	}
 }
 
@@ -604,6 +656,9 @@ func (f *ruleFixture) createAlias(w http.ResponseWriter, r *http.Request) {
 	body := readMap(f.t, r)
 	f.next++
 	body["$key"] = f.next
+	// Readonly SHA1 hex id assigned by VergeOS; stable across name updates.
+	sum := sha1.Sum([]byte(fmt.Sprintf("fixture-alias-%d", f.next)))
+	body["id"] = hex.EncodeToString(sum[:])
 	f.aliases[f.next] = body
 	writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": f.next})
 }

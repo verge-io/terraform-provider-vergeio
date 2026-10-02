@@ -42,6 +42,7 @@ resource "vergeio_network_rule_alias" "mgmt" {
 
 ### Read-Only
 
+- `alias_id` (String) Readonly SHA1 hex id VergeOS assigns to the alias row. Distinct from id (the reusable table key). Used to detect key reuse after an outside delete.
 - `id` (String) Alias id, the vnet_rule_aliases key.
 
 ## Import
@@ -51,5 +52,5 @@ Import is supported using the following syntax:
 The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
 
 ```shell
-terraform import vergeio_network_rule_alias.example <alias_id>
+terraform import vergeio_network_rule_alias.example <id>
 ```
