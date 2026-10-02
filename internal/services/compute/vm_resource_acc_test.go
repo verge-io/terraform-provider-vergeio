@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
+	"github.com/verge-io/govergeos"
 	"terraform-provider-vergeio/internal/acctest"
 )
 
@@ -1046,6 +1047,76 @@ func TestAccVMResource_CloudInitFilesExternalDelete(t *testing.T) {
 	})
 }
 
+// TestAccVMResource_CloudInitFilesExpectLiveSeedExternalWipe covers #192: a
+// VM without the cloudinitExpectLive private marker (2.x upgrade or the
+// power-on-detach create path) still detects a full external wipe once Read
+// has seen live files and seeded the marker. Re-attaching after detach
+// simulates upgraded state that still has files attached.
+func TestAccVMResource_CloudInitFilesExpectLiveSeedExternalWipe(t *testing.T) {
+	vmName := acctest.Name("vm-ci192-seed")
+	poweredOn := testAccVMCloudInitConfig(vmName, false, true)
+	userData := "#cloud-config\nhostname: third\n"
+
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: poweredOn,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "1"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 0),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				Config: poweredOn,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				PreConfig: func() {
+					if err := testAccCreateCloudInitFileOutsideTerraform(vmID, "/user-data", userData); err != nil {
+						t.Fatalf("reattach cloud-init file: %v", err)
+					}
+				},
+				Config: poweredOn,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+				Check: testAccCheckVMCloudInitFileCount("vergeio_vm.test", 1),
+			},
+			{
+				PreConfig: func() {
+					if err := testAccDeleteAllCloudInitFilesOutsideTerraform(vmID); err != nil {
+						t.Fatalf("delete all cloud-init files: %v", err)
+					}
+				},
+				Config: poweredOn,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "1"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 1),
+				),
+			},
+		},
+	})
+}
+
 // TestAccVMResource_CloudInitFilesPowerOnDetachEmptyPlan covers the #185 path
 // preserved by #188: after create with powerstate=true the provider detaches
 // cloud-init files, state still lists them, and the next plan stays empty.
@@ -1110,7 +1181,27 @@ resource "vergeio_vm" "test" {
 `, vmName, power, files))
 }
 
+func testAccCreateCloudInitFileOutsideTerraform(id, name, contents string) error {
+	vmID, err := strconv.Atoi(id)
+	if err != nil {
+		return fmt.Errorf("vm id %q: %w", id, err)
+	}
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if _, err := client.CloudInitFiles.CreateForVM(ctx, vmID, &vergeos.CloudInitFileCreateRequest{
+		Name:     name,
+		Contents: contents,
+	}); err != nil {
+		return fmt.Errorf("create cloud-init file %q: %w", name, err)
+	}
+	return nil
+}
+
 func testAccDeleteAllCloudInitFilesOutsideTerraform(id string) error {
+
 	vmID, err := strconv.Atoi(id)
 	if err != nil {
 		return fmt.Errorf("vm id %q: %w", id, err)

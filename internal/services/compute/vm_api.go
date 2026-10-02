@@ -465,7 +465,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
 
 	// Read the VM from the API to get all the data.
-	if readError := va.readVM(ctx, data, false); readError != nil {
+	if _, readError := va.readVM(ctx, data, false); readError != nil {
 		return errors.New("Error reading the VM: " + readError.Error())
 	}
 
@@ -1233,31 +1233,34 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 // not detached after power-on). An empty live list then clears state so the
 // next plan recreates them. When false, an empty live list keeps the prior
 // files so a post-detach plan stays empty.
-func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel, expectLiveCloudInit bool) error {
+// cloudInitLivePresent is true when VergeOS still has at least one cloud-init
+// file on the VM. Read uses that to seed expect-live for upgraded state that
+// never got the private marker from Create or Update.
+func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel, expectLiveCloudInit bool) (cloudInitLivePresent bool, err error) {
 	if err := va.ensureSDK(); err != nil {
-		return err
+		return false, err
 	}
 	if data == nil {
-		return fmt.Errorf("VM is nil")
+		return false, fmt.Errorf("VM is nil")
 	}
 
 	tflog.Debug(ctx, "Reading the vm data")
 
 	// Call the SDK API to get the VM
 	if data.Id.IsNull() || data.Id.IsUnknown() || strings.TrimSpace(data.Id.ValueString()) == "" {
-		return fmt.Errorf("invalid VM ID: empty")
+		return false, fmt.Errorf("invalid VM ID: empty")
 	}
 	vmID, err := strconv.Atoi(strings.TrimSpace(data.Id.ValueString()))
 	if err != nil || vmID <= 0 {
-		return fmt.Errorf("invalid VM ID: %v", data.Id.ValueString())
+		return false, fmt.Errorf("invalid VM ID: %v", data.Id.ValueString())
 	}
 
 	vm, err := va.sdk.VMs.Get(ctx, vmID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if vm == nil || vm.Key.Int() <= 0 {
-		return fmt.Errorf("read VM %d: response was empty", vmID)
+		return false, fmt.Errorf("read VM %d: response was empty", vmID)
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the resource %v", vm))
@@ -1267,37 +1270,38 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel, expectLiveCl
 	// running flag so refresh sees a UI power change and the value written
 	// after apply matches the plan.
 	if err := va.useMachinePowerState(ctx, data); err != nil {
-		return err
+		return false, err
 	}
-	if err := va.readCloudInitFiles(ctx, data, vmID, expectLiveCloudInit); err != nil {
-		return err
+	cloudInitLivePresent, err = va.readCloudInitFiles(ctx, data, vmID, expectLiveCloudInit)
+	if err != nil {
+		return false, err
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
-	return nil
+	return cloudInitLivePresent, nil
 }
 
 // readCloudInitFiles stores the cloud-init files owned by this VM.
 // List names the rows. The body is only on GET cloudinit_files/<key>?download=1,
 // which GetContents reads. A contents value on the list response is ignored.
-func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, vmID int, expectLive bool) error {
+func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, vmID int, expectLive bool) (livePresent bool, err error) {
 	if va.sdk == nil || va.sdk.CloudInitFiles == nil {
-		return fmt.Errorf("cloud-init client is not configured")
+		return false, fmt.Errorf("cloud-init client is not configured")
 	}
 	files, err := va.sdk.CloudInitFiles.ListByVM(ctx, vmID)
 	if err != nil {
-		return fmt.Errorf("listing cloud-init files for VM %d: %w", vmID, err)
+		return false, fmt.Errorf("listing cloud-init files for VM %d: %w", vmID, err)
 	}
 	live := make([]CloudInitFile, 0, len(files))
 	for _, file := range files {
 		id := file.Key.Int()
 		if id <= 0 {
-			return fmt.Errorf("cloud-init file %q has no key", file.Name)
+			return false, fmt.Errorf("cloud-init file %q has no key", file.Name)
 		}
 		contents, err := va.sdk.CloudInitFiles.GetContents(ctx, id)
 		if err != nil {
-			return fmt.Errorf("reading contents of cloud-init file %q (%d): %w", file.Name, id, err)
+			return false, fmt.Errorf("reading contents of cloud-init file %q (%d): %w", file.Name, id, err)
 		}
 		tflog.Debug(ctx, fmt.Sprintf("Read cloud-init file %d (%q) on VM %d", id, file.Name, vmID))
 		live = append(live, CloudInitFile{
@@ -1305,8 +1309,9 @@ func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, 
 			Contents: types.StringValue(contents),
 		})
 	}
+	livePresent = len(live) > 0
 	data.CloudInitFiles = cloudInitFilesForState(data.CloudInitFiles, live, expectLive)
-	return nil
+	return livePresent, nil
 }
 
 // cloudInitFilesForState is the cloud-init list stored after a read.

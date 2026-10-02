@@ -53,8 +53,17 @@ type VMResource struct {
 // still exist in VergeOS. Create sets it when powerstate is false (or files
 // were configured without a power-on detach). Power-on detach leaves it unset
 // so refresh keeps the planned list when VergeOS has none. An external wipe
-// of every file clears state only when this key is set.
+// of every file clears state only when this key is set. Read also seeds it
+// when VergeOS still has attached files and the key is absent (2.x upgrade
+// or import), so those VMs detect a later full wipe without a Create/Update.
 const cloudInitExpectLivePrivateKey = "cloudinitExpectLive"
+
+// shouldSeedCloudInitExpectLive reports whether Read should write the
+// expect-live private marker. Live files with no marker means the VM came
+// from upgrade or import; power-on detach leaves live empty so stays false.
+func shouldSeedCloudInitExpectLive(expectLive, livePresent bool) bool {
+	return !expectLive && livePresent
+}
 
 // CloudInitFile represents a cloud-init file with name and contents.
 type CloudInitFile struct {
@@ -1106,7 +1115,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	plannedCloudInitDS := data.CloudInitDataSource
 
 	// read the final state of the VM
-	if readError := r.vmApi.readVM(ctx, &data, false); readError != nil {
+	if _, readError := r.vmApi.readVM(ctx, &data, false); readError != nil {
 		resp.Diagnostics.AddError(
 			"Error reading the VM",
 			readError.Error(),
@@ -1157,7 +1166,7 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 	}
 
 	// Read data into the model to get all the attributes
-	readDataError := r.vmApi.readVM(ctx, &data, expectLive)
+	livePresent, readDataError := r.vmApi.readVM(ctx, &data, expectLive)
 
 	if readDataError != nil {
 		// if the resource was not found, likely deleted outside of terraform
@@ -1173,6 +1182,17 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 			readDataError.Error(),
 		)
 		return
+	}
+
+	// Seed expect-live when files are still attached but the marker was never
+	// set (UpgradeState cannot write Private; import starts without it). The
+	// next external wipe of every file then clears state like a 3.0 create.
+	// Power-on detach leaves live empty, so this does not arm #185's empty plan.
+	if shouldSeedCloudInitExpectLive(expectLive, livePresent) && resp.Private != nil {
+		resp.Diagnostics.Append(resp.Private.SetKey(ctx, cloudInitExpectLivePrivateKey, []byte("true"))...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// Import only sets id, so boot_disk stays empty until configuration adopts
@@ -1279,7 +1299,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	usePlannedShutdownSettings(&stateData, &planData)
 
 	// Read the VM from the API to get all the data.
-	if readError := r.vmApi.readVM(ctx, &stateData, false); readError != nil {
+	if _, readError := r.vmApi.readVM(ctx, &stateData, false); readError != nil {
 		resp.Diagnostics.AddError(
 			"Error reading the VM",
 			readError.Error(),
