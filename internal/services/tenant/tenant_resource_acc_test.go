@@ -3,6 +3,7 @@ package tenant_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -234,4 +235,56 @@ resource "vergeio_tenant_storage" "test" {
   provisioned = 1073741824
 }
 `, tenantName, power, nodeName, tier))
+}
+
+// TestAccTenantStorageProvisionedGiB covers #197: VergeOS floors provisioned
+// to whole GiB. Non-aligned values must fail at plan time; whole GiB creates
+// cleanly and stays empty-plan.
+func TestAccTenantStorageProvisionedGiB(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-gib")
+	nodeName := acctest.Name("tenant-node-gib")
+	tier := accStorageTier(t)
+	aligned := testAccTenantConfig(tenantName, nodeName, tier, "gib aligned", 2048, 1073741824)
+	nonAligned := testAccTenantConfig(tenantName, nodeName, tier, "gib nonaligned", 2048, 1610612736)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config:      nonAligned,
+				ExpectError: regexp.MustCompile(`(?i)provisioned must be a positive multiple of 1073741824|Invalid provisioned value`),
+			},
+			{
+				Config: aligned,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant_storage.test", "provisioned", "1073741824"),
+				),
+			},
+			{
+				Config: aligned,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: testAccTenantConfig(tenantName, nodeName, tier, "gib aligned", 2048, 2147483648),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant_storage.test", "provisioned", "2147483648"),
+				),
+			},
+			{
+				Config: testAccTenantConfig(tenantName, nodeName, tier, "gib aligned", 2048, 2147483648),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
 }
