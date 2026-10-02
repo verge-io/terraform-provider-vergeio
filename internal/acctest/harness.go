@@ -127,6 +127,15 @@ func SDKClient() (*vergeos.Client, error) {
 // CheckDeleted fails when a destroyed resource is still returned by get.
 // get should return the govergeos not-found error when the object is gone.
 func CheckDeleted(s *terraform.State, resourceType string, get func(context.Context, int) error) error {
+	return CheckDeletedMatching(s, resourceType, func(ctx context.Context, id int, _ map[string]string) error {
+		return get(ctx, id)
+	})
+}
+
+// CheckDeletedMatching is like CheckDeleted but passes each resource's
+// Primary.Attributes so get can treat a foreign reused key as NotFound.
+// VergeOS reuses keys on some tables; Get-by-key alone is not enough (#228).
+func CheckDeletedMatching(s *terraform.State, resourceType string, get func(context.Context, int, map[string]string) error) error {
 	ctx := context.Background()
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != resourceType {
@@ -139,7 +148,7 @@ func CheckDeleted(s *terraform.State, resourceType string, get func(context.Cont
 		if err != nil {
 			return fmt.Errorf("%s id %q: %w", resourceType, rs.Primary.ID, err)
 		}
-		err = get(ctx, id)
+		err = get(ctx, id, rs.Primary.Attributes)
 		if err == nil {
 			return fmt.Errorf("%s %s still exists after destroy", resourceType, rs.Primary.ID)
 		}

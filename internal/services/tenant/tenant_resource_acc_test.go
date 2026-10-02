@@ -98,22 +98,55 @@ func testAccCheckTenantDestroy(s *terraform.State) error {
 	if err != nil {
 		return err
 	}
-	if err := acctest.CheckDeleted(s, "vergeio_tenant_node", func(ctx context.Context, id int) error {
-		_, err := client.TenantNodes.Get(ctx, id)
-		return err
+	// VergeOS reuses keys on tenants, tenant_nodes, and tenant_storage. A
+	// Get that returns another client's row must not fail CheckDestroy (#228).
+	if err := acctest.CheckDeletedMatching(s, "vergeio_tenant_node", func(ctx context.Context, id int, attrs map[string]string) error {
+		got, err := client.TenantNodes.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !accAttrMatchesInt(attrs, "tenant_id", got.Tenant.Int()) {
+			return &vergeos.NotFoundError{Resource: "TenantNode", ID: id}
+		}
+		if name := attrs["name"]; name != "" && got.Name != name {
+			return &vergeos.NotFoundError{Resource: "TenantNode", ID: id}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	if err := acctest.CheckDeleted(s, "vergeio_tenant_storage", func(ctx context.Context, id int) error {
-		_, err := client.TenantStorage.Get(ctx, id)
-		return err
+	if err := acctest.CheckDeletedMatching(s, "vergeio_tenant_storage", func(ctx context.Context, id int, attrs map[string]string) error {
+		got, err := client.TenantStorage.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !accAttrMatchesInt(attrs, "tenant_id", got.Tenant.Int()) {
+			return &vergeos.NotFoundError{Resource: "TenantStorage", ID: id}
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
-	return acctest.CheckDeleted(s, "vergeio_tenant", func(ctx context.Context, id int) error {
-		_, err := client.Tenants.Get(ctx, id)
-		return err
+	return acctest.CheckDeletedMatching(s, "vergeio_tenant", func(ctx context.Context, id int, attrs map[string]string) error {
+		got, err := client.Tenants.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if name := attrs["name"]; name != "" && got.Name != name {
+			return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
+		}
+		return nil
 	})
+}
+
+// accAttrMatchesInt reports whether attrs[key] is empty (no ownership hint) or
+// equals the integer VergeOS returned for that field.
+func accAttrMatchesInt(attrs map[string]string, key string, got int) bool {
+	want := attrs[key]
+	if want == "" {
+		return true
+	}
+	return strconv.Itoa(got) == want
 }
 
 func testAccTenantConfig(tenantName, nodeName string, tier int, description string, ram int, provisioned int64) string {
@@ -708,4 +741,155 @@ func TestAccTenantStorageKeyReuseDoesNotAdoptForeign(t *testing.T) {
 			},
 		},
 	})
+}
+
+// TestAccTenantDestroyCheckIgnoresForeignKeyReuse covers #228: after our
+// tenant/storage are deleted, VergeOS may hand the same storage key to
+// another client. CheckDestroy must treat that foreign row as gone.
+func TestAccTenantDestroyCheckIgnoresForeignKeyReuse(t *testing.T) {
+	acctest.PreCheck(t)
+	client, err := acctest.SDKClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	tier := accStorageTier(t)
+	managedName := acctest.Name("tenant-ds")
+	foreignName := acctest.Name("tenant-ds-f")
+	nodeName := acctest.Name("tenant-node-ds")
+
+	managed, err := client.Tenants.Create(ctx, &vergeos.TenantCreateRequest{
+		Name:     managedName,
+		Password: "Tf-acc-tenant-password1",
+	})
+	if err != nil {
+		t.Fatalf("create managed tenant: %v", err)
+	}
+	managedTenantID := managed.Key.Int()
+	t.Cleanup(func() {
+		_ = client.Tenants.Delete(ctx, managedTenantID)
+	})
+
+	enabled := true
+	node, err := client.TenantNodes.Create(ctx, &vergeos.TenantNodeCreateRequest{
+		Tenant:   managedTenantID,
+		Name:     nodeName,
+		CPUCores: 1,
+		RAM:      2048,
+		Enabled:  &enabled,
+	})
+	if err != nil {
+		t.Fatalf("create managed node: %v", err)
+	}
+	managedNodeID := node.Key.Int()
+	t.Cleanup(func() {
+		_ = client.TenantNodes.Delete(ctx, managedNodeID)
+	})
+
+	storage, err := client.TenantStorage.Create(ctx, &vergeos.TenantStorageCreateRequest{
+		Tenant:      managedTenantID,
+		Tier:        tier,
+		Provisioned: 1073741824,
+	})
+	if err != nil {
+		t.Fatalf("create managed storage: %v", err)
+	}
+	managedStorageID := storage.Key.Int()
+	t.Cleanup(func() {
+		_ = client.TenantStorage.Delete(ctx, managedStorageID)
+	})
+
+	state := &terraform.State{
+		Modules: []*terraform.ModuleState{
+			{
+				Path: []string{"root"},
+				Resources: map[string]*terraform.ResourceState{
+					"vergeio_tenant.test": {
+						Type: "vergeio_tenant",
+						Primary: &terraform.InstanceState{
+							ID: strconv.Itoa(managedTenantID),
+							Attributes: map[string]string{
+								"id":   strconv.Itoa(managedTenantID),
+								"name": managedName,
+							},
+						},
+					},
+					"vergeio_tenant_node.test": {
+						Type: "vergeio_tenant_node",
+						Primary: &terraform.InstanceState{
+							ID: strconv.Itoa(managedNodeID),
+							Attributes: map[string]string{
+								"id":        strconv.Itoa(managedNodeID),
+								"tenant_id": strconv.Itoa(managedTenantID),
+								"name":      nodeName,
+							},
+						},
+					},
+					"vergeio_tenant_storage.test": {
+						Type: "vergeio_tenant_storage",
+						Primary: &terraform.InstanceState{
+							ID: strconv.Itoa(managedStorageID),
+							Attributes: map[string]string{
+								"id":        strconv.Itoa(managedStorageID),
+								"tenant_id": strconv.Itoa(managedTenantID),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := client.TenantStorage.Delete(ctx, managedStorageID); err != nil && !vergeos.IsNotFoundError(err) {
+		t.Fatalf("delete managed storage: %v", err)
+	}
+	if err := client.TenantNodes.Delete(ctx, managedNodeID); err != nil && !vergeos.IsNotFoundError(err) {
+		t.Fatalf("delete managed node: %v", err)
+	}
+	if err := client.Tenants.Delete(ctx, managedTenantID); err != nil && !vergeos.IsNotFoundError(err) {
+		t.Fatalf("delete managed tenant: %v", err)
+	}
+
+	foreign, err := client.Tenants.Create(ctx, &vergeos.TenantCreateRequest{
+		Name:     foreignName,
+		Password: "Tf-acc-tenant-password1",
+	})
+	if err != nil {
+		t.Fatalf("create foreign tenant: %v", err)
+	}
+	foreignTenantID := foreign.Key.Int()
+	t.Cleanup(func() {
+		_ = client.Tenants.Delete(ctx, foreignTenantID)
+	})
+	foreignStorage, err := client.TenantStorage.Create(ctx, &vergeos.TenantStorageCreateRequest{
+		Tenant:      foreignTenantID,
+		Tier:        tier,
+		Provisioned: 2147483648,
+	})
+	if err != nil {
+		t.Fatalf("create foreign storage: %v", err)
+	}
+	foreignStorageID := foreignStorage.Key.Int()
+	t.Cleanup(func() {
+		_ = client.TenantStorage.Delete(ctx, foreignStorageID)
+	})
+	keyReused := foreignStorageID == managedStorageID
+	t.Logf("managed storage key=%d; foreign tenant=%d storage key=%d reused=%v",
+		managedStorageID, foreignTenantID, foreignStorageID, keyReused)
+
+	if err := testAccCheckTenantDestroy(state); err != nil {
+		t.Fatalf("CheckDestroy with foreign reused key (reused=%v): %v", keyReused, err)
+	}
+
+	// Sanity: without ownership attrs, Get-by-key alone would still fail when
+	// the foreign row reused the key — confirm the foreign row is present.
+	if keyReused {
+		got, err := client.TenantStorage.Get(ctx, managedStorageID)
+		if err != nil {
+			t.Fatalf("expected foreign storage at reused key %d: %v", managedStorageID, err)
+		}
+		if got.Tenant.Int() != foreignTenantID {
+			t.Fatalf("reused key tenant = %d, want foreign %d", got.Tenant.Int(), foreignTenantID)
+		}
+	}
 }
