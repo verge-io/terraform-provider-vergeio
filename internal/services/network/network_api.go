@@ -417,8 +417,9 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 	return nc.sdk.Networks.Kill(ctx, networkIDInt)
 }
 
-// unsetInterfaceVnetZero maps a configured interface_vnet of 0 to null.
-// Zero is not a parent network id. VergeOS rejects it on create and update.
+// unsetInterfaceVnetZero maps a configured interface_vnet of 0 to null for
+// request bodies. Zero is not a parent network id. VergeOS rejects it.
+// State still stores 0 after refresh so a configured 0 matches plan rules.
 func unsetInterfaceVnetZero(v types.Int32) types.Int32 {
 	if v.IsNull() || v.IsUnknown() || v.ValueInt32() != 0 {
 		return v
@@ -427,11 +428,9 @@ func unsetInterfaceVnetZero(v types.Int32) types.Int32 {
 }
 
 // interfaceVnetFromAPI stores the physical network id reported by VergeOS.
-// A missing or null interface is 0 on the SDK type. That is not an id.
+// A missing or null interface is 0 on the SDK type. State stores 0 so a
+// configuration of 0 is equal after refresh and does not rewrite the plan.
 func interfaceVnetFromAPI(id vergeos.FlexInt) types.Int32 {
-	if id.Int() == 0 {
-		return types.Int32Null()
-	}
 	return types.Int32Value(int32(id.Int()))
 }
 
@@ -473,7 +472,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	data.RateLimit = types.Int64Value(network.RateLimit)
 	// VergeOS sends JSON null when the network is not attached to a physical
 	// vNET. govergeos decodes that null as 0, which is also its none value.
-	// State keeps null so refresh does not invent interface 0.
+	// State stores 0 so a configured interface_vnet = 0 matches after refresh.
 	data.Interface_Vnet = interfaceVnetFromAPI(network.InterfaceVnet)
 	// An empty response keeps the historical default. A reported value, such
 	// as none, is stored so apply does not write static over the plan.

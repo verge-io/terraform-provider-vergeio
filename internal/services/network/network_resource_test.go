@@ -171,47 +171,8 @@ func TestNetworkResource_StableComputedPlanModifiers(t *testing.T) {
 	assertNetworkInt32KeepsState(t, "mtu", mtu.PlanModifiers, 1500, 9000)
 
 	interfaceVnet := networkInt32Attr(t, resp.Schema, "interface_vnet")
-	zeroUnset := interfaceVnetZeroPlanModifier{}.Description(context.Background())
-	assertNetworkInt32Modifiers(t, "interface_vnet", interfaceVnet.PlanModifiers, keepStateInt, zeroUnset)
+	assertNetworkInt32Modifiers(t, "interface_vnet", interfaceVnet.PlanModifiers, keepStateInt)
 	assertNetworkInt32KeepsState(t, "interface_vnet", interfaceVnet.PlanModifiers, 4, 5)
-}
-
-// Configured 0 is not a parent id. After refresh, a network with no parent
-// stores null. The plan must stay null so apply does not send 0.
-func TestInterfaceVnetZeroDoesNotPlanAgainstNull(t *testing.T) {
-	networkResource := NewNetworkResource()
-	resp := &fwresource.SchemaResponse{}
-	networkResource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
-	mods := networkInt32Attr(t, resp.Schema, "interface_vnet").PlanModifiers
-
-	plan := applyInterfaceVnetModifiers(mods, types.Int32Value(0), types.Int32Value(0), types.Int32Null())
-	if !plan.IsNull() || plan.IsUnknown() {
-		t.Fatalf("config 0 against null state planned %#v, want null", plan)
-	}
-
-	plan = applyInterfaceVnetModifiers(mods, types.Int32Value(0), types.Int32Value(0), types.Int32Value(4))
-	if plan.IsNull() || plan.IsUnknown() || plan.ValueInt32() != 4 {
-		t.Fatalf("config 0 against parent 4 planned %#v, want 4", plan)
-	}
-
-	plan = applyInterfaceVnetModifiers(mods, types.Int32Value(5), types.Int32Value(5), types.Int32Null())
-	if plan.IsNull() || plan.IsUnknown() || plan.ValueInt32() != 5 {
-		t.Fatalf("config 5 against null state planned %#v, want 5", plan)
-	}
-}
-
-func applyInterfaceVnetModifiers(mods []planmodifier.Int32, config, plan, state types.Int32) types.Int32 {
-	for _, mod := range mods {
-		resp := &planmodifier.Int32Response{PlanValue: plan}
-		mod.PlanModifyInt32(context.Background(), planmodifier.Int32Request{
-			ConfigValue: config,
-			PlanValue:   plan,
-			StateValue:  state,
-			State:       networkPriorState(),
-		}, resp)
-		plan = resp.PlanValue
-	}
-	return plan
 }
 
 func networkStringAttr(t *testing.T, s schema.Schema, name string) schema.StringAttribute {

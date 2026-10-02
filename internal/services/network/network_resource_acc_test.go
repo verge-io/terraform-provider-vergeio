@@ -173,6 +173,72 @@ func TestAccNetworkResource_MTU(t *testing.T) {
 	})
 }
 
+func TestAccNetworkResource_InterfaceVnetZero(t *testing.T) {
+	networkName := acctest.Name("network-iv0")
+	created := testAccNetworkInterfaceVnetZeroConfig(networkName, 9000)
+	updated := testAccNetworkInterfaceVnetZeroConfig(networkName, 2000)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckNetworkDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: created,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckNetworkExists("vergeio_network.test"),
+					resource.TestCheckResourceAttr("vergeio_network.test", "name", networkName),
+					resource.TestCheckResourceAttr("vergeio_network.test", "mtu", "9000"),
+					resource.TestCheckResourceAttr("vergeio_network.test", "interface_vnet", "0"),
+					testAccCheckNetworkReadMatchesAPI("vergeio_network.test"),
+				),
+			},
+			{
+				Config: created,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: updated,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckNetworkExists("vergeio_network.test"),
+					resource.TestCheckResourceAttr("vergeio_network.test", "mtu", "2000"),
+					resource.TestCheckResourceAttr("vergeio_network.test", "interface_vnet", "0"),
+					testAccCheckNetworkReadMatchesAPI("vergeio_network.test"),
+				),
+			},
+			{
+				Config: updated,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccNetworkInterfaceVnetZeroConfig(networkName string, mtu int) string {
+	if err := acctest.RequirePrefix(networkName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_network" "test" {
+  name           = %q
+  type           = "internal"
+  network        = "10.50.4.0/24"
+  ipaddress      = "10.50.4.1"
+  mtu            = %d
+  powerstate     = true
+  interface_vnet = 0
+}
+`, networkName, mtu))
+}
+
 func testAccCheckNetworkExists(resourceName string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resourceName]
@@ -247,7 +313,8 @@ func testAccCheckNetworkReadMatchesAPI(resourceName string) resource.TestCheckFu
 			return err
 		}
 		if network.InterfaceVnet.Int() == 0 {
-			if got, ok := rs.Primary.Attributes["interface_vnet"]; ok && got != "" {
+			// State stores 0 for no parent so configured interface_vnet = 0 is stable.
+			if got, ok := rs.Primary.Attributes["interface_vnet"]; ok && got != "" && got != "0" {
 				return fmt.Errorf("interface_vnet = %q, API has no interface", got)
 			}
 		} else if err := accAttrEqual(rs, "interface_vnet", strconv.Itoa(network.InterfaceVnet.Int())); err != nil {

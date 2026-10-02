@@ -222,7 +222,6 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Computed:            true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.UseStateForUnknown(),
-					interfaceVnetZeroPlanModifier{},
 				},
 			},
 			"ipaddress_type": schema.StringAttribute{
@@ -557,41 +556,6 @@ func networkModelFromV0(prior networkResourceModelV0) NetworkResourceModel {
 		Enable_Bonding:       prior.Enable_Bonding,
 		Bond_Interfaces_Args: prior.Bond_Interfaces_Args,
 	}
-}
-
-// interfaceVnetZeroPlanModifier treats a configured interface_vnet of 0 as
-// unset. VergeOS rejects 0 as a parent id, and a missing parent is stored as
-// null. An omitted value keeps a real parent already in state, so 0 does too.
-type interfaceVnetZeroPlanModifier struct{}
-
-var _ planmodifier.Int32 = interfaceVnetZeroPlanModifier{}
-
-func (interfaceVnetZeroPlanModifier) Description(context.Context) string {
-	return "Treats interface_vnet 0 as unset"
-}
-
-func (interfaceVnetZeroPlanModifier) MarkdownDescription(context.Context) string {
-	return "Treats `interface_vnet` 0 as unset. Zero is not a parent network id."
-}
-
-func (interfaceVnetZeroPlanModifier) PlanModifyInt32(_ context.Context, req planmodifier.Int32Request, resp *planmodifier.Int32Response) {
-	if !int32IsZero(req.ConfigValue) && !int32IsZero(req.PlanValue) {
-		return
-	}
-	// Same as leaving the attribute unset: keep a parent id already stored.
-	if int32IsPositive(req.StateValue) {
-		resp.PlanValue = req.StateValue
-		return
-	}
-	resp.PlanValue = types.Int32Null()
-}
-
-func int32IsZero(v types.Int32) bool {
-	return !v.IsNull() && !v.IsUnknown() && v.ValueInt32() == 0
-}
-
-func int32IsPositive(v types.Int32) bool {
-	return !v.IsNull() && !v.IsUnknown() && v.ValueInt32() > 0
 }
 
 // networkPowerStateBool converts a version 0 powerstate string to a bool.

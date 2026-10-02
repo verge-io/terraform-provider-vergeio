@@ -376,15 +376,15 @@ func TestReadNetworkStoresReportedMTUAndLayer2(t *testing.T) {
 	if data.Layer2_Type.IsNull() || data.Layer2_Type.ValueString() != "vxlan" {
 		t.Fatalf("layer2_type = %#v, want vxlan", data.Layer2_Type)
 	}
-	if !data.Interface_Vnet.IsNull() || data.Interface_Vnet.IsUnknown() {
-		t.Fatalf("interface_vnet = %#v, want null", data.Interface_Vnet)
+	if data.Interface_Vnet.IsNull() || data.Interface_Vnet.IsUnknown() || data.Interface_Vnet.ValueInt32() != 0 {
+		t.Fatalf("interface_vnet = %#v, want 0", data.Interface_Vnet)
 	}
 	if data.Enable_Bonding.IsNull() || data.Enable_Bonding.ValueBool() {
 		t.Fatalf("enable_bonding = %#v, want false", data.Enable_Bonding)
 	}
 }
 
-func TestReadNetworkNullsZeroInterfaceVnet(t *testing.T) {
+func TestReadNetworkStoresZeroInterfaceVnet(t *testing.T) {
 	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
@@ -406,8 +406,8 @@ func TestReadNetworkNullsZeroInterfaceVnet(t *testing.T) {
 	if err := api.readNetwork(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
-	if !data.Interface_Vnet.IsNull() || data.Interface_Vnet.IsUnknown() {
-		t.Fatalf("interface_vnet = %#v, want null", data.Interface_Vnet)
+	if data.Interface_Vnet.IsNull() || data.Interface_Vnet.IsUnknown() || data.Interface_Vnet.ValueInt32() != 0 {
+		t.Fatalf("interface_vnet = %#v, want 0", data.Interface_Vnet)
 	}
 }
 
