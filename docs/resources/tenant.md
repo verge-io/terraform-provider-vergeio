@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tenant (Resource)
 
-Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for tenant status to match. Destroy powers a running tenant off before deleting it.
+Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for terminal online or offline status (not merely starting or stopping). Destroy powers a running tenant off before deleting it. `vergeio_tenant_node` destroy also powers the tenant off first, because Terraform deletes the node before the tenant.
 
 `ui_address` is the IP of the tenant UI, resolved from the `ui_address` row (`ui_address_id`). It stays empty until VergeOS assigns that address. Use it as the `host` of a second Terraform configuration that manages the inside of the tenant. See the [tenants guide](../guides/tenants.html).
 

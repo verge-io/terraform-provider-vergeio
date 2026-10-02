@@ -23,22 +23,30 @@ func TestTenantPoweredOn(t *testing.T) {
 	if tenantPoweredOn(nil) {
 		t.Fatal("missing status is off")
 	}
+	if !tenantPoweredOff(nil) {
+		t.Fatal("missing status is off")
+	}
 	cases := []struct {
 		name   string
 		status *vergeos.TenantStatus
 		on     bool
+		off    bool
 	}{
-		{name: "offline", status: &vergeos.TenantStatus{Status: "offline"}, on: false},
-		{name: "stopping", status: &vergeos.TenantStatus{Status: "stopping", Stopping: true, Running: true}, on: false},
-		{name: "running", status: &vergeos.TenantStatus{Running: true, Status: "online"}, on: true},
-		{name: "starting", status: &vergeos.TenantStatus{Starting: true, Status: "starting"}, on: true},
-		{name: "migrating", status: &vergeos.TenantStatus{Status: "migrating"}, on: true},
-		{name: "error", status: &vergeos.TenantStatus{Status: "error"}, on: false},
+		{name: "offline", status: &vergeos.TenantStatus{Status: "offline"}, on: false, off: true},
+		{name: "stopping", status: &vergeos.TenantStatus{Status: "stopping", Stopping: true, Running: true}, on: false, off: false},
+		{name: "running", status: &vergeos.TenantStatus{Running: true, Status: "online"}, on: true, off: false},
+		{name: "starting", status: &vergeos.TenantStatus{Starting: true, Status: "starting"}, on: false, off: false},
+		{name: "provisioning", status: &vergeos.TenantStatus{Status: "provisioning"}, on: false, off: false},
+		{name: "migrating", status: &vergeos.TenantStatus{Status: "migrating"}, on: true, off: false},
+		{name: "error", status: &vergeos.TenantStatus{Status: "error"}, on: false, off: true},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tenantPoweredOn(tt.status); got != tt.on {
 				t.Fatalf("tenantPoweredOn = %v, want %v", got, tt.on)
+			}
+			if got := tenantPoweredOff(tt.status); got != tt.off {
+				t.Fatalf("tenantPoweredOff = %v, want %v", got, tt.off)
 			}
 		})
 	}
@@ -557,6 +565,152 @@ func TestReadKeepsConfiguredChangePassword(t *testing.T) {
 	}
 	if data.Password.ValueString() != "secret-pass" {
 		t.Fatalf("password = %#v", data.Password)
+	}
+}
+
+func TestWaitPowerIgnoresStartingAndStopping(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 30 * time.Millisecond
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	api := fake.api(t)
+	fake.mu.Lock()
+	fake.status[7] = statusObjectTransitional(7, true)
+	fake.mu.Unlock()
+	if err := api.waitPower(context.Background(), 7, true); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("starting should not settle online: %v", err)
+	}
+
+	fake.mu.Lock()
+	fake.status[8] = statusObjectTransitional(8, false)
+	fake.mu.Unlock()
+	if err := api.waitPower(context.Background(), 8, false); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("stopping should not settle offline: %v", err)
+	}
+}
+
+func TestReconcilePowerWaitsThroughTransitions(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.transitionPower = true
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(true),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := powerTenant(t, api, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.PowerState.ValueBool() || data.Status.ValueString() != "online" {
+		t.Fatalf("after power on: powerstate=%v status=%s", data.PowerState.ValueBool(), data.Status.ValueString())
+	}
+
+	plan := *data
+	plan.PowerState = types.BoolValue(false)
+	if err := api.updateTenant(context.Background(), &plan, data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.PowerState.ValueBool() || plan.Status.ValueString() != "offline" {
+		t.Fatalf("after power off: powerstate=%v status=%s", plan.PowerState.ValueBool(), plan.Status.ValueString())
+	}
+}
+
+func TestDeleteTenantNodePowersOffRunningTenant(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.transitionPower = true
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(true),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := powerTenant(t, api, tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.deleteTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	actions := fake.recordedActions()
+	if len(actions) < 2 || actions[len(actions)-1]["action"] != "poweroff" {
+		t.Fatalf("actions = %#v", actions)
+	}
+	if fake.callCount(httpMethodDelete, "/api/v4/tenant_nodes/"+node.Id.ValueString()) != 1 {
+		t.Fatal("node was not deleted")
+	}
+}
+
+func TestEnsurePoweredOffWaitsForStartingBeforePowerOff(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.transitionPower = true
+	api := fake.api(t)
+	fake.mu.Lock()
+	id := 3
+	fake.tenants[id] = map[string]any{"$key": id, "name": "t", "ui_address": 0}
+	fake.status[id] = statusObjectTransitional(id, true)
+	fake.seenTransition[id] = false
+	fake.mu.Unlock()
+	if err := api.ensurePoweredOff(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 1 || actions[0]["action"] != "poweroff" {
+		t.Fatalf("actions = %#v", actions)
+	}
+	status, err := api.tenantStatus(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tenantPoweredOff(status) {
+		t.Fatalf("status = %#v", status)
 	}
 }
 

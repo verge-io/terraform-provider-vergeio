@@ -143,3 +143,95 @@ resource "vergeio_tenant_storage" "test" {
 }
 `, tenantName, description, nodeName, ram, tier, provisioned))
 }
+
+// TestAccTenantPowerSettleAndDestroy covers #196 and #195 together:
+// power on waits for terminal online (no false clean plan), power off waits
+// for terminal offline, and destroy of a powered-on tenant succeeds because
+// tenant_node powers the tenant off before delete.
+func TestAccTenantPowerSettleAndDestroy(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-pwr")
+	nodeName := acctest.Name("tenant-node-pwr")
+	tier := accStorageTier(t)
+	offline := testAccTenantPowerConfig(tenantName, nodeName, tier, false)
+	online := testAccTenantPowerConfig(tenantName, nodeName, tier, true)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: offline,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_node.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_storage.test", "id"),
+				),
+			},
+			{
+				Config: online,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+				),
+			},
+			{
+				Config: online,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: offline,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "offline"),
+				),
+			},
+			{
+				Config: online,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+				),
+			},
+			// Final step leaves powerstate=true so CheckDestroy exercises
+			// node delete while the tenant is running (#195).
+		},
+	})
+}
+
+func testAccTenantPowerConfig(tenantName, nodeName string, tier int, power bool) string {
+	if err := acctest.RequirePrefix(tenantName); err != nil {
+		panic(err)
+	}
+	if err := acctest.RequirePrefix(nodeName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_tenant" "test" {
+  name        = %q
+  description = "acc power settle"
+  password    = "Tf-acc-tenant-password1"
+  powerstate  = %t
+}
+
+resource "vergeio_tenant_node" "test" {
+  tenant_id = vergeio_tenant.test.id
+  name      = %q
+  cpu_cores = 2
+  ram       = 2048
+  enabled   = true
+}
+
+resource "vergeio_tenant_storage" "test" {
+  tenant_id   = vergeio_tenant.test.id
+  tier        = %d
+  provisioned = 1073741824
+}
+`, tenantName, power, nodeName, tier))
+}

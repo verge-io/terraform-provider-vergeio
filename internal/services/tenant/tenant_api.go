@@ -186,27 +186,17 @@ func (a *API) tenantFacts(ctx context.Context, tenantID, uiAddressID int) (tenan
 	return facts, nil
 }
 
-// deleteTenant powers the tenant off when it is running, then deletes it.
-// VergeOS rejects deletion of a running tenant. A missing tenant is already gone.
+// deleteTenant powers the tenant off when it is not yet terminal offline,
+// then deletes it. VergeOS rejects deletion of a running tenant. A missing
+// tenant is already gone. ensurePoweredOff waits through starting/stopping
+// so destroy does not race a transitional status (#196).
 func (a *API) deleteTenant(ctx context.Context, data *TenantResourceModel) error {
 	id, err := parseID(data.Id, "tenant")
 	if err != nil {
 		return err
 	}
-	status, err := a.sdk.TenantStatus.Get(ctx, id)
-	if err != nil && !vergeos.IsNotFoundError(err) {
+	if err := a.ensurePoweredOff(ctx, id); err != nil {
 		return err
-	}
-	if vergeos.IsNotFoundError(err) {
-		status = nil
-	}
-	if tenantPoweredOn(status) {
-		if err := a.sdk.Tenants.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-			return err
-		}
-		if err := a.waitPower(ctx, id, false); err != nil {
-			return err
-		}
 	}
 	if err := a.sdk.Tenants.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
 		return err

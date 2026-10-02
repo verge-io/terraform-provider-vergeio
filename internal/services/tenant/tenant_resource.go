@@ -26,7 +26,7 @@ import (
 )
 
 const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the parent, including its power state and UI address. " +
-	"powerstate powers the tenant on or off and waits up to 2 minutes for that status. " +
+	"powerstate powers the tenant on or off and waits up to 2 minutes for terminal online or offline status. " +
 	"ui_address is the IP of the tenant UI, read from the ui_address row. " +
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
 	"Network blocks and external IPs are not resources here. govergeos has no vnet_cidrs service and no helper that assigns an external IP to a tenant. " +
@@ -175,7 +175,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status reports on. false calls power off and waits until status reports off. Omit to leave the current power unchanged. Destroy powers a running tenant off before deleting it. The wait is 2 minutes.",
+				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping). Omit to leave the current power unchanged. Destroy and vergeio_tenant_node destroy power a running tenant off before delete. The wait is 2 minutes. powerstate=true on create needs a tenant node before the tenant can reach online; create the node in the same config then apply again, or set powerstate after the node exists.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
