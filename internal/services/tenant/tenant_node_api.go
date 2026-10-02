@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -197,7 +196,7 @@ func isLastNodeDeleteError(err error) bool {
 	if !errors.As(err, &apiErr) || apiErr == nil {
 		return false
 	}
-	if apiErr.StatusCode != http.StatusMethodNotAllowed {
+	if apiErr.StatusCode != 405 {
 		return false
 	}
 	return strings.Contains(apiErr.Message, "Only the last node can be deleted")
