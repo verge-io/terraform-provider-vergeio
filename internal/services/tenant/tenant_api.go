@@ -111,8 +111,25 @@ func (a *API) readTenant(ctx context.Context, data *TenantResourceModel) error {
 	if err != nil {
 		return err
 	}
+	// VergeOS reuses tenant keys after delete. A Get that returns a different
+	// tenant's row must not be adopted into state (#232).
+	if err := ensureTenantOwned(data, tenant); err != nil {
+		return err
+	}
 	assignTenantResource(data, tenant)
 	return a.readTenantRuntime(ctx, data, tenant)
+}
+
+// ensureTenantOwned returns NotFound when the stored key now points at another
+// tenant (UUID mismatch). Skip the check when uuid is unset (import).
+func ensureTenantOwned(data *TenantResourceModel, tenant *vergeos.Tenant) error {
+	if data.UUID.IsNull() || data.UUID.IsUnknown() || data.UUID.ValueString() == "" {
+		return nil
+	}
+	if tenant.UUID != data.UUID.ValueString() {
+		return &vergeos.NotFoundError{Resource: "Tenant", ID: tenant.Key.Int()}
+	}
+	return nil
 }
 
 func assignTenantResource(data *TenantResourceModel, tenant *vergeos.Tenant) {

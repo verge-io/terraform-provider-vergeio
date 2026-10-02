@@ -572,6 +572,127 @@ func TestReadTenantStorageSkipsOwnershipOnImport(t *testing.T) {
 	}
 }
 
+func TestReadTenantRejectsForeignUUID(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("secret-pass"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	ownedUUID := data.UUID.ValueString()
+	if ownedUUID == "" {
+		t.Fatal("expected uuid after read")
+	}
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.tenants[id]["uuid"] = "foreign-uuid-reused-key"
+	fake.tenants[id]["name"] = "someone-else"
+	fake.mu.Unlock()
+
+	err = api.readTenant(context.Background(), data)
+	if err == nil || !vergeos.IsNotFoundError(err) {
+		t.Fatalf("read foreign key = %v, want NotFound", err)
+	}
+	if data.UUID.ValueString() != ownedUUID {
+		t.Fatalf("state uuid was overwritten to %q", data.UUID.ValueString())
+	}
+	if data.Name.ValueString() != "customer-a" {
+		t.Fatalf("state name was overwritten to %q", data.Name.ValueString())
+	}
+}
+
+func TestReadTenantAllowsMatchingUUID(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("secret-pass"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	ownedUUID := data.UUID.ValueString()
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.UUID.ValueString() != ownedUUID {
+		t.Fatalf("uuid = %q, want %q", data.UUID.ValueString(), ownedUUID)
+	}
+}
+
+func TestReadTenantSkipsOwnershipOnImport(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	created := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("secret-pass"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), created); err != nil {
+		t.Fatal(err)
+	}
+	data := &TenantResourceModel{Id: created.Id}
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "customer-a" {
+		t.Fatalf("imported name = %q", data.Name.ValueString())
+	}
+	if data.UUID.ValueString() == "" {
+		t.Fatal("imported uuid empty")
+	}
+}
+
+// TestReadTenantAllowsNameDriftSameUUID covers in-place name updates: same
+// uuid with a different name must refresh, not return NotFound (#232).
+func TestReadTenantAllowsNameDriftSameUUID(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("secret-pass"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	ownedUUID := data.UUID.ValueString()
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.tenants[id]["name"] = "customer-a-renamed"
+	fake.mu.Unlock()
+
+	if err := api.readTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "customer-a-renamed" {
+		t.Fatalf("name = %q, want renamed", data.Name.ValueString())
+	}
+	if data.UUID.ValueString() != ownedUUID {
+		t.Fatalf("uuid = %q, want %q", data.UUID.ValueString(), ownedUUID)
+	}
+}
+
 func TestReadTenantNodeRejectsForeignTenant(t *testing.T) {
 	fake := newFake(t)
 	api := fake.api(t)

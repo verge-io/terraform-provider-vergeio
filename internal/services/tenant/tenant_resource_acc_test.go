@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
@@ -131,6 +132,11 @@ func testAccCheckTenantDestroy(s *terraform.State) error {
 		got, err := client.Tenants.Get(ctx, id)
 		if err != nil {
 			return err
+		}
+		// UUID is stronger than name: VergeOS can reuse the key for a tenant
+		// that happens to share the configured name (#232).
+		if uuid := attrs["uuid"]; uuid != "" && got.UUID != uuid {
+			return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
 		}
 		if name := attrs["name"]; name != "" && got.Name != name {
 			return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
@@ -892,4 +898,196 @@ func TestAccTenantDestroyCheckIgnoresForeignKeyReuse(t *testing.T) {
 			t.Fatalf("reused key tenant = %d, want foreign %d", got.Tenant.Int(), foreignTenantID)
 		}
 	}
+}
+
+// TestAccTenantKeyReuseDoesNotAdoptForeign covers #232: when VergeOS reuses a
+// tenants key after an outside delete, refresh must treat the foreign row as
+// gone (plan create) instead of adopting it, renaming it in place, and later
+// destroy deleting it. Key reuse often needs ~30s after the row and vnet are
+// gone; without that wait VergeOS may hand out the next key instead.
+func TestAccTenantKeyReuseDoesNotAdoptForeign(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-kr232")
+	foreignName := acctest.Name("tenant-kr232-f")
+	tier := accStorageTier(t)
+	config := testAccTenantKeyReuseConfig(tenantName, tier)
+
+	var managedTenantID int
+	var managedTenantUUID string
+	var managedStorageID int
+	var managedVNetID int
+	var foreignTenantID int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignTenantID <= 0 {
+			return
+		}
+		ctx := context.Background()
+		_ = client.Tenants.Delete(ctx, foreignTenantID)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_tenant.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant.test", "uuid"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_tenant.test"]
+						if !ok {
+							return fmt.Errorf("missing vergeio_tenant.test")
+						}
+						id, err := strconv.Atoi(rs.Primary.ID)
+						if err != nil || id <= 0 {
+							return fmt.Errorf("tenant id %q: %v", rs.Primary.ID, err)
+						}
+						managedTenantID = id
+						managedTenantUUID = rs.Primary.Attributes["uuid"]
+						if managedTenantUUID == "" {
+							return fmt.Errorf("tenant uuid empty")
+						}
+						if v := rs.Primary.Attributes["vnet"]; v != "" {
+							managedVNetID, _ = strconv.Atoi(v)
+						}
+						if srs, ok := s.RootModule().Resources["vergeio_tenant_storage.test"]; ok {
+							sid, err := strconv.Atoi(srs.Primary.ID)
+							if err == nil {
+								managedStorageID = sid
+							}
+						}
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if managedStorageID > 0 {
+						if err := client.TenantStorage.Delete(ctx, managedStorageID); err != nil && !vergeos.IsNotFoundError(err) {
+							t.Fatalf("delete managed storage %d: %v", managedStorageID, err)
+						}
+					}
+					if err := client.Tenants.Delete(ctx, managedTenantID); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed tenant %d: %v", managedTenantID, err)
+					}
+					deadline := time.Now().Add(2 * time.Minute)
+					for {
+						_, err := client.Tenants.Get(ctx, managedTenantID)
+						if vergeos.IsNotFoundError(err) {
+							break
+						}
+						if time.Now().After(deadline) {
+							t.Fatalf("tenant %d still present after delete: %v", managedTenantID, err)
+						}
+						time.Sleep(time.Second)
+					}
+					if managedVNetID > 0 {
+						for {
+							_, err := client.Networks.Get(ctx, managedVNetID)
+							if vergeos.IsNotFoundError(err) {
+								break
+							}
+							if time.Now().After(deadline) {
+								t.Logf("vnet %d still present after tenant delete; continuing: %v", managedVNetID, err)
+								break
+							}
+							time.Sleep(time.Second)
+						}
+					}
+					// Issue #232: reuse often needs ~30s after the row and vnet are gone.
+					t.Logf("tenant row gone; waiting 30s for key reuse window")
+					time.Sleep(30 * time.Second)
+
+					created, err := client.Tenants.Create(ctx, &vergeos.TenantCreateRequest{
+						Name:        foreignName,
+						Password:    "Tf-acc-tenant-password1",
+						Description: "belongs to someone else",
+					})
+					if err != nil {
+						t.Fatalf("create foreign tenant: %v", err)
+					}
+					foreignTenantID = created.Key.Int()
+					keyReused = foreignTenantID == managedTenantID
+					t.Logf("managed tenant key=%d uuid=%s; foreign tenant key=%d uuid=%s reused=%v",
+						managedTenantID, managedTenantUUID, foreignTenantID, created.UUID, keyReused)
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant.test", plancheck.ResourceActionCreate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttrSet("vergeio_tenant.test", "uuid"),
+					func(s *terraform.State) error {
+						client, err := acctest.SDKClient()
+						if err != nil {
+							return err
+						}
+						ctx := context.Background()
+						got, err := client.Tenants.Get(ctx, foreignTenantID)
+						if err != nil {
+							return fmt.Errorf("foreign tenant %d missing after apply (key reused=%v): %w", foreignTenantID, keyReused, err)
+						}
+						if got.Name != foreignName {
+							return fmt.Errorf("foreign tenant name = %q, want %q (adopted/renamed? reused=%v)", got.Name, foreignName, keyReused)
+						}
+						if got.Description != "belongs to someone else" {
+							return fmt.Errorf("foreign tenant description = %q, want unchanged (reused=%v)", got.Description, keyReused)
+						}
+						rs := s.RootModule().Resources["vergeio_tenant.test"]
+						managedID, err := strconv.Atoi(rs.Primary.ID)
+						if err != nil {
+							return err
+						}
+						managedUUID := rs.Primary.Attributes["uuid"]
+						if managedUUID == "" {
+							return fmt.Errorf("managed uuid empty after recreate")
+						}
+						if managedUUID == managedTenantUUID {
+							return fmt.Errorf("managed tenant kept old uuid %s after outside delete", managedTenantUUID)
+						}
+						if keyReused && managedID == foreignTenantID {
+							return fmt.Errorf("managed tenant adopted foreign key %d", foreignTenantID)
+						}
+						if got.UUID == managedUUID {
+							return fmt.Errorf("managed uuid matches foreign uuid %s", managedUUID)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+func testAccTenantKeyReuseConfig(tenantName string, tier int) string {
+	if err := acctest.RequirePrefix(tenantName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_tenant" "test" {
+  name        = %q
+  description = "key reuse managed"
+  password    = "Tf-acc-tenant-password1"
+  powerstate  = false
+}
+
+resource "vergeio_tenant_storage" "test" {
+  tenant_id   = vergeio_tenant.test.id
+  tier        = %d
+  provisioned = 1073741824
+}
+`, tenantName, tier))
 }
