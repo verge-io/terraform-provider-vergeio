@@ -26,7 +26,7 @@ import (
 )
 
 const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the parent, including its power state and UI address. " +
-	"powerstate powers the tenant on or off and waits up to 2 minutes for terminal online or offline status. " +
+	"powerstate powers the tenant on or off and waits up to 2 minutes for terminal online or offline status and a stopped tenant network. " +
 	"ui_address is the IP of the tenant UI, read from the ui_address row. " +
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
 	"Network blocks and external IPs are not resources here. govergeos has no vnet_cidrs service and no helper that assigns an external IP to a tenant. " +
@@ -175,7 +175,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping). Omit to leave the current power unchanged. Destroy and vergeio_tenant_node destroy power a running tenant off before delete. The wait is 2 minutes. powerstate=true on create needs a tenant node before the tenant can reach online; create the node in the same config then apply again, or set powerstate after the node exists.",
+				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy stops only that node when it is running, leaving sibling nodes alone. The wait is 2 minutes. powerstate=true on create with no nodes yet defers power-on: the first apply creates the tenant offline and a later apply powers it on once vergeio_tenant_node exists.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
@@ -286,13 +286,21 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Error creating tenant", err.Error())
 		return
 	}
-	if err := r.api.reconcilePower(ctx, id, data.PowerState, data.PreferredNode); err != nil {
+	desiredPower := data.PowerState
+	deferred, err := r.api.reconcilePowerOnCreate(ctx, id, data.PowerState, data.PreferredNode)
+	if err != nil {
 		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
 		return
 	}
 	if err := r.api.readTenant(ctx, &data); err != nil {
 		resp.Diagnostics.AddError("Error reading tenant", err.Error())
 		return
+	}
+	// powerstate=true with no nodes yet defers power-on (#207). Keep the
+	// planned true so Create state matches plan; a later apply powers on
+	// once vergeio_tenant_node exists.
+	if deferred && !desiredPower.IsNull() && !desiredPower.IsUnknown() && desiredPower.ValueBool() {
+		data.PowerState = desiredPower
 	}
 	stored := tenantForState(&data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)

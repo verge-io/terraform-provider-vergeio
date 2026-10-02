@@ -145,10 +145,10 @@ resource "vergeio_tenant_storage" "test" {
 `, tenantName, description, nodeName, ram, tier, provisioned))
 }
 
-// TestAccTenantPowerSettleAndDestroy covers #196 and #195 together:
+// TestAccTenantPowerSettleAndDestroy covers #196, #195, and #205 together:
 // power on waits for terminal online (no false clean plan), power off waits
 // for terminal offline, and destroy of a powered-on tenant succeeds because
-// tenant_node powers the tenant off before delete.
+// the provider waits for the tenant network to stop before Tenants.Delete.
 func TestAccTenantPowerSettleAndDestroy(t *testing.T) {
 	acctest.PreCheck(t)
 	tenantName := acctest.Name("tenant-pwr")
@@ -287,4 +287,127 @@ func TestAccTenantStorageProvisionedGiB(t *testing.T) {
 			},
 		},
 	})
+}
+
+// TestAccTenantCreatePowerstateTrueDefers covers #207: powerstate=true on
+// create with nodes in the same config must not hang for two minutes or leave
+// an undestroyable running tenant network. First apply defers power-on; the
+// second apply powers on once the node exists.
+func TestAccTenantCreatePowerstateTrueDefers(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-defer")
+	nodeName := acctest.Name("tenant-node-defer")
+	tier := accStorageTier(t)
+	online := testAccTenantPowerConfig(tenantName, nodeName, tier, true)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				// First apply defers power-on (#207). Post-apply refresh stores
+				// actual offline powerstate, so the plan is not empty until a
+				// second apply powers the tenant on with the node present.
+				Config:             online,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_node.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_storage.test", "id"),
+				),
+			},
+			{
+				Config: online,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+				),
+			},
+		},
+	})
+}
+
+// TestAccTenantNodeRemoveWhileOnline covers #206: removing one stopped node
+// from a multi-node online tenant must leave the tenant and the remaining
+// node running (no whole-tenant power off).
+func TestAccTenantNodeRemoveWhileOnline(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-mn")
+	tier := accStorageTier(t)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccTenantMultiNodeConfig(tenantName, tier, 1, false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					resource.TestCheckResourceAttr("vergeio_tenant_node.n.0", "name", tenantName+"-n1"),
+				),
+			},
+			{
+				Config: testAccTenantMultiNodeConfig(tenantName, tier, 1, true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+				),
+			},
+			{
+				Config: testAccTenantMultiNodeConfig(tenantName, tier, 2, true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant_node.n.0", "name", tenantName+"-n1"),
+					resource.TestCheckResourceAttr("vergeio_tenant_node.n.1", "name", tenantName+"-n2"),
+				),
+			},
+			{
+				Config: testAccTenantMultiNodeConfig(tenantName, tier, 1, true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+					resource.TestCheckResourceAttr("vergeio_tenant_node.n.0", "name", tenantName+"-n1"),
+				),
+			},
+			{
+				Config: testAccTenantMultiNodeConfig(tenantName, tier, 1, true),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccTenantMultiNodeConfig(tenantName string, tier, nodes int, power bool) string {
+	if err := acctest.RequirePrefix(tenantName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_tenant" "test" {
+  name        = %q
+  description = "acc multi node"
+  password    = "Tf-acc-tenant-password1"
+  powerstate  = %t
+}
+
+resource "vergeio_tenant_node" "n" {
+  count     = %d
+  tenant_id = vergeio_tenant.test.id
+  name      = "%s-n${count.index + 1}"
+  cpu_cores = 2
+  ram       = 2048
+  enabled   = true
+}
+
+resource "vergeio_tenant_storage" "test" {
+  tenant_id   = vergeio_tenant.test.id
+  tier        = %d
+  provisioned = 1073741824
+}
+`, tenantName, power, nodes, tenantName, tier))
 }

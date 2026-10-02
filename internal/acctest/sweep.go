@@ -6,6 +6,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/verge-io/govergeos"
 )
@@ -450,7 +451,7 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 		}
 		id := node.Key.Int()
 		log.Printf("[SWEEP] deleting tenant node %d (%s)", id, node.Name)
-		record(ignoreNotFound(client.TenantNodes.Delete(ctx, id), "tenant node", id))
+		record(deleteTenantNode(ctx, client, id))
 	}
 
 	allocations, err := client.TenantStorage.List(ctx)
@@ -487,9 +488,55 @@ func deleteTenant(ctx context.Context, client *vergeos.Client, id int) error {
 		return nil
 	}
 	if offErr := client.Tenants.PowerOff(ctx, id); offErr != nil && !vergeos.IsNotFoundError(offErr) {
-		return fmt.Errorf("delete tenant %d: %w (power off: %v)", id, err, offErr)
+		log.Printf("[SWEEP] tenant %d power off: %v", id, offErr)
+	}
+	if tenant, getErr := client.Tenants.Get(ctx, id); getErr == nil {
+		if vnetID := tenant.VNet.Int(); vnetID > 0 {
+			if killErr := client.Networks.Kill(ctx, vnetID); killErr != nil && !vergeos.IsNotFoundError(killErr) {
+				log.Printf("[SWEEP] tenant %d vnet %d kill: %v", id, vnetID, killErr)
+			}
+			// Brief wait so Tenants.Delete does not race a still-running vnet.
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) {
+				network, netErr := client.Networks.Get(ctx, vnetID)
+				if netErr != nil || !network.Running {
+					break
+				}
+				time.Sleep(time.Second)
+			}
+		}
 	}
 	return ignoreNotFound(client.Tenants.Delete(ctx, id), "tenant", id)
+}
+
+func deleteTenantNode(ctx context.Context, client *vergeos.Client, id int) error {
+	err := client.TenantNodes.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if killErr := client.TenantNodes.Kill(ctx, id); killErr != nil && !vergeos.IsNotFoundError(killErr) {
+		log.Printf("[SWEEP] tenant node %d kill: %v", id, killErr)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		node, getErr := client.TenantNodes.Get(ctx, id)
+		if getErr != nil {
+			if vergeos.IsNotFoundError(getErr) {
+				return nil
+			}
+			break
+		}
+		machineID := node.Machine.Int()
+		if machineID <= 0 {
+			break
+		}
+		status, stErr := client.MachineStatus.Get(ctx, machineID)
+		if stErr != nil || !status.Running {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	return ignoreNotFound(client.TenantNodes.Delete(ctx, id), "tenant node", id)
 }
 
 // deleteVM removes a test VM. Delete is refused while the VM is running.

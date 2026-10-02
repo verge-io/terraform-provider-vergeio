@@ -28,22 +28,26 @@ type recordedBody struct {
 type fakeVerge struct {
 	t *testing.T
 
-	mu               sync.Mutex
-	next             int
-	uiIP             string
-	holdPower        bool
-	transitionPower  bool
-	seenTransition   map[int]bool
-	tenantGets       int
-	failTenantGet    int
-	tenants          map[int]map[string]any
-	status           map[int]map[string]any
-	addresses        map[int]map[string]any
-	nodes            map[int]map[string]any
-	storage          map[int]map[string]any
-	calls            []string
-	bodies           []recordedBody
-	actions          []map[string]any
+	mu              sync.Mutex
+	next            int
+	uiIP            string
+	holdPower       bool
+	transitionPower bool
+	seenTransition  map[int]bool
+	tenantGets      int
+	failTenantGet   int
+	tenants         map[int]map[string]any
+	status          map[int]map[string]any
+	addresses       map[int]map[string]any
+	nodes           map[int]map[string]any
+	storage         map[int]map[string]any
+	vnets           map[int]map[string]any
+	machines        map[int]map[string]any
+	calls           []string
+	bodies          []recordedBody
+	actions         []map[string]any
+	vnetActions     []map[string]any
+	nodeActions     []map[string]any
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -57,6 +61,8 @@ func newFake(t *testing.T) *fakeVerge {
 		addresses:      map[int]map[string]any{},
 		nodes:          map[int]map[string]any{},
 		storage:        map[int]map[string]any{},
+		vnets:          map[int]map[string]any{},
+		machines:       map[int]map[string]any{},
 	}
 }
 
@@ -105,6 +111,12 @@ func (f *fakeVerge) seedTenant(id int, name, uiIP string, online bool) {
 	}
 	f.tenants[id] = tenant
 	f.status[id] = statusObject(id, online)
+	vnetID := 40 + id
+	f.vnets[vnetID] = map[string]any{
+		"$key":    vnetID,
+		"name":    "tenant_" + name,
+		"running": online,
+	}
 }
 
 func (f *fakeVerge) recordedActions() []map[string]any {
@@ -112,6 +124,22 @@ func (f *fakeVerge) recordedActions() []map[string]any {
 	defer f.mu.Unlock()
 	out := make([]map[string]any, len(f.actions))
 	copy(out, f.actions)
+	return out
+}
+
+func (f *fakeVerge) recordedVNetActions() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]map[string]any, len(f.vnetActions))
+	copy(out, f.vnetActions)
+	return out
+}
+
+func (f *fakeVerge) recordedNodeActions() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]map[string]any, len(f.nodeActions))
+	copy(out, f.nodeActions)
 	return out
 }
 
@@ -185,10 +213,18 @@ func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveTenantAction(w, payload)
 	case "tenant_nodes":
 		f.serveNodes(w, r, id, payload)
+	case "tenant_node_actions":
+		f.serveNodeAction(w, payload)
 	case "tenant_storage":
 		f.serveStorage(w, r, id, payload)
 	case "vnet_addresses":
 		f.serveAddress(w, r, id)
+	case "vnets":
+		f.serveVNet(w, r, id)
+	case "vnet_actions":
+		f.serveVNetAction(w, payload)
+	case "machine_status":
+		f.serveMachineStatus(w, r)
 	default:
 		f.t.Errorf("unexpected collection %s", collection)
 		http.Error(w, "collection", http.StatusNotFound)
@@ -224,6 +260,11 @@ func (f *fakeVerge) serveTenants(w http.ResponseWriter, r *http.Request, id int,
 		}
 		f.tenants[id] = obj
 		f.status[id] = statusObject(id, false)
+		f.vnets[9] = map[string]any{
+			"$key":    9,
+			"name":    fmt.Sprintf("tenant_%v", payload["name"]),
+			"running": false,
+		}
 		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
 	case r.Method == http.MethodGet && id == 0:
 		writeJSON(f.t, w, http.StatusOK, f.filterMaps(f.tenantSlice(), r.URL.Query().Get("filter")))
@@ -254,12 +295,26 @@ func (f *fakeVerge) serveTenants(w http.ResponseWriter, r *http.Request, id int,
 		}
 		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
 	case r.Method == http.MethodDelete && id > 0:
-		if _, ok := f.tenants[id]; !ok {
+		obj, ok := f.tenants[id]
+		if !ok {
 			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
 			return
 		}
+		if vnetID := intField(obj["vnet"]); vnetID > 0 {
+			if vnet, ok := f.vnets[vnetID]; ok {
+				if running, _ := vnet["running"].(bool); running {
+					writeJSON(f.t, w, http.StatusMethodNotAllowed, map[string]string{
+						"err": "Tenant network must be powered off to delete tenant",
+					})
+					return
+				}
+			}
+		}
 		delete(f.tenants, id)
 		delete(f.status, id)
+		if vnetID := intField(obj["vnet"]); vnetID > 0 {
+			delete(f.vnets, vnetID)
+		}
 		w.WriteHeader(http.StatusOK)
 	default:
 		f.t.Errorf("unexpected tenants %s id %d", r.Method, id)
@@ -308,8 +363,10 @@ func (f *fakeVerge) advancePower(id int) {
 	}
 	if starting {
 		f.status[id] = statusObject(id, true)
+		f.setTenantVNetRunning(id, true)
 	} else {
 		f.status[id] = statusObject(id, false)
+		f.setTenantVNetRunning(id, false)
 	}
 	delete(f.seenTransition, id)
 }
@@ -330,26 +387,44 @@ func (f *fakeVerge) serveTenantAction(w http.ResponseWriter, payload map[string]
 		} else {
 			f.status[id] = statusObject(id, true)
 		}
+		f.setTenantVNetRunning(id, true)
 	case "poweroff":
 		if f.transitionPower {
 			f.status[id] = statusObjectTransitional(id, false)
 			f.seenTransition[id] = false
+			// Vnet stays running until status settles offline (mirrors lab lag).
+			f.setTenantVNetRunning(id, true)
 		} else {
 			f.status[id] = statusObject(id, false)
+			f.setTenantVNetRunning(id, false)
 		}
 	}
 	w.WriteHeader(http.StatusOK)
 }
 
+func (f *fakeVerge) setTenantVNetRunning(tenantID int, running bool) {
+	tenant, ok := f.tenants[tenantID]
+	if !ok {
+		return
+	}
+	vnetID := intField(tenant["vnet"])
+	if vnetID <= 0 {
+		return
+	}
+	vnet, ok := f.vnets[vnetID]
+	if !ok {
+		vnet = map[string]any{"$key": vnetID, "name": fmt.Sprintf("tenant_%d", tenantID)}
+		f.vnets[vnetID] = vnet
+	}
+	vnet["running"] = running
+}
+
 func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
 	if r.Method == http.MethodDelete && id > 0 {
 		if node, ok := f.nodes[id]; ok {
-			tenantID := intField(node["tenant"])
-			if st := f.status[tenantID]; st != nil {
-				running, _ := st["running"].(bool)
-				starting, _ := st["starting"].(bool)
-				stopping, _ := st["stopping"].(bool)
-				if running || starting || stopping {
+			machineID := intField(node["machine"])
+			if st := f.machines[machineID]; st != nil {
+				if running, _ := st["running"].(bool); running {
 					writeJSON(f.t, w, http.StatusMethodNotAllowed, map[string]string{
 						"err": "Tenant node cannot be deleted while running",
 					})
@@ -359,6 +434,14 @@ func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, p
 		}
 	}
 	f.serveCollection(w, r, id, payload, f.nodes, func(id int, payload map[string]any) map[string]any {
+		machineID := 80 + id
+		f.machines[machineID] = map[string]any{
+			"$key":    machineID,
+			"machine": machineID,
+			"running": false,
+			"status":  "stopped",
+			"state":   "offline",
+		}
 		return map[string]any{
 			"$key":          id,
 			"tenant":        intField(payload["tenant"]),
@@ -368,7 +451,7 @@ func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, p
 			"cpu_cores":     intField(payload["cpu_cores"]),
 			"ram":           intField(payload["ram"]),
 			"nodeid":        1,
-			"machine":       80,
+			"machine":       machineID,
 			"is_snapshot":   false,
 			"creator":       "admin",
 			"created":       int64(1700000000),
@@ -437,6 +520,75 @@ func (f *fakeVerge) serveCollection(w http.ResponseWriter, r *http.Request, id i
 	}
 }
 
+func (f *fakeVerge) serveVNet(w http.ResponseWriter, r *http.Request, id int) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+	switch {
+	case r.Method == http.MethodGet && id == 0:
+		rows := make([]map[string]any, 0, len(f.vnets))
+		for _, row := range f.vnets {
+			rows = append(rows, row)
+		}
+		writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
+	case r.Method == http.MethodGet && id > 0:
+		obj, ok := f.vnets[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		writeJSON(f.t, w, http.StatusOK, obj)
+	default:
+		f.t.Errorf("unexpected vnets %s id %d", r.Method, id)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
+}
+
+func (f *fakeVerge) serveVNetAction(w http.ResponseWriter, payload map[string]any) {
+	f.vnetActions = append(f.vnetActions, payload)
+	id := intField(payload["vnet"])
+	action, _ := payload["action"].(string)
+	if action == "kill" || action == "poweroff" {
+		if vnet, ok := f.vnets[id]; ok {
+			vnet["running"] = false
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (f *fakeVerge) serveNodeAction(w http.ResponseWriter, payload map[string]any) {
+	f.nodeActions = append(f.nodeActions, payload)
+	id := intField(payload["tenant_node"])
+	action, _ := payload["action"].(string)
+	if action == "kill" || action == "poweroff" {
+		if node, ok := f.nodes[id]; ok {
+			machineID := intField(node["machine"])
+			if st := f.machines[machineID]; st != nil {
+				st["running"] = false
+				st["status"] = "stopped"
+				st["state"] = "offline"
+			}
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (f *fakeVerge) serveMachineStatus(w http.ResponseWriter, r *http.Request) {
+	if vergeio.AnswerCredentialCheck(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		f.t.Errorf("unexpected machine_status %s", r.Method)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	rows := make([]map[string]any, 0, len(f.machines))
+	for _, row := range f.machines {
+		rows = append(rows, row)
+	}
+	writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
+}
+
 func (f *fakeVerge) serveAddress(w http.ResponseWriter, r *http.Request, id int) {
 	if r.Method != http.MethodGet || id == 0 {
 		f.t.Errorf("unexpected address %s %d", r.Method, id)
@@ -490,6 +642,16 @@ func matchFilter(filter string, row map[string]any) bool {
 		case strings.HasPrefix(part, "tenant eq "):
 			want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(part, "tenant eq ")))
 			if err != nil || intField(row["tenant"]) != want {
+				return false
+			}
+		case strings.HasPrefix(part, "machine eq "):
+			want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(part, "machine eq ")))
+			if err != nil || intField(row["machine"]) != want {
+				return false
+			}
+		case strings.HasPrefix(part, "$key eq "):
+			want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(part, "$key eq ")))
+			if err != nil || intField(row["$key"]) != want {
 				return false
 			}
 		default:

@@ -39,7 +39,9 @@ func tenantPoweredOn(status *vergeos.TenantStatus) bool {
 }
 
 // tenantPoweredOff reports whether the tenant has reached a terminal off state.
-// Stopping still has a running node, so it is not off yet.
+// Stopping still has a running node, so it is not off yet. The tenant vnet
+// may still be Running after this returns true; ensurePoweredOff waits for
+// that separately (#205).
 func tenantPoweredOff(status *vergeos.TenantStatus) bool {
 	if status == nil {
 		return true
@@ -118,36 +120,111 @@ func (a *API) reconcilePower(ctx context.Context, id int, desired types.Bool, pr
 	return a.waitPower(ctx, id, true)
 }
 
+// reconcilePowerOnCreate is create's power path. powerstate=true before any
+// vergeio_tenant_node exists cannot reach terminal online: the tenant goes
+// starting then offline while its network starts, then waitPower times out
+// and leaves an orphan running vnet (#207). Defer power-on until a later
+// apply once nodes exist. powerstate=false still powers off as usual.
+func (a *API) reconcilePowerOnCreate(ctx context.Context, id int, desired types.Bool, preferred types.Int32) (deferred bool, err error) {
+	if desired.IsNull() || desired.IsUnknown() {
+		return false, nil
+	}
+	if !desired.ValueBool() {
+		return false, a.ensurePoweredOff(ctx, id)
+	}
+	nodes, err := a.sdk.TenantNodes.ListByTenant(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if len(nodes) == 0 {
+		return true, nil
+	}
+	return false, a.reconcilePower(ctx, id, desired, preferred)
+}
+
 // ensurePoweredOff powers the tenant off and waits until it is terminal
-// offline. Used by reconcilePower(false), deleteTenant, and deleteTenantNode
-// so a destroy does not hit "Tenant node cannot be deleted while running" (#195).
+// offline and its tenant vnet is not Running. Used by reconcilePower(false)
+// and deleteTenant so destroy does not hit "Tenant node cannot be deleted
+// while running" (#195) or "Tenant network must be powered off to delete
+// tenant" (#205). deleteTenantNode stops only the target node (#206).
 func (a *API) ensurePoweredOff(ctx context.Context, id int) error {
 	status, err := a.tenantStatus(ctx, id)
 	if err != nil {
 		return err
 	}
-	if tenantPoweredOff(status) {
-		return nil
+	if !tenantPoweredOff(status) {
+		// VergeOS: "Tenant must be in running state to poweroff"
+		if tenantIsStarting(status) {
+			if err := a.waitPower(ctx, id, true); err != nil {
+				return err
+			}
+			status, err = a.tenantStatus(ctx, id)
+			if err != nil {
+				return err
+			}
+		}
+		if !tenantPoweredOff(status) {
+			if !tenantIsStopping(status) {
+				if err := a.sdk.Tenants.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+					return err
+				}
+			}
+			if err := a.waitPower(ctx, id, false); err != nil {
+				return err
+			}
+		}
 	}
-	// VergeOS: "Tenant must be in running state to poweroff"
-	if tenantIsStarting(status) {
-		if err := a.waitPower(ctx, id, true); err != nil {
-			return err
-		}
-		status, err = a.tenantStatus(ctx, id)
-		if err != nil {
-			return err
-		}
-		if tenantPoweredOff(status) {
+	// Status offline is not enough: the tenant vnet can stay Running for
+	// several seconds, and Tenants.Delete returns 405 until it stops (#205).
+	return a.ensureTenantVNetStopped(ctx, id)
+}
+
+// ensureTenantVNetStopped waits until the tenant's auto-created vnet reports
+// Running=false. When it is still running, Kill once (same pattern as
+// network stop-before-delete) and poll until it stops or the power timeout
+// elapses. A missing tenant or vnet is already gone.
+func (a *API) ensureTenantVNetStopped(ctx context.Context, tenantID int) error {
+	tenant, err := a.sdk.Tenants.Get(ctx, tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
 			return nil
 		}
+		return err
 	}
-	if !tenantIsStopping(status) {
-		if err := a.sdk.Tenants.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	vnetID := tenant.VNet.Int()
+	if vnetID <= 0 {
+		return nil
+	}
+	return a.stopTenantVNet(ctx, vnetID)
+}
+
+func (a *API) stopTenantVNet(ctx context.Context, vnetID int) error {
+	deadline := time.Now().Add(tenantPowerTimeout)
+	killed := false
+	for {
+		network, err := a.sdk.Networks.Get(ctx, vnetID)
+		if err != nil {
+			if vergeos.IsNotFoundError(err) {
+				return nil
+			}
+			return err
+		}
+		if !network.Running {
+			return nil
+		}
+		if !killed {
+			if err := a.sdk.Networks.Kill(ctx, vnetID); err != nil && !vergeos.IsNotFoundError(err) {
+				return fmt.Errorf("kill tenant vnet %d before delete: %w", vnetID, err)
+			}
+			killed = true
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for tenant vnet %d to stop; the tenant still exists and can be imported", vnetID)
+		}
+		if err := sleepPower(ctx); err != nil {
 			return err
 		}
 	}
-	return a.waitPower(ctx, id, false)
 }
 
 func (a *API) waitPower(ctx context.Context, id int, wantOn bool) error {
