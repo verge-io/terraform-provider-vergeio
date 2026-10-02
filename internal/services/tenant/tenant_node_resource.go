@@ -291,5 +291,12 @@ func (r *TenantNodeResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 func (r *TenantNodeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Tenant Node Import ID",
+			"Import vergeio_tenant_node with the tenant node key.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

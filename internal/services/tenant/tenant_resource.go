@@ -368,6 +368,13 @@ func (r *TenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 }
 
 func (r *TenantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Tenant Import ID",
+			"Import vergeio_tenant with the tenant key.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 

@@ -196,5 +196,12 @@ func (r *MemberResource) Delete(ctx context.Context, req resource.DeleteRequest,
 }
 
 func (r *MemberResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Member Import ID",
+			"Import vergeio_member with the member id.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

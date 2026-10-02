@@ -210,5 +210,12 @@ func (r *TagMemberResource) Delete(ctx context.Context, req resource.DeleteReque
 
 // ImportState imports an existing tag member by ID.
 func (r *TagMemberResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Tag Member Import ID",
+			"Import vergeio_tag_member with the tag member id.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

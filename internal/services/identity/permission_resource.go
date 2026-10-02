@@ -259,6 +259,13 @@ func (r *PermissionResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 func (r *PermissionResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Permission Import ID",
+			"Import vergeio_permission with the permission key.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
