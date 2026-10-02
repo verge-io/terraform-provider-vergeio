@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_network_rule_alias (Resource)
 
-`vergeio_network_rule_alias` is a named address or port group. A firewall rule references it as `alias:<name>` in `source_ip`, `destination_ip`, `source_ports`, or `destination_ports`.
+`vergeio_network_rule_alias` is a named address or port group. A firewall rule references it as `alias:<id>` in `source_ip`, `destination_ip`, `source_ports`, or `destination_ports`, where `<id>` is this resource's id (the `vnet_rule_aliases` key). Use `alias:${vergeio_network_rule_alias.example.id}`. VergeOS rejects `alias:<name>`.
 
 Aliases are global on the system, not owned by one network. Changing an alias does not refresh a network. The next [`vergeio_network_rules`](network_rules.md) or [`vergeio_network_rule`](network_rule.md) apply uses the new value.
 
@@ -17,7 +17,7 @@ Aliases are global on the system, not owned by one network. Changing an alias do
 ## Example Usage
 
 ```terraform
-# A named address group. Rules reference it as alias:mgmt-nets.
+# A named address group. Rules reference it as alias:${vergeio_network_rule_alias.mgmt.id}.
 
 resource "vergeio_network_rule_alias" "mgmt" {
   name             = "mgmt-nets"
@@ -32,7 +32,7 @@ resource "vergeio_network_rule_alias" "mgmt" {
 
 ### Required
 
-- `name` (String) Alias name, unique on the system. Rules reference it as alias:<name>.
+- `name` (String) Alias name, unique on the system. Rules reference the alias by id (`alias:${...id}`), not by this name.
 - `value` (String) Comma-separated addresses or ports. An entry may include a label after a pipe, for example 192.0.2.10|web,192.0.2.11|db.
 
 ### Optional

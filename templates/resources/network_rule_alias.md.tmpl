@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_network_rule_alias (Resource)
 
-`vergeio_network_rule_alias` is a named address or port group. A firewall rule references it as `alias:<name>` in `source_ip`, `destination_ip`, `source_ports`, or `destination_ports`.
+`vergeio_network_rule_alias` is a named address or port group. A firewall rule references it as `alias:<id>` in `source_ip`, `destination_ip`, `source_ports`, or `destination_ports`, where `<id>` is this resource's id (the `vnet_rule_aliases` key). Use `alias:${vergeio_network_rule_alias.example.id}`. VergeOS rejects `alias:<name>`.
 
 Aliases are global on the system, not owned by one network. Changing an alias does not refresh a network. The next [`vergeio_network_rules`](network_rules.md) or [`vergeio_network_rule`](network_rule.md) apply uses the new value.
 
