@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_version` docs example output now shows a VergeOS 26+ version string and the real schema attributes (`name`, `version`, `hash`). The old example used VergeOS 4.x and a non-existent `id` attribute (#221).
 - `vergeio_tenant` destroy waits for the tenant network (`Running=false`) after the tenant is offline, killing the vnet when needed, so `Tenants.Delete` no longer returns 405 while the network is still stopping (#205).
 - `vergeio_tenant` create with `powerstate = true` before any `vergeio_tenant_node` exists defers power-on instead of waiting two minutes and leaving an orphan running tenant network (#207). A later apply powers the tenant on once a node exists.
 - `vergeio_tenant_node` destroy stops only that node when it is running, instead of powering the whole tenant off, so removing one node from a multi-node online tenant leaves siblings running (#206). A running node is powered off first; if it does not stop within two minutes, it is killed (#220).
