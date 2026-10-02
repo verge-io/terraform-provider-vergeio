@@ -249,11 +249,13 @@ func (a *RuleApi) readAlias(ctx context.Context, data *networkRuleAliasModel) er
 		return err
 	}
 	// VergeOS reuses vnet_rule_aliases keys after delete. A Get that returns a
-	// different alias name must not be adopted into state (#227).
+	// different alias_id (readonly SHA1) must not be adopted into state (#227,
+	// #231). Name is editable, so it cannot distinguish rename drift from reuse.
 	if err := ensureAliasOwned(data, alias); err != nil {
 		return err
 	}
 	data.ID = typesStringID(alias.Key.Int())
+	data.AliasID = types.StringValue(alias.ID)
 	data.Name = types.StringValue(alias.Name)
 	data.Description = types.StringValue(alias.Description)
 	data.Value = types.StringValue(alias.Value)
@@ -262,16 +264,13 @@ func (a *RuleApi) readAlias(ctx context.Context, data *networkRuleAliasModel) er
 }
 
 // ensureAliasOwned returns NotFound when the stored key now points at another
-// alias. Skip the check when name is unset (import).
+// alias (alias_id / SHA1 mismatch). Skip the check when alias_id is unset
+// (import). Same-id name drift still refreshes in place (#231).
 func ensureAliasOwned(data *networkRuleAliasModel, alias *vergeos.VNetRuleAlias) error {
-	if data.Name.IsNull() || data.Name.IsUnknown() {
+	if data.AliasID.IsNull() || data.AliasID.IsUnknown() || data.AliasID.ValueString() == "" {
 		return nil
 	}
-	want := data.Name.ValueString()
-	if want == "" {
-		return nil
-	}
-	if alias.Name != want {
+	if alias.ID != data.AliasID.ValueString() {
 		return &vergeos.NotFoundError{Resource: "VNetRuleAlias", ID: alias.Key.Int()}
 	}
 	return nil
