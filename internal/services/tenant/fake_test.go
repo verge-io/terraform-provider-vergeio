@@ -42,18 +42,26 @@ type fakeVerge struct {
 	// nodeDeleteFailStatus/Message force a permanent delete failure when set.
 	nodeDeleteFailStatus  int
 	nodeDeleteFailMessage string
-	tenants               map[int]map[string]any
-	status                map[int]map[string]any
-	addresses             map[int]map[string]any
-	nodes                 map[int]map[string]any
-	storage               map[int]map[string]any
-	vnets                 map[int]map[string]any
-	machines              map[int]map[string]any
-	calls                 []string
-	bodies                []recordedBody
-	actions               []map[string]any
-	vnetActions           []map[string]any
-	nodeActions           []map[string]any
+	// nodePowerOffStuck leaves the machine running after poweroff so tests
+	// can assert the Kill fallback (#220). Kill still stops the machine
+	// unless nodeKillStuck is also set.
+	nodePowerOffStuck bool
+	nodeKillStuck     bool
+	// nodePowerOffNotRunning makes poweroff return 422 as when VergeOS
+	// rejects poweroff on a non-running node.
+	nodePowerOffNotRunning bool
+	tenants                map[int]map[string]any
+	status                 map[int]map[string]any
+	addresses              map[int]map[string]any
+	nodes                  map[int]map[string]any
+	storage                map[int]map[string]any
+	vnets                  map[int]map[string]any
+	machines               map[int]map[string]any
+	calls                  []string
+	bodies                 []recordedBody
+	actions                []map[string]any
+	vnetActions            []map[string]any
+	nodeActions            []map[string]any
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -581,6 +589,20 @@ func (f *fakeVerge) serveNodeAction(w http.ResponseWriter, payload map[string]an
 	f.nodeActions = append(f.nodeActions, payload)
 	id := intField(payload["tenant_node"])
 	action, _ := payload["action"].(string)
+	if action == "poweroff" && f.nodePowerOffNotRunning {
+		writeJSON(f.t, w, http.StatusUnprocessableEntity, map[string]string{
+			"err": "Tenant node must be in running state to poweroff",
+		})
+		return
+	}
+	if action == "poweroff" && f.nodePowerOffStuck {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if action == "kill" && f.nodeKillStuck {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if action == "kill" || action == "poweroff" {
 		if node, ok := f.nodes[id]; ok {
 			machineID := intField(node["machine"])

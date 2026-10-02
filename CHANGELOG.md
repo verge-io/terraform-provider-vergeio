@@ -32,7 +32,7 @@ BUG FIXES:
 
 - `vergeio_tenant` destroy waits for the tenant network (`Running=false`) after the tenant is offline, killing the vnet when needed, so `Tenants.Delete` no longer returns 405 while the network is still stopping (#205).
 - `vergeio_tenant` create with `powerstate = true` before any `vergeio_tenant_node` exists defers power-on instead of waiting two minutes and leaving an orphan running tenant network (#207). A later apply powers the tenant on once a node exists.
-- `vergeio_tenant_node` destroy stops only that node when it is running, instead of powering the whole tenant off, so removing one node from a multi-node online tenant leaves siblings running (#206).
+- `vergeio_tenant_node` destroy stops only that node when it is running, instead of powering the whole tenant off, so removing one node from a multi-node online tenant leaves siblings running (#206). A running node is powered off first; if it does not stop within two minutes, it is killed (#220).
 
 - Docs and examples for `vergeio_network_rule`, `vergeio_network_rules`, and `vergeio_network_rule_alias` now document alias references as `alias:<id>` (the alias resource id / `vnet_rule_aliases` key). VergeOS rejects `alias:<name>`; the provider passes the value through unchanged.
 - `vergeio_vm` refresh detects when every configured `cloudinit_files` entry was deleted outside Terraform while those files were still expected to be live (for example after create with `powerstate = false`). Power-on detach still keeps an empty plan so the provider does not recreate files it removed after the first boot.

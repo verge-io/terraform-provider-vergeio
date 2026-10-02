@@ -411,6 +411,50 @@ func TestAccTenantNodeRemoveWhileOnline(t *testing.T) {
 	})
 }
 
+// TestAccTenantNodeDestroyGraceful covers #220: destroying a running tenant
+// node uses TenantNodes.PowerOff (graceful) before delete. Leaves the tenant
+// online through empty-plan checks, then CheckDestroy removes the running
+// node and tenant.
+func TestAccTenantNodeDestroyGraceful(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-grace")
+	nodeName := acctest.Name("tenant-node-grace")
+	tier := accStorageTier(t)
+	offline := testAccTenantPowerConfig(tenantName, nodeName, tier, false)
+	online := testAccTenantPowerConfig(tenantName, nodeName, tier, true)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: offline,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_node.test", "id"),
+				),
+			},
+			{
+				Config: online,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+				),
+			},
+			{
+				Config: online,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			// Final step leaves the tenant online so CheckDestroy powers off
+			// the running node gracefully (#220) before delete.
+		},
+	})
+}
 
 // TestAccTenantUpdatePowerstateTrueDefersNoNodes covers #219: update with
 // powerstate=true and zero vergeio_tenant_node resources must defer like
