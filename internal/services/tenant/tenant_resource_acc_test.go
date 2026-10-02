@@ -328,6 +328,34 @@ func TestAccTenantCreatePowerstateTrueDefers(t *testing.T) {
 	})
 }
 
+// TestAccTenantMultiNodeDestroy covers #222: destroying a tenant with two
+// or more vergeio_tenant_node resources must succeed without -parallelism=1.
+// VergeOS only allows deleting the highest nodeid; concurrent Terraform
+// deletes retry the 405 "Only the last node can be deleted" until each node
+// becomes last. powerstate=false is enough to reproduce.
+func TestAccTenantMultiNodeDestroy(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-mn-destroy")
+	tier := accStorageTier(t)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccTenantMultiNodeConfig(tenantName, tier, 2, false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					resource.TestCheckResourceAttr("vergeio_tenant_node.n.0", "name", tenantName+"-n1"),
+					resource.TestCheckResourceAttr("vergeio_tenant_node.n.1", "name", tenantName+"-n2"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_storage.test", "id"),
+				),
+			},
+		},
+	})
+}
+
 // TestAccTenantNodeRemoveWhileOnline covers #206: removing one stopped node
 // from a multi-node online tenant must leave the tenant and the remaining
 // node running (no whole-tenant power off).
