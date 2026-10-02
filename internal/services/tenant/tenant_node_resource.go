@@ -66,7 +66,7 @@ func (r *TenantNodeResource) Metadata(ctx context.Context, req resource.Metadata
 
 func (r *TenantNodeResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Compute handed to a VergeOS tenant. cpu_cores and ram are the capacity of one tenant node. Changing tenant_id replaces the node. Destroy powers the parent tenant off first, because VergeOS rejects deleting a node while the tenant is running.",
+		MarkdownDescription: "Compute handed to a VergeOS tenant. cpu_cores and ram are the capacity of one tenant node. Changing tenant_id replaces the node. Destroy stops this node when it is running, then deletes it so sibling nodes stay up. VergeOS rejects deleting a node while that node is running.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Tenant node key assigned by VergeOS.",

@@ -334,7 +334,52 @@ func TestDeleteRunningTenantPowersOffFirst(t *testing.T) {
 	}
 }
 
-func TestDeleteOfflineTenantSkipsPowerOff(t *testing.T) {
+func TestDeleteOfflineTenantStopsRunningVNet(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Offline tenant whose vnet is still running: the #205 destroy race and
+	// the leftover state after a create power timeout (#207).
+	fake.mu.Lock()
+	fake.status[id] = statusObject(id, false)
+	vnetID := intField(fake.tenants[id]["vnet"])
+	fake.vnets[vnetID] = map[string]any{"$key": vnetID, "name": "tenant_customer-a", "running": true}
+	fake.mu.Unlock()
+
+	if err := api.deleteTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("tenant actions = %#v, want none for already-offline", actions)
+	}
+	vnetActions := fake.recordedVNetActions()
+	if len(vnetActions) != 1 || vnetActions[0]["action"] != "kill" {
+		t.Fatalf("vnet actions = %#v, want one kill", vnetActions)
+	}
+	if fake.callCount(httpMethodDelete, "/api/v4/tenants/"+data.Id.ValueString()) != 1 {
+		t.Fatal("tenant was not deleted")
+	}
+}
+
+func TestDeleteOfflineTenantWithStoppedVNetNeedsNoKill(t *testing.T) {
 	fake := newFake(t)
 	api := fake.api(t)
 	data := &TenantResourceModel{
@@ -348,7 +393,10 @@ func TestDeleteOfflineTenantSkipsPowerOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	if actions := fake.recordedActions(); len(actions) != 0 {
-		t.Fatalf("actions = %#v", actions)
+		t.Fatalf("tenant actions = %#v", actions)
+	}
+	if vnetActions := fake.recordedVNetActions(); len(vnetActions) != 0 {
+		t.Fatalf("vnet actions = %#v, want none when already stopped", vnetActions)
 	}
 }
 
@@ -502,6 +550,11 @@ func TestCreateKeepsIDWhenPowerFails(t *testing.T) {
 
 	fake := newFake(t)
 	fake.holdPower = true
+	// Seed a node so create does not defer power-on (#207); holdPower then
+	// times out waiting for terminal online.
+	fake.mu.Lock()
+	fake.nodes[1] = map[string]any{"$key": 1, "tenant": 1, "name": "n1", "machine": 81}
+	fake.mu.Unlock()
 	ctx := context.Background()
 	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
 		Name:       types.StringValue("customer-a"),
@@ -519,9 +572,39 @@ func TestCreateKeepsIDWhenPowerFails(t *testing.T) {
 	}
 }
 
+func TestCreateDefersPowerOnWithoutNodesKeepsPlannedTrue(t *testing.T) {
+	fake := newFake(t)
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("Tf-acc-tenant-password"),
+		PowerState: types.BoolValue(true),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want deferred power-on with no orphan vnet", actions)
+	}
+	id := tenantStateID(t, ctx, resp.State)
+	if id == "" {
+		t.Fatal("missing tenant id")
+	}
+	var stored TenantResourceModel
+	diags := resp.State.Get(ctx, &stored)
+	if diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if !stored.PowerState.ValueBool() {
+		t.Fatalf("powerstate = %#v, want planned true kept after deferred create", stored.PowerState)
+	}
+}
+
 func TestCreateKeepsIDWhenReadFails(t *testing.T) {
 	fake := newFake(t)
-	fake.failTenantGet = 1
+	// Create reads the tenant back once, ensureTenantVNetStopped reads it
+	// again, then Create's follow-up read should fail (#205 path).
+	fake.failTenantGet = 2
 	ctx := context.Background()
 	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
 		Name:       types.StringValue("customer-a"),
@@ -636,7 +719,7 @@ func TestReconcilePowerWaitsThroughTransitions(t *testing.T) {
 	}
 }
 
-func TestDeleteTenantNodePowersOffRunningTenant(t *testing.T) {
+func TestDeleteTenantNodeKillsRunningNodeOnly(t *testing.T) {
 	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
 	t.Cleanup(func() {
 		tenantPowerTimeout = origTimeout
@@ -646,7 +729,6 @@ func TestDeleteTenantNodePowersOffRunningTenant(t *testing.T) {
 	tenantPowerInterval = time.Millisecond
 
 	fake := newFake(t)
-	fake.transitionPower = true
 	api := fake.api(t)
 	tenant := &TenantResourceModel{
 		Name:       types.StringValue("customer-a"),
@@ -656,6 +738,74 @@ func TestDeleteTenantNodePowersOffRunningTenant(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := powerTenant(t, api, tenant); err != nil {
+		t.Fatal(err)
+	}
+	running := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	stopped := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node2"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), running); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.createTenantNode(context.Background(), stopped); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	runningID, _ := parseID(running.Id, "tenant node")
+	machineID := intField(fake.nodes[runningID]["machine"])
+	fake.machines[machineID]["running"] = true
+	fake.machines[machineID]["status"] = "running"
+	fake.mu.Unlock()
+
+	beforeTenantActions := len(fake.recordedActions())
+	if err := api.deleteTenantNode(context.Background(), running); err != nil {
+		t.Fatal(err)
+	}
+	if actions := fake.recordedActions(); len(actions) != beforeTenantActions {
+		t.Fatalf("tenant power actions = %#v, want unchanged (siblings stay up)", actions[beforeTenantActions:])
+	}
+	nodeActions := fake.recordedNodeActions()
+	if len(nodeActions) != 1 || nodeActions[0]["action"] != "kill" {
+		t.Fatalf("node actions = %#v, want one kill", nodeActions)
+	}
+	if fake.callCount(httpMethodDelete, "/api/v4/tenant_nodes/"+running.Id.ValueString()) != 1 {
+		t.Fatal("running node was not deleted")
+	}
+
+	// Stopped sibling deletes with no power action while tenant stays online.
+	if err := api.deleteTenantNode(context.Background(), stopped); err != nil {
+		t.Fatal(err)
+	}
+	if nodeActions := fake.recordedNodeActions(); len(nodeActions) != 1 {
+		t.Fatalf("node actions after stopped delete = %#v", nodeActions)
+	}
+	status, err := api.tenantStatus(context.Background(), mustParseID(t, tenant.Id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tenantPoweredOn(status) {
+		t.Fatalf("tenant status = %#v, want still online after node deletes", status)
+	}
+}
+
+func TestDeleteStoppedTenantNodeSkipsStop(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
 		t.Fatal(err)
 	}
 	node := &TenantNodeResourceModel{
@@ -671,13 +821,51 @@ func TestDeleteTenantNodePowersOffRunningTenant(t *testing.T) {
 	if err := api.deleteTenantNode(context.Background(), node); err != nil {
 		t.Fatal(err)
 	}
-	actions := fake.recordedActions()
-	if len(actions) < 2 || actions[len(actions)-1]["action"] != "poweroff" {
-		t.Fatalf("actions = %#v", actions)
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("tenant actions = %#v", actions)
 	}
-	if fake.callCount(httpMethodDelete, "/api/v4/tenant_nodes/"+node.Id.ValueString()) != 1 {
-		t.Fatal("node was not deleted")
+	if nodeActions := fake.recordedNodeActions(); len(nodeActions) != 0 {
+		t.Fatalf("node actions = %#v", nodeActions)
 	}
+}
+
+func TestReconcilePowerOnCreateDefersWithoutNodes(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(true),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, data.Id)
+	deferred, err := api.reconcilePowerOnCreate(context.Background(), id, data.PowerState, data.PreferredNode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deferred {
+		t.Fatal("expected deferred power-on when no nodes exist")
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want none (no orphan running vnet)", actions)
+	}
+	status, err := api.tenantStatus(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenantPoweredOn(status) {
+		t.Fatalf("status = %#v, want offline", status)
+	}
+}
+
+func mustParseID(t *testing.T, v types.String) int {
+	t.Helper()
+	id, err := parseID(v, "id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestEnsurePoweredOffWaitsForStartingBeforePowerOff(t *testing.T) {

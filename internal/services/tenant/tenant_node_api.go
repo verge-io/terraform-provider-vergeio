@@ -6,6 +6,7 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"terraform-provider-vergeio/internal/client"
 
@@ -146,22 +147,81 @@ func assignTenantNode(data *TenantNodeResourceModel, node *vergeos.TenantNode) {
 	data.Modified = timestamp(node.Modified)
 }
 
-// deleteTenantNode powers the parent tenant off first. Terraform destroys
-// vergeio_tenant_node before vergeio_tenant because of the tenant_id
-// reference, and VergeOS rejects deleting a node while the tenant runs (#195).
+// deleteTenantNode stops this node when it is running, then deletes it.
+// VergeOS rejects deleting a running node (#195). Powering the whole tenant
+// off first was over-broad (#206): removing one node from a multi-node
+// tenant took siblings and the tenant network down. Kill/PowerOff only this
+// node so running siblings stay up. A stopped node deletes while the tenant
+// stays online.
 func (a *API) deleteTenantNode(ctx context.Context, data *TenantNodeResourceModel) error {
 	id, err := parseID(data.Id, "tenant node")
 	if err != nil {
 		return err
 	}
-	if tenantID, err := parseID(data.TenantID, "tenant"); err == nil && tenantID > 0 {
-		if err := a.ensurePoweredOff(ctx, tenantID); err != nil {
-			return fmt.Errorf("power off tenant %d before deleting node %d: %w", tenantID, id, err)
-		}
+	if err := a.ensureTenantNodeStopped(ctx, id); err != nil {
+		return err
 	}
 	if err := a.sdk.TenantNodes.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
 		return err
 	}
 	tflog.Debug(ctx, fmt.Sprintf("deleted tenant node %d", id))
 	return nil
+}
+
+// ensureTenantNodeStopped stops a running tenant node before delete. A
+// missing node is already gone. Nodes without a machine row cannot be
+// running. Polls machine_status until Running is false after Kill.
+func (a *API) ensureTenantNodeStopped(ctx context.Context, id int) error {
+	node, err := a.sdk.TenantNodes.Get(ctx, id)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+	machineID := node.Machine.Int()
+	running, err := a.tenantNodeMachineRunning(ctx, machineID)
+	if err != nil {
+		return err
+	}
+	if !running {
+		return nil
+	}
+	if err := a.sdk.TenantNodes.Kill(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		return fmt.Errorf("stop tenant node %d before delete: %w", id, err)
+	}
+	return a.waitTenantNodeStopped(ctx, id, machineID)
+}
+
+func (a *API) tenantNodeMachineRunning(ctx context.Context, machineID int) (bool, error) {
+	if machineID <= 0 {
+		return false, nil
+	}
+	status, err := a.sdk.MachineStatus.Get(ctx, machineID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return status.Running, nil
+}
+
+func (a *API) waitTenantNodeStopped(ctx context.Context, nodeID, machineID int) error {
+	deadline := time.Now().Add(tenantPowerTimeout)
+	for {
+		running, err := a.tenantNodeMachineRunning(ctx, machineID)
+		if err != nil {
+			return err
+		}
+		if !running {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for tenant node %d to stop before delete; the node still exists and can be imported", nodeID)
+		}
+		if err := sleepPower(ctx); err != nil {
+			return err
+		}
+	}
 }

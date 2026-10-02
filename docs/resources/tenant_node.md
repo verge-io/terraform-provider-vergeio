@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tenant_node (Resource)
 
-Gives a tenant a node. `cpu_cores` and `ram` are the capacity of that node. `ram` is megabytes and must be at least 2048. Changing `tenant_id` replaces the node. Destroy powers the parent tenant off before deleting the node, because VergeOS rejects the delete while the tenant is running.
+Gives a tenant a node. `cpu_cores` and `ram` are the capacity of that node. `ram` is megabytes and must be at least 2048. Changing `tenant_id` replaces the node. Destroy stops this node when it is running, then deletes it. Sibling nodes and the parent tenant stay up. VergeOS rejects deleting a node while that node is running.
 
 ## Example Usage
 
