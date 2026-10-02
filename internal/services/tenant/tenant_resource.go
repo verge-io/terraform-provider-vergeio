@@ -175,7 +175,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy stops only that node when it is running, leaving sibling nodes alone. The wait is 2 minutes. powerstate=true with no nodes yet defers power-on on create and update: apply leaves the tenant offline and a later apply powers it on once vergeio_tenant_node exists.",
+				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy gracefully powers off only that node when it is running (then kills if needed), leaving sibling nodes alone. The wait is 2 minutes. powerstate=true with no nodes yet defers power-on on create and update: apply leaves the tenant offline and a later apply powers it on once vergeio_tenant_node exists.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{

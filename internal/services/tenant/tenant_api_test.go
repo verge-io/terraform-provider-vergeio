@@ -720,7 +720,7 @@ func TestReconcilePowerWaitsThroughTransitions(t *testing.T) {
 	}
 }
 
-func TestDeleteTenantNodeKillsRunningNodeOnly(t *testing.T) {
+func TestDeleteTenantNodePowerOffsRunningNodeOnly(t *testing.T) {
 	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
 	t.Cleanup(func() {
 		tenantPowerTimeout = origTimeout
@@ -776,8 +776,8 @@ func TestDeleteTenantNodeKillsRunningNodeOnly(t *testing.T) {
 		t.Fatalf("tenant power actions = %#v, want unchanged (siblings stay up)", actions[beforeTenantActions:])
 	}
 	nodeActions := fake.recordedNodeActions()
-	if len(nodeActions) != 1 || nodeActions[0]["action"] != "kill" {
-		t.Fatalf("node actions = %#v, want one kill", nodeActions)
+	if len(nodeActions) != 1 || nodeActions[0]["action"] != "poweroff" {
+		t.Fatalf("node actions = %#v, want one poweroff (no kill)", nodeActions)
 	}
 	if fake.callCount(httpMethodDelete, "/api/v4/tenant_nodes/"+running.Id.ValueString()) != 1 {
 		t.Fatal("running node was not deleted")
@@ -796,6 +796,171 @@ func TestDeleteTenantNodeKillsRunningNodeOnly(t *testing.T) {
 	}
 	if !tenantPoweredOn(status) {
 		t.Fatalf("tenant status = %#v, want still online after node deletes", status)
+	}
+}
+
+func TestDeleteTenantNodeKillsWhenPowerOffStuck(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantPowerInterval = 5 * time.Millisecond
+
+	fake := newFake(t)
+	fake.nodePowerOffStuck = true
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(true),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	if err := powerTenant(t, api, tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	nodeID, _ := parseID(node.Id, "tenant node")
+	machineID := intField(fake.nodes[nodeID]["machine"])
+	fake.machines[machineID]["running"] = true
+	fake.machines[machineID]["status"] = "running"
+	fake.mu.Unlock()
+
+	if err := api.deleteTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	nodeActions := fake.recordedNodeActions()
+	if len(nodeActions) != 2 {
+		t.Fatalf("node actions = %#v, want poweroff then kill", nodeActions)
+	}
+	if nodeActions[0]["action"] != "poweroff" || nodeActions[1]["action"] != "kill" {
+		t.Fatalf("node actions = %#v, want poweroff then kill", nodeActions)
+	}
+	if fake.callCount(httpMethodDelete, "/api/v4/tenant_nodes/"+node.Id.ValueString()) != 1 {
+		t.Fatal("node was not deleted after kill")
+	}
+}
+
+func TestEnsureTenantNodeStoppedNotFound(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	if err := api.ensureTenantNodeStopped(context.Background(), 99999); err != nil {
+		t.Fatalf("missing node must be OK: %v", err)
+	}
+	if actions := fake.recordedNodeActions(); len(actions) != 0 {
+		t.Fatalf("node actions = %#v, want none", actions)
+	}
+}
+
+func TestDeleteTenantNodePowerOffNotRunningFallsThrough(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantPowerInterval = 5 * time.Millisecond
+
+	fake := newFake(t)
+	fake.nodePowerOffNotRunning = true
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	nodeID, _ := parseID(node.Id, "tenant node")
+	machineID := intField(fake.nodes[nodeID]["machine"])
+	// Machine status claims running, but poweroff returns 422 not-running.
+	// After the 422, re-check sees running still true so Kill is used.
+	fake.machines[machineID]["running"] = true
+	fake.machines[machineID]["status"] = "running"
+	fake.mu.Unlock()
+
+	if err := api.deleteTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	nodeActions := fake.recordedNodeActions()
+	if len(nodeActions) != 2 || nodeActions[0]["action"] != "poweroff" || nodeActions[1]["action"] != "kill" {
+		t.Fatalf("node actions = %#v, want poweroff then kill", nodeActions)
+	}
+}
+
+func TestDeleteTenantNodeKillWaitTimeout(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 15 * time.Millisecond
+	tenantPowerInterval = 5 * time.Millisecond
+
+	fake := newFake(t)
+	fake.nodePowerOffStuck = true
+	fake.nodeKillStuck = true
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	nodeID, _ := parseID(node.Id, "tenant node")
+	machineID := intField(fake.nodes[nodeID]["machine"])
+	fake.machines[machineID]["running"] = true
+	fake.machines[machineID]["status"] = "running"
+	fake.mu.Unlock()
+
+	err := api.deleteTenantNode(context.Background(), node)
+	if err == nil {
+		t.Fatal("expected timeout waiting for node to stop after kill")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting for tenant node") {
+		t.Fatalf("error = %v, want stop timeout", err)
+	}
+	if !strings.Contains(err.Error(), "still exists and can be imported") {
+		t.Fatalf("error = %v, want import guidance", err)
+	}
+	nodeActions := fake.recordedNodeActions()
+	if len(nodeActions) != 2 || nodeActions[0]["action"] != "poweroff" || nodeActions[1]["action"] != "kill" {
+		t.Fatalf("node actions = %#v, want poweroff then kill", nodeActions)
 	}
 }
 

@@ -152,9 +152,9 @@ func assignTenantNode(data *TenantNodeResourceModel, node *vergeos.TenantNode) {
 // deleteTenantNode stops this node when it is running, then deletes it.
 // VergeOS rejects deleting a running node (#195). Powering the whole tenant
 // off first was over-broad (#206): removing one node from a multi-node
-// tenant took siblings and the tenant network down. Kill/PowerOff only this
-// node so running siblings stay up. A stopped node deletes while the tenant
-// stays online.
+// tenant took siblings and the tenant network down. PowerOff (then Kill if
+// needed) only this node so running siblings stay up (#220). A stopped node
+// deletes while the tenant stays online.
 //
 // VergeOS also only allows deleting the tenant node with the highest nodeid
 // (#222). Terraform destroys independent resources concurrently, so a
@@ -202,9 +202,27 @@ func isLastNodeDeleteError(err error) bool {
 	return strings.Contains(apiErr.Message, "Only the last node can be deleted")
 }
 
+// isTenantNodeNotRunningActionError reports whether err is VergeOS refusing
+// poweroff/kill because the node is not in a running state. Machine status
+// can briefly disagree; treat this as already stopped for delete.
+func isTenantNodeNotRunningActionError(err error) bool {
+	var apiErr *vergeos.APIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return false
+	}
+	if apiErr.StatusCode != 422 {
+		return false
+	}
+	msg := strings.ToLower(apiErr.Message)
+	return strings.Contains(msg, "not running") ||
+		strings.Contains(msg, "must be in running state")
+}
+
 // ensureTenantNodeStopped stops a running tenant node before delete. A
 // missing node is already gone. Nodes without a machine row cannot be
-// running. Polls machine_status until Running is false after Kill.
+// running. Sends TenantNodes.PowerOff first (graceful), polls until Running
+// is false. If still running after tenantPowerTimeout, Kill once and wait
+// again (#220). A second timeout returns import guidance.
 func (a *API) ensureTenantNodeStopped(ctx context.Context, id int) error {
 	node, err := a.sdk.TenantNodes.Get(ctx, id)
 	if err != nil {
@@ -221,10 +239,41 @@ func (a *API) ensureTenantNodeStopped(ctx context.Context, id int) error {
 	if !running {
 		return nil
 	}
-	if err := a.sdk.TenantNodes.Kill(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-		return fmt.Errorf("stop tenant node %d before delete: %w", id, err)
+	if err := a.sdk.TenantNodes.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		if !isTenantNodeNotRunningActionError(err) {
+			return fmt.Errorf("power off tenant node %d before delete: %w", id, err)
+		}
+		// Not eligible for poweroff. Re-check; if already stopped we are done.
+		running, rerr := a.tenantNodeMachineRunning(ctx, machineID)
+		if rerr != nil {
+			return rerr
+		}
+		if !running {
+			return nil
+		}
+	} else {
+		stopped, err := a.pollTenantNodeStopped(ctx, machineID)
+		if err != nil {
+			return err
+		}
+		if stopped {
+			return nil
+		}
 	}
-	return a.waitTenantNodeStopped(ctx, id, machineID)
+	if err := a.sdk.TenantNodes.Kill(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		if isTenantNodeNotRunningActionError(err) {
+			return nil
+		}
+		return fmt.Errorf("kill tenant node %d before delete: %w", id, err)
+	}
+	stopped, err := a.pollTenantNodeStopped(ctx, machineID)
+	if err != nil {
+		return err
+	}
+	if stopped {
+		return nil
+	}
+	return fmt.Errorf("timed out waiting for tenant node %d to stop before delete; the node still exists and can be imported", id)
 }
 
 func (a *API) tenantNodeMachineRunning(ctx context.Context, machineID int) (bool, error) {
@@ -241,21 +290,24 @@ func (a *API) tenantNodeMachineRunning(ctx context.Context, machineID int) (bool
 	return status.Running, nil
 }
 
-func (a *API) waitTenantNodeStopped(ctx context.Context, nodeID, machineID int) error {
+// pollTenantNodeStopped waits until the node's machine is not running or
+// tenantPowerTimeout elapses. Timeout returns stopped=false without error so
+// the caller can Kill and wait again.
+func (a *API) pollTenantNodeStopped(ctx context.Context, machineID int) (bool, error) {
 	deadline := time.Now().Add(tenantPowerTimeout)
 	for {
 		running, err := a.tenantNodeMachineRunning(ctx, machineID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !running {
-			return nil
+			return true, nil
 		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("timed out waiting for tenant node %d to stop before delete; the node still exists and can be imported", nodeID)
+			return false, nil
 		}
 		if err := sleepPower(ctx); err != nil {
-			return err
+			return false, err
 		}
 	}
 }
