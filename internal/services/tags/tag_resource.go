@@ -201,6 +201,13 @@ func (r *TagResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 }
 
 func (r *TagResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Tag Import ID",
+			"Import vergeio_tag with the tag key.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 

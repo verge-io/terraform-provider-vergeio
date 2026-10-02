@@ -1382,5 +1382,12 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 }
 
 func (r *VMResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid VM Import ID",
+			"Import vergeio_vm with the VM id.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

@@ -447,6 +447,13 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 }
 
 func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Network Import ID",
+			"Import vergeio_network with the network id.",
+		)
+		return
+	}
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
