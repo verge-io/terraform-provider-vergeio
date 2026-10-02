@@ -28,32 +28,35 @@ type recordedBody struct {
 type fakeVerge struct {
 	t *testing.T
 
-	mu            sync.Mutex
-	next          int
-	uiIP          string
-	holdPower     bool
-	tenantGets    int
-	failTenantGet int
-	tenants       map[int]map[string]any
-	status        map[int]map[string]any
-	addresses     map[int]map[string]any
-	nodes         map[int]map[string]any
-	storage       map[int]map[string]any
-	calls         []string
-	bodies        []recordedBody
-	actions       []map[string]any
+	mu               sync.Mutex
+	next             int
+	uiIP             string
+	holdPower        bool
+	transitionPower  bool
+	seenTransition   map[int]bool
+	tenantGets       int
+	failTenantGet    int
+	tenants          map[int]map[string]any
+	status           map[int]map[string]any
+	addresses        map[int]map[string]any
+	nodes            map[int]map[string]any
+	storage          map[int]map[string]any
+	calls            []string
+	bodies           []recordedBody
+	actions          []map[string]any
 }
 
 func newFake(t *testing.T) *fakeVerge {
 	t.Helper()
 	return &fakeVerge{
-		t:         t,
-		next:      1,
-		tenants:   map[int]map[string]any{},
-		status:    map[int]map[string]any{},
-		addresses: map[int]map[string]any{},
-		nodes:     map[int]map[string]any{},
-		storage:   map[int]map[string]any{},
+		t:              t,
+		next:           1,
+		seenTransition: map[int]bool{},
+		tenants:        map[int]map[string]any{},
+		status:         map[int]map[string]any{},
+		addresses:      map[int]map[string]any{},
+		nodes:          map[int]map[string]any{},
+		storage:        map[int]map[string]any{},
 	}
 }
 
@@ -274,6 +277,9 @@ func (f *fakeVerge) serveStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method", http.StatusMethodNotAllowed)
 		return
 	}
+	for id := range f.status {
+		f.advancePower(id)
+	}
 	rows := make([]map[string]any, 0, len(f.status))
 	for _, row := range f.status {
 		rows = append(rows, row)
@@ -281,15 +287,54 @@ func (f *fakeVerge) serveStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
 }
 
+// advancePower lets one transitional status poll be observed, then settles
+// to terminal online/offline on the next poll when transitionPower is set.
+func (f *fakeVerge) advancePower(id int) {
+	if !f.transitionPower || f.holdPower {
+		return
+	}
+	st := f.status[id]
+	if st == nil {
+		return
+	}
+	starting, _ := st["starting"].(bool)
+	stopping, _ := st["stopping"].(bool)
+	if !starting && !stopping {
+		return
+	}
+	if !f.seenTransition[id] {
+		f.seenTransition[id] = true
+		return
+	}
+	if starting {
+		f.status[id] = statusObject(id, true)
+	} else {
+		f.status[id] = statusObject(id, false)
+	}
+	delete(f.seenTransition, id)
+}
+
 func (f *fakeVerge) serveTenantAction(w http.ResponseWriter, payload map[string]any) {
 	f.actions = append(f.actions, payload)
 	id := intField(payload["tenant"])
 	action, _ := payload["action"].(string)
-	if !f.holdPower {
-		switch action {
-		case "poweron":
+	if f.holdPower {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	switch action {
+	case "poweron":
+		if f.transitionPower {
+			f.status[id] = statusObjectTransitional(id, true)
+			f.seenTransition[id] = false
+		} else {
 			f.status[id] = statusObject(id, true)
-		case "poweroff":
+		}
+	case "poweroff":
+		if f.transitionPower {
+			f.status[id] = statusObjectTransitional(id, false)
+			f.seenTransition[id] = false
+		} else {
 			f.status[id] = statusObject(id, false)
 		}
 	}
@@ -297,6 +342,22 @@ func (f *fakeVerge) serveTenantAction(w http.ResponseWriter, payload map[string]
 }
 
 func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	if r.Method == http.MethodDelete && id > 0 {
+		if node, ok := f.nodes[id]; ok {
+			tenantID := intField(node["tenant"])
+			if st := f.status[tenantID]; st != nil {
+				running, _ := st["running"].(bool)
+				starting, _ := st["starting"].(bool)
+				stopping, _ := st["stopping"].(bool)
+				if running || starting || stopping {
+					writeJSON(f.t, w, http.StatusMethodNotAllowed, map[string]string{
+						"err": "Tenant node cannot be deleted while running",
+					})
+					return
+				}
+			}
+		}
+	}
 	f.serveCollection(w, r, id, payload, f.nodes, func(id int, payload map[string]any) map[string]any {
 		return map[string]any{
 			"$key":          id,
@@ -458,6 +519,29 @@ func statusObject(tenantID int, online bool) map[string]any {
 		"stopping": false,
 		"status":   "offline",
 		"state":    "offline",
+	}
+}
+
+func statusObjectTransitional(tenantID int, starting bool) map[string]any {
+	if starting {
+		return map[string]any{
+			"$key":     tenantID,
+			"tenant":   tenantID,
+			"running":  false,
+			"starting": true,
+			"stopping": false,
+			"status":   "starting",
+			"state":    "offline",
+		}
+	}
+	return map[string]any{
+		"$key":     tenantID,
+		"tenant":   tenantID,
+		"running":  true,
+		"starting": false,
+		"stopping": true,
+		"status":   "stopping",
+		"state":    "online",
 	}
 }
 

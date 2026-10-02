@@ -146,10 +146,18 @@ func assignTenantNode(data *TenantNodeResourceModel, node *vergeos.TenantNode) {
 	data.Modified = timestamp(node.Modified)
 }
 
+// deleteTenantNode powers the parent tenant off first. Terraform destroys
+// vergeio_tenant_node before vergeio_tenant because of the tenant_id
+// reference, and VergeOS rejects deleting a node while the tenant runs (#195).
 func (a *API) deleteTenantNode(ctx context.Context, data *TenantNodeResourceModel) error {
 	id, err := parseID(data.Id, "tenant node")
 	if err != nil {
 		return err
+	}
+	if tenantID, err := parseID(data.TenantID, "tenant"); err == nil && tenantID > 0 {
+		if err := a.ensurePoweredOff(ctx, tenantID); err != nil {
+			return fmt.Errorf("power off tenant %d before deleting node %d: %w", tenantID, id, err)
+		}
 	}
 	if err := a.sdk.TenantNodes.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
 		return err
