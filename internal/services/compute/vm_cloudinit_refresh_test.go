@@ -79,6 +79,47 @@ func TestReadVMDropsSingleCloudInitFileWhenExpectLiveAndOnlyFileDeleted(t *testi
 	assertCloudInitFiles(t, got, []CloudInitFile{})
 }
 
+func TestReadVMReportsCloudInitLivePresentWhenFilesAttached(t *testing.T) {
+	// Read seeds expect-live when live files are present and the private
+	// marker is absent (#192). readVM must report that presence.
+	fake := newFakeCloudInit(fakeCloudInitRow{key: 11, name: "/user-data", contents: cloudInitFirst})
+	_, live := runCloudInitReadExpectLivePresent(t, fake, []CloudInitFile{
+		cloudInitFile("/user-data", cloudInitFirst),
+	}, false)
+	if !live {
+		t.Fatal("livePresent = false, want true when VergeOS still has files")
+	}
+}
+
+func TestReadVMReportsCloudInitLiveAbsentWhenFilesWiped(t *testing.T) {
+	fake := newFakeCloudInit()
+	prior := []CloudInitFile{cloudInitFile("/user-data", cloudInitFirst)}
+	got, live := runCloudInitReadExpectLivePresent(t, fake, prior, false)
+	if live {
+		t.Fatal("livePresent = true, want false when VergeOS has no files")
+	}
+	// Power-on detach / pre-seed upgrade wipe: expectLive false keeps prior.
+	assertCloudInitFiles(t, got, prior)
+}
+
+func TestShouldSeedCloudInitExpectLive(t *testing.T) {
+	cases := []struct {
+		expectLive, livePresent, want bool
+	}{
+		{false, true, true},   // upgraded/imported VM with files still attached
+		{false, false, false}, // power-on detach (#185): do not arm wipe detection
+		{true, true, false},   // already marked
+		{true, false, false},  // already marked; wipe handled by expectLive
+	}
+	for _, tc := range cases {
+		got := shouldSeedCloudInitExpectLive(tc.expectLive, tc.livePresent)
+		if got != tc.want {
+			t.Fatalf("shouldSeed(expectLive=%v, livePresent=%v) = %v, want %v",
+				tc.expectLive, tc.livePresent, got, tc.want)
+		}
+	}
+}
+
 func TestCloudInitFilesForStateEmptyLive(t *testing.T) {
 	prior := []CloudInitFile{
 		cloudInitFile("/user-data", cloudInitFirst),
@@ -152,6 +193,12 @@ func runCloudInitRead(t *testing.T, fake *fakeCloudInit, stateFiles []CloudInitF
 
 func runCloudInitReadExpectLive(t *testing.T, fake *fakeCloudInit, stateFiles []CloudInitFile, expectLive bool) VMResourceModel {
 	t.Helper()
+	data, _ := runCloudInitReadExpectLivePresent(t, fake, stateFiles, expectLive)
+	return data
+}
+
+func runCloudInitReadExpectLivePresent(t *testing.T, fake *fakeCloudInit, stateFiles []CloudInitFile, expectLive bool) (VMResourceModel, bool) {
+	t.Helper()
 
 	server := httptest.NewServer(fake.handler(t))
 	t.Cleanup(server.Close)
@@ -168,10 +215,11 @@ func runCloudInitReadExpectLive(t *testing.T, fake *fakeCloudInit, stateFiles []
 		CloudInitFiles: stateFiles,
 		GuestAgentIPs:  types.ListNull(types.StringType),
 	}
-	if err := api.readVM(ctx, &data, expectLive); err != nil {
+	livePresent, err := api.readVM(ctx, &data, expectLive)
+	if err != nil {
 		t.Fatalf("readVM: %v", err)
 	}
-	return data
+	return data, livePresent
 }
 
 func assertCloudInitFilesModel(t *testing.T, got, want []CloudInitFile) {
