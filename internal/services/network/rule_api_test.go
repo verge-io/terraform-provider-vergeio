@@ -279,6 +279,71 @@ func TestAliasCreateUpdateDelete(t *testing.T) {
 	}
 }
 
+func TestReadAliasRejectsForeignName(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	data := &networkRuleAliasModel{
+		Name:            types.StringValue("mgmt-nets"),
+		Value:           types.StringValue("192.0.2.0/24"),
+		PublishingScope: types.StringValue("private"),
+	}
+	if err := api.createAlias(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	id, err := parsePositiveID(data.ID.ValueString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fix.aliases[id]["name"] = "someone-elses-alias"
+
+	err = api.readAlias(t.Context(), data)
+	if err == nil || !vergeos.IsNotFoundError(err) {
+		t.Fatalf("read foreign key = %v, want NotFound", err)
+	}
+	if data.Name.ValueString() != "mgmt-nets" {
+		t.Fatalf("state name was overwritten to %q", data.Name.ValueString())
+	}
+}
+
+func TestReadAliasAllowsMatchingName(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	data := &networkRuleAliasModel{
+		Name:            types.StringValue("mgmt-nets"),
+		Value:           types.StringValue("192.0.2.0/24"),
+		PublishingScope: types.StringValue("private"),
+	}
+	if err := api.createAlias(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readAlias(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "mgmt-nets" {
+		t.Fatalf("name = %q", data.Name.ValueString())
+	}
+}
+
+func TestReadAliasSkipsOwnershipOnImport(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	created := &networkRuleAliasModel{
+		Name:            types.StringValue("mgmt-nets"),
+		Value:           types.StringValue("192.0.2.0/24"),
+		PublishingScope: types.StringValue("private"),
+	}
+	if err := api.createAlias(t.Context(), created); err != nil {
+		t.Fatal(err)
+	}
+	data := &networkRuleAliasModel{ID: created.ID}
+	if err := api.readAlias(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "mgmt-nets" {
+		t.Fatalf("imported name = %q", data.Name.ValueString())
+	}
+}
+
 func TestManagedRulesOmitSystemAndSort(t *testing.T) {
 	fix := newRuleFixture(t, true)
 	second := apiRule(8, "b", 30)

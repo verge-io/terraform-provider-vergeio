@@ -118,7 +118,28 @@ func (a *API) readTenantNode(ctx context.Context, data *TenantNodeResourceModel)
 	if err != nil {
 		return err
 	}
+	// VergeOS reuses tenant_nodes keys after delete. A Get that returns a
+	// different tenant's row must not be adopted into state (#227).
+	if err := ensureTenantNodeOwned(data, node); err != nil {
+		return err
+	}
 	assignTenantNode(data, node)
+	return nil
+}
+
+// ensureTenantNodeOwned returns NotFound when the stored key now points at
+// another tenant's node. Skip the check when tenant_id is unset (import).
+func ensureTenantNodeOwned(data *TenantNodeResourceModel, node *vergeos.TenantNode) error {
+	if data.TenantID.IsNull() || data.TenantID.IsUnknown() {
+		return nil
+	}
+	want, err := parseID(data.TenantID, "tenant")
+	if err != nil {
+		return err
+	}
+	if node.Tenant.Int() != want {
+		return &vergeos.NotFoundError{Resource: "TenantNode", ID: node.Key.Int()}
+	}
 	return nil
 }
 

@@ -505,6 +505,103 @@ func TestTenantStorageCreateUpdateDelete(t *testing.T) {
 	}
 }
 
+func TestReadTenantStorageRejectsForeignTenant(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantStorageResourceModel{
+		TenantID:    types.StringValue("7"),
+		Tier:        types.Int32Value(1),
+		Provisioned: types.Int64Value(1073741824),
+	}
+	if err := api.createTenantStorage(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id, err := parseID(data.Id, "tenant storage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.storage[id]["tenant"] = 99
+	fake.mu.Unlock()
+
+	err = api.readTenantStorage(context.Background(), data)
+	if err == nil || !vergeos.IsNotFoundError(err) {
+		t.Fatalf("read foreign key = %v, want NotFound", err)
+	}
+	if data.TenantID.ValueString() != "7" {
+		t.Fatalf("state tenant_id was overwritten to %q", data.TenantID.ValueString())
+	}
+}
+
+func TestReadTenantStorageAllowsMatchingTenant(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantStorageResourceModel{
+		TenantID:    types.StringValue("7"),
+		Tier:        types.Int32Value(1),
+		Provisioned: types.Int64Value(1073741824),
+	}
+	if err := api.createTenantStorage(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenantStorage(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.TenantID.ValueString() != "7" {
+		t.Fatalf("tenant_id = %q", data.TenantID.ValueString())
+	}
+}
+
+func TestReadTenantStorageSkipsOwnershipOnImport(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	created := &TenantStorageResourceModel{
+		TenantID:    types.StringValue("7"),
+		Tier:        types.Int32Value(1),
+		Provisioned: types.Int64Value(1073741824),
+	}
+	if err := api.createTenantStorage(context.Background(), created); err != nil {
+		t.Fatal(err)
+	}
+	data := &TenantStorageResourceModel{Id: created.Id}
+	if err := api.readTenantStorage(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.TenantID.ValueString() != "7" {
+		t.Fatalf("imported tenant_id = %q", data.TenantID.ValueString())
+	}
+}
+
+func TestReadTenantNodeRejectsForeignTenant(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantNodeResourceModel{
+		TenantID: types.StringValue("7"),
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id, err := parseID(data.Id, "tenant node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.nodes[id]["tenant"] = 99
+	fake.mu.Unlock()
+
+	err = api.readTenantNode(context.Background(), data)
+	if err == nil || !vergeos.IsNotFoundError(err) {
+		t.Fatalf("read foreign key = %v, want NotFound", err)
+	}
+	if data.TenantID.ValueString() != "7" {
+		t.Fatalf("state tenant_id was overwritten to %q", data.TenantID.ValueString())
+	}
+}
+
 func TestTenantsDataSourceListsAndFilters(t *testing.T) {
 	fake := newFake(t)
 	fake.seedTenant(1, "customer-a", "203.0.113.10", true)

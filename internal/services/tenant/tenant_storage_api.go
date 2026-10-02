@@ -83,7 +83,28 @@ func (a *API) readTenantStorage(ctx context.Context, data *TenantStorageResource
 	if err != nil {
 		return err
 	}
+	// VergeOS reuses tenant_storage keys after delete. A Get that returns a
+	// different tenant's row must not be adopted into state (#227).
+	if err := ensureTenantStorageOwned(data, storage); err != nil {
+		return err
+	}
 	assignTenantStorage(data, storage)
+	return nil
+}
+
+// ensureTenantStorageOwned returns NotFound when the stored key now points at
+// another tenant's allocation. Skip the check when tenant_id is unset (import).
+func ensureTenantStorageOwned(data *TenantStorageResourceModel, storage *vergeos.TenantStorage) error {
+	if data.TenantID.IsNull() || data.TenantID.IsUnknown() {
+		return nil
+	}
+	want, err := parseID(data.TenantID, "tenant")
+	if err != nil {
+		return err
+	}
+	if storage.Tenant.Int() != want {
+		return &vergeos.NotFoundError{Resource: "TenantStorage", ID: storage.Key.Int()}
+	}
 	return nil
 }
 

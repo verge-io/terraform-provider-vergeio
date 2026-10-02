@@ -248,11 +248,32 @@ func (a *RuleApi) readAlias(ctx context.Context, data *networkRuleAliasModel) er
 	if err != nil {
 		return err
 	}
+	// VergeOS reuses vnet_rule_aliases keys after delete. A Get that returns a
+	// different alias name must not be adopted into state (#227).
+	if err := ensureAliasOwned(data, alias); err != nil {
+		return err
+	}
 	data.ID = typesStringID(alias.Key.Int())
 	data.Name = types.StringValue(alias.Name)
 	data.Description = types.StringValue(alias.Description)
 	data.Value = types.StringValue(alias.Value)
 	data.PublishingScope = types.StringValue(alias.PublishingScope)
+	return nil
+}
+
+// ensureAliasOwned returns NotFound when the stored key now points at another
+// alias. Skip the check when name is unset (import).
+func ensureAliasOwned(data *networkRuleAliasModel, alias *vergeos.VNetRuleAlias) error {
+	if data.Name.IsNull() || data.Name.IsUnknown() {
+		return nil
+	}
+	want := data.Name.ValueString()
+	if want == "" {
+		return nil
+	}
+	if alias.Name != want {
+		return &vergeos.NotFoundError{Resource: "VNetRuleAlias", ID: alias.Key.Int()}
+	}
 	return nil
 }
 

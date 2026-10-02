@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/acctest"
 )
@@ -581,4 +583,129 @@ resource "vergeio_tenant_storage" "test" {
   provisioned = 1073741824
 }
 `, tenantName, power, nodes, tenantName, tier))
+}
+
+// TestAccTenantStorageKeyReuseDoesNotAdoptForeign covers #227: when VergeOS
+// reuses a tenant_storage key after an outside delete, refresh must treat the
+// foreign row as gone (plan create) instead of adopting it and RequiresReplace
+// deleting the other tenant's allocation.
+func TestAccTenantStorageKeyReuseDoesNotAdoptForeign(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-kr")
+	nodeName := acctest.Name("tenant-node-kr")
+	foreignName := acctest.Name("tenant-kr-f")
+	tier := accStorageTier(t)
+	config := testAccTenantConfig(tenantName, nodeName, tier, "key reuse", 2048, 1073741824)
+
+	var managedStorageID int
+	var foreignTenantID int
+	var foreignStorageID int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignTenantID <= 0 {
+			return
+		}
+		ctx := context.Background()
+		if foreignStorageID > 0 {
+			_ = client.TenantStorage.Delete(ctx, foreignStorageID)
+		}
+		_ = client.Tenants.Delete(ctx, foreignTenantID)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_tenant_storage.test", "id"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_tenant_storage.test"]
+						if !ok {
+							return fmt.Errorf("missing vergeio_tenant_storage.test")
+						}
+						id, err := strconv.Atoi(rs.Primary.ID)
+						if err != nil || id <= 0 {
+							return fmt.Errorf("storage id %q: %v", rs.Primary.ID, err)
+						}
+						managedStorageID = id
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := client.TenantStorage.Delete(ctx, managedStorageID); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed storage %d: %v", managedStorageID, err)
+					}
+					created, err := client.Tenants.Create(ctx, &vergeos.TenantCreateRequest{
+						Name:     foreignName,
+						Password: "Tf-acc-tenant-password1",
+					})
+					if err != nil {
+						t.Fatalf("create foreign tenant: %v", err)
+					}
+					foreignTenantID = created.Key.Int()
+					storage, err := client.TenantStorage.Create(ctx, &vergeos.TenantStorageCreateRequest{
+						Tenant:      foreignTenantID,
+						Tier:        tier,
+						Provisioned: 2147483648,
+					})
+					if err != nil {
+						t.Fatalf("create foreign storage: %v", err)
+					}
+					foreignStorageID = storage.Key.Int()
+					keyReused = foreignStorageID == managedStorageID
+					t.Logf("managed storage key=%d; foreign tenant=%d storage key=%d reused=%v",
+						managedStorageID, foreignTenantID, foreignStorageID, keyReused)
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant_storage.test", plancheck.ResourceActionCreate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant_storage.test", "provisioned", "1073741824"),
+					func(s *terraform.State) error {
+						client, err := acctest.SDKClient()
+						if err != nil {
+							return err
+						}
+						ctx := context.Background()
+						got, err := client.TenantStorage.Get(ctx, foreignStorageID)
+						if err != nil {
+							return fmt.Errorf("foreign storage %d missing after apply (key reused=%v): %w", foreignStorageID, keyReused, err)
+						}
+						if got.Tenant.Int() != foreignTenantID {
+							return fmt.Errorf("foreign storage tenant = %d, want %d", got.Tenant.Int(), foreignTenantID)
+						}
+						rs := s.RootModule().Resources["vergeio_tenant_storage.test"]
+						managedID, err := strconv.Atoi(rs.Primary.ID)
+						if err != nil {
+							return err
+						}
+						if managedID == foreignStorageID {
+							return fmt.Errorf("managed storage adopted foreign key %d", foreignStorageID)
+						}
+						managedTenant := rs.Primary.Attributes["tenant_id"]
+						wantTenant := s.RootModule().Resources["vergeio_tenant.test"].Primary.ID
+						if managedTenant != wantTenant {
+							return fmt.Errorf("managed storage tenant_id = %s, want %s", managedTenant, wantTenant)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
 }
