@@ -120,11 +120,12 @@ func (a *API) reconcilePower(ctx context.Context, id int, desired types.Bool, pr
 	return a.waitPower(ctx, id, true)
 }
 
-// reconcilePowerOnCreate is create's power path. powerstate=true before any
-// vergeio_tenant_node exists cannot reach terminal online: the tenant goes
-// starting then offline while its network starts, then waitPower times out
-// and leaves an orphan running vnet (#207). Defer power-on until a later
-// apply once nodes exist. powerstate=false still powers off as usual.
+// reconcilePowerOnCreate is create and update's power path when the desired
+// powerstate is known. powerstate=true before any vergeio_tenant_node exists
+// cannot reach terminal online: the tenant goes starting then offline while
+// its network starts, then waitPower times out and leaves an orphan running
+// vnet (#207 create, #219 update). Defer power-on until a later apply once
+// nodes exist. powerstate=false still powers off as usual.
 func (a *API) reconcilePowerOnCreate(ctx context.Context, id int, desired types.Bool, preferred types.Int32) (deferred bool, err error) {
 	if desired.IsNull() || desired.IsUnknown() {
 		return false, nil

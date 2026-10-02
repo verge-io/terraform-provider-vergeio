@@ -85,19 +85,21 @@ func (a *API) createTenant(ctx context.Context, data *TenantResourceModel) error
 	return nil
 }
 
-func (a *API) updateTenant(ctx context.Context, plan, state *TenantResourceModel) error {
+func (a *API) updateTenant(ctx context.Context, plan, state *TenantResourceModel) (deferred bool, err error) {
 	id, err := parseID(state.Id, "tenant")
 	if err != nil {
-		return err
+		return false, err
 	}
 	plan.Id = state.Id
 	if req := tenantUpdateRequest(plan, state); req != nil {
 		if _, err := a.sdk.Tenants.Update(ctx, id, req); err != nil {
-			return err
+			return false, err
 		}
 		tflog.Debug(ctx, fmt.Sprintf("updated tenant %d", id))
 	}
-	return a.reconcilePower(ctx, id, plan.PowerState, plan.PreferredNode)
+	// Same no-nodes defer as create (#219): powerstate=true with an empty
+	// node list must not PowerOn + waitPower(true).
+	return a.reconcilePowerOnCreate(ctx, id, plan.PowerState, plan.PreferredNode)
 }
 
 func (a *API) readTenant(ctx context.Context, data *TenantResourceModel) error {

@@ -249,7 +249,7 @@ func TestUpdateTenantSendsChangedFieldsAndPreservesPassword(t *testing.T) {
 	}
 	plan := *state
 	plan.Description = types.StringValue("new")
-	if err := api.updateTenant(context.Background(), &plan, state); err != nil {
+	if _, err := api.updateTenant(context.Background(), &plan, state); err != nil {
 		t.Fatal(err)
 	}
 	if err := api.readTenant(context.Background(), &plan); err != nil {
@@ -295,7 +295,7 @@ func TestUpdateTenantPowerOff(t *testing.T) {
 	}
 	plan := *state
 	plan.PowerState = types.BoolValue(false)
-	if err := api.updateTenant(context.Background(), &plan, state); err != nil {
+	if _, err := api.updateTenant(context.Background(), &plan, state); err != nil {
 		t.Fatal(err)
 	}
 	actions := fake.recordedActions()
@@ -709,7 +709,7 @@ func TestReconcilePowerWaitsThroughTransitions(t *testing.T) {
 
 	plan := *data
 	plan.PowerState = types.BoolValue(false)
-	if err := api.updateTenant(context.Background(), &plan, data); err != nil {
+	if _, err := api.updateTenant(context.Background(), &plan, data); err != nil {
 		t.Fatal(err)
 	}
 	if err := api.readTenant(context.Background(), &plan); err != nil {
@@ -1009,6 +1009,121 @@ func TestReconcilePowerOnCreateDefersWithoutNodes(t *testing.T) {
 	}
 }
 
+// TestUpdateDefersPowerOnWithoutNodes covers #219: update with powerstate=true
+// and no vergeio_tenant_node must defer like create, not PowerOn + waitPower.
+func TestUpdateDefersPowerOnWithoutNodes(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	state := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("Tf-acc-tenant-password"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	plan := *state
+	plan.PowerState = types.BoolValue(true)
+	deferred, err := api.updateTenant(context.Background(), &plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deferred {
+		t.Fatal("expected deferred power-on on update when no nodes exist")
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want none (no PowerOn, no orphan vnet)", actions)
+	}
+}
+
+// TestUpdatePowersOnWhenNodePresent covers #219: update with a tenant node
+// still powers on through reconcilePower.
+func TestUpdatePowersOnWhenNodePresent(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	state := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("Tf-acc-tenant-password"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: state.Id,
+		Name:     types.StringValue("n1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	plan := *state
+	plan.PowerState = types.BoolValue(true)
+	deferred, err := api.updateTenant(context.Background(), &plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred {
+		t.Fatal("expected power-on when a node exists")
+	}
+	actions := fake.recordedActions()
+	if len(actions) == 0 || actions[0]["action"] != "poweron" {
+		t.Fatalf("actions = %#v, want poweron", actions)
+	}
+	if err := api.readTenant(context.Background(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if !plan.PowerState.ValueBool() {
+		t.Fatalf("powerstate = %#v, want true after power on", plan.PowerState)
+	}
+}
+
+// TestUpdateResourceDefersPowerOnWithoutNodesKeepsPlannedTrue covers #219 at
+// the resource Update layer: deferred update must not PowerOn and must keep
+// planned powerstate=true in the apply response (same as create #207).
+func TestUpdateResourceDefersPowerOnWithoutNodesKeepsPlannedTrue(t *testing.T) {
+	fake := newFake(t)
+	ctx := context.Background()
+	createResp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("Tf-acc-tenant-password"),
+		PowerState: types.BoolValue(true),
+	})
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create diagnostics = %s", diagnosticText(createResp.Diagnostics))
+	}
+	var state TenantResourceModel
+	if diags := createResp.State.Get(ctx, &state); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	// Simulate post-apply refresh: actual powerstate is offline.
+	state.PowerState = types.BoolValue(false)
+	plan := state
+	plan.PowerState = types.BoolValue(true)
+	updateResp := updateTenantResource(t, ctx, fake, plan, state)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics = %s", diagnosticText(updateResp.Diagnostics))
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want deferred power-on with no orphan vnet", actions)
+	}
+	var stored TenantResourceModel
+	if diags := updateResp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if !stored.PowerState.ValueBool() {
+		t.Fatalf("powerstate = %#v, want planned true kept after deferred update", stored.PowerState)
+	}
+}
+
 func mustParseID(t *testing.T, v types.String) int {
 	t.Helper()
 	id, err := parseID(v, "id")
@@ -1072,6 +1187,24 @@ func createTenantResource(t *testing.T, ctx context.Context, fake *fakeVerge, pl
 	}
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
 	r.Create(ctx, resource.CreateRequest{Plan: plan}, resp)
+	return resp
+}
+
+func updateTenantResource(t *testing.T, ctx context.Context, fake *fakeVerge, planModel, stateModel TenantResourceModel) *resource.UpdateResponse {
+	t.Helper()
+	r := &TenantResource{api: fake.api(t)}
+	schemaResp := &resource.SchemaResponse{}
+	r.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, &planModel); diags.HasError() {
+		t.Fatalf("plan: %v", diags)
+	}
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := state.Set(ctx, &stateModel); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, resp)
 	return resp
 }
 

@@ -411,6 +411,105 @@ func TestAccTenantNodeRemoveWhileOnline(t *testing.T) {
 	})
 }
 
+
+// TestAccTenantUpdatePowerstateTrueDefersNoNodes covers #219: update with
+// powerstate=true and zero vergeio_tenant_node resources must defer like
+// create (#207), not PowerOn + wait two minutes. Path 1 re-applies after a
+// deferred create with nodes=0. Path 2 removes the last node of an online
+// tenant then re-applies powerstate=true with nodes=0.
+func TestAccTenantUpdatePowerstateTrueDefersNoNodes(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-upd-defer")
+	nodeName := acctest.Name("tenant-node-upd-defer")
+	tier := accStorageTier(t)
+	noNodes := testAccTenantPowerNoNodeConfig(tenantName, tier, true)
+	withNodeOff := testAccTenantPowerConfig(tenantName, nodeName, tier, false)
+	withNodeOn := testAccTenantPowerConfig(tenantName, nodeName, tier, true)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			// Path 1: deferred create with nodes=0, then update re-apply.
+			{
+				Config:             noNodes,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_storage.test", "id"),
+				),
+			},
+			{
+				// Update path (#219): must defer quickly, not time out.
+				// Apply keeps planned powerstate=true (same as create #207);
+				// post-apply refresh stores offline and leaves a non-empty plan.
+				Config:             noNodes,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "offline"),
+				),
+			},
+			// Path 2 setup: bring a node online, then remove it while
+			// powerstate=true remains configured.
+			{
+				Config: withNodeOff,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_node.test", "id"),
+				),
+			},
+			{
+				Config: withNodeOn,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "online"),
+				),
+			},
+			{
+				// Last node removed; tenant goes offline on refresh. Apply state
+				// may still show the prior online powerstate until refresh;
+				// ExpectNonEmptyPlan covers the #219 drift into update.
+				Config:             noNodes,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttrSet("vergeio_tenant_storage.test", "id"),
+				),
+			},
+			{
+				// Update again with nodes=0 (#219 path 2): defer, no timeout.
+				Config:             noNodes,
+				ExpectNonEmptyPlan: true,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "status", "offline"),
+				),
+			},
+		},
+	})
+}
+
+func testAccTenantPowerNoNodeConfig(tenantName string, tier int, power bool) string {
+	if err := acctest.RequirePrefix(tenantName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_tenant" "test" {
+  name        = %q
+  description = "acc update power defer no nodes"
+  password    = "Tf-acc-tenant-password1"
+  powerstate  = %t
+}
+
+resource "vergeio_tenant_storage" "test" {
+  tenant_id   = vergeio_tenant.test.id
+  tier        = %d
+  provisioned = 1073741824
+}
+`, tenantName, power, tier))
+}
+
 func testAccTenantMultiNodeConfig(tenantName string, tier, nodes int, power bool) string {
 	if err := acctest.RequirePrefix(tenantName); err != nil {
 		panic(err)

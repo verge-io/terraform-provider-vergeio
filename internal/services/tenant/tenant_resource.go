@@ -175,7 +175,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy stops only that node when it is running, leaving sibling nodes alone. The wait is 2 minutes. powerstate=true on create with no nodes yet defers power-on: the first apply creates the tenant offline and a later apply powers it on once vergeio_tenant_node exists.",
+				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy stops only that node when it is running, leaving sibling nodes alone. The wait is 2 minutes. powerstate=true with no nodes yet defers power-on on create and update: apply leaves the tenant offline and a later apply powers it on once vergeio_tenant_node exists.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{
@@ -298,7 +298,7 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	// powerstate=true with no nodes yet defers power-on (#207). Keep the
 	// planned true so Create state matches plan; a later apply powers on
-	// once vergeio_tenant_node exists.
+	// once vergeio_tenant_node exists. Post-apply refresh stores offline.
 	if deferred && !desiredPower.IsNull() && !desiredPower.IsUnknown() && desiredPower.ValueBool() {
 		data.PowerState = desiredPower
 	}
@@ -330,7 +330,9 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.api.updateTenant(ctx, &plan, &state); err != nil {
+	desiredPower := plan.PowerState
+	deferred, err := r.api.updateTenant(ctx, &plan, &state)
+	if err != nil {
 		resp.Diagnostics.AddError("Error updating tenant", err.Error())
 		return
 	}
@@ -340,6 +342,13 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if err := r.api.readTenant(ctx, &plan); err != nil {
 		resp.Diagnostics.AddError("Error reading tenant", err.Error())
 		return
+	}
+	// powerstate=true with no nodes yet defers power-on (#219), same as
+	// create (#207). Keep the planned true so Update state matches plan; a
+	// later apply powers on once vergeio_tenant_node exists. Post-apply
+	// refresh stores the actual offline powerstate.
+	if deferred && !desiredPower.IsNull() && !desiredPower.IsUnknown() && desiredPower.ValueBool() {
+		plan.PowerState = desiredPower
 	}
 	stored := tenantForState(&plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
