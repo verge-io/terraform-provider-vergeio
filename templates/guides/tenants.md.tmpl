@@ -45,7 +45,7 @@ The configuration for provider["registry.terraform.io/verge-io/vergeio"].inside
 depends on values that cannot be determined until apply.
 ```
 
-Use two root modules. The parent module creates the tenant and outputs `ui_address`. The tenant module reads that output with `terraform_remote_state` and configures its own provider. Apply the parent module first. Apply the tenant module after `ui_address` is set. A fresh tenant has no UI address until VergeOS assigns one, which usually happens once the tenant is powered on and has an address on the parent. `powerstate = true` on create defers power-on until a tenant node exists: the first apply creates the tenant offline, and a second apply (same configuration) powers it on after `vergeio_tenant_node` is present.
+Use two root modules. The parent module creates the tenant and outputs `ui_address`. The tenant module reads that output with `terraform_remote_state` and configures its own provider. Apply the parent module first. Apply the tenant module after `ui_address` is set. A fresh tenant has no UI address until VergeOS assigns one, which usually happens once the tenant is powered on and has an address on the parent. `powerstate = true` with no tenant node yet defers power-on on create and update: apply leaves the tenant offline, and a later apply powers it on after `vergeio_tenant_node` is present.
 
 The parent module:
 
