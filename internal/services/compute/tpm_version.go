@@ -9,6 +9,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
@@ -103,4 +105,35 @@ func (v TPMVersion) StringSemanticEquals(_ context.Context, newValuable basetype
 		return false, diags
 	}
 	return normalizeTPMVersion(v.ValueString()) == normalizeTPMVersion(newValue.ValueString()), diags
+}
+
+// tpmVersionRequiresReplace replaces the VM when an existing TPM device's
+// version changes. VergeOS treats version as read-only after create.
+// Adding a TPM device (null prior state for this attribute) stays an update.
+func tpmVersionRequiresReplace() planmodifier.String {
+	return stringplanmodifier.RequiresReplaceIf(
+		func(ctx context.Context, req planmodifier.StringRequest, resp *stringplanmodifier.RequiresReplaceIfFuncResponse) {
+			if req.StateValue.IsNull() || req.StateValue.IsUnknown() {
+				return
+			}
+			if req.PlanValue.IsUnknown() {
+				return
+			}
+			if req.PlanValue.IsNull() {
+				resp.RequiresReplace = true
+				return
+			}
+			equal, diags := NewTPMVersionValue(req.PlanValue.ValueString()).StringSemanticEquals(
+				ctx,
+				NewTPMVersionValue(req.StateValue.ValueString()),
+			)
+			resp.Diagnostics.Append(diags...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			resp.RequiresReplace = !equal
+		},
+		"TPM version is set at create and is read-only afterward. Changing it replaces the VM.",
+		"TPM version is set at create and is read-only afterward. Changing it replaces the VM.",
+	)
 }
