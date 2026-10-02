@@ -110,9 +110,9 @@ func testAccNetworkRuleAliasByIDConfig(networkName, aliasName string, byID bool)
 	if err := acctest.RequirePrefix(aliasName); err != nil {
 		panic(err)
 	}
-	ref := fmt.Sprintf("alias:${vergeio_network_rule_alias.test.id}")
+	ref := "alias:${vergeio_network_rule_alias.test.id}"
 	if !byID {
-		ref = fmt.Sprintf("alias:${vergeio_network_rule_alias.test.name}")
+		ref = "alias:${vergeio_network_rule_alias.test.name}"
 	}
 	return acctest.Config(fmt.Sprintf(`
 resource "vergeio_network" "test" {
