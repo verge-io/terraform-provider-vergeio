@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tenant (Resource)
 
-Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for terminal online or offline status (not merely starting or stopping) and for the tenant network to stop when powering off. Destroy powers a running tenant off and waits for its network to stop before delete. `vergeio_tenant_node` destroy stops only that node when it is running, so sibling nodes stay up. `powerstate = true` on create with no nodes yet defers power-on until a later apply after `vergeio_tenant_node` exists.
+Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for terminal online or offline status (not merely starting or stopping) and for the tenant network to stop when powering off. Destroy powers a running tenant off and waits for its network to stop before delete. `vergeio_tenant_node` destroy stops only that node when it is running, so sibling nodes stay up. `powerstate = true` with no nodes yet defers power-on on create and update until a later apply after `vergeio_tenant_node` exists.
 
 `ui_address` is the IP of the tenant UI, resolved from the `ui_address` row (`ui_address_id`). It stays empty until VergeOS assigns that address. Use it as the `host` of a second Terraform configuration that manages the inside of the tenant. See the [tenants guide](../guides/tenants.html).
 
@@ -48,7 +48,7 @@ resource "vergeio_tenant" "example" {
 - `note` (String) Free-form note stored on the tenant.
 - `oidc_application` (Number) OIDC application key for SSO.
 - `password` (String, Sensitive) Password for the tenant admin user. Omit to leave the current password unchanged.
-- `powerstate` (Boolean) Whether the tenant is powered on. Omit to leave the current power unchanged.
+- `powerstate` (Boolean) Whether the tenant is powered on. Omit to leave the current power unchanged. `true` with no nodes yet defers power-on on create and update.
 - `preferred_node` (Number) Host node used when `powerstate` changes to true. Changing it while the tenant is already on does not move the tenant.
 - `theme_access` (String) Theme visibility: `specified`, `host_only`, `local_only`, or `both`.
 - `url` (String) Optional URL recorded on the tenant.
