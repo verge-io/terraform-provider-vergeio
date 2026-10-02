@@ -49,6 +49,13 @@ type VMResource struct {
 	deviceApi *DeviceApi
 }
 
+// cloudInitExpectLivePrivateKey marks that configured cloudinit_files should
+// still exist in VergeOS. Create sets it when powerstate is false (or files
+// were configured without a power-on detach). Power-on detach leaves it unset
+// so refresh keeps the planned list when VergeOS has none. An external wipe
+// of every file clears state only when this key is set.
+const cloudInitExpectLivePrivateKey = "cloudinitExpectLive"
+
 // CloudInitFile represents a cloud-init file with name and contents.
 type CloudInitFile struct {
 	Name     types.String `tfsdk:"name"`
@@ -1024,6 +1031,16 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 				)
 				return
 			}
+			// Detach cleared VergeOS. Leave cloudInitExpectLive unset so refresh
+			// keeps the planned list when the live list is empty.
+		}
+	} else if len(plannedCloudInitFiles) > 0 {
+		// Files stay attached until an external change or a later update.
+		if resp.Private != nil {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, cloudInitExpectLivePrivateKey, []byte("true"))...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 		}
 	}
 
@@ -1081,13 +1098,15 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	// expects the planned value ("nocloud"/"config_drive_v2") for consistency.
 	// On subsequent Read() calls, ignore_changes prevents drift.
 	// File rows are the plan captured above. The final read would otherwise
-	// store the live list, which is empty after detach. A later refresh keeps
-	// that list when VergeOS has no cloud-init rows left, so the next plan
-	// does not create them again.
+	// store the live list, which is empty after detach. Private state leaves
+	// cloudInitExpectLive unset after detach so a later refresh keeps that
+	// list when VergeOS has no rows, and the next plan does not create them
+	// again. When create left the files attached, expect-live is set so an
+	// external wipe of every file is still detected.
 	plannedCloudInitDS := data.CloudInitDataSource
 
 	// read the final state of the VM
-	if readError := r.vmApi.readVM(ctx, &data); readError != nil {
+	if readError := r.vmApi.readVM(ctx, &data, false); readError != nil {
 		resp.Diagnostics.AddError(
 			"Error reading the VM",
 			readError.Error(),
@@ -1127,8 +1146,18 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		return
 	}
 
+	expectLive := false
+	if req.Private != nil {
+		raw, diags := req.Private.GetKey(ctx, cloudInitExpectLivePrivateKey)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		expectLive = string(raw) == "true"
+	}
+
 	// Read data into the model to get all the attributes
-	readDataError := r.vmApi.readVM(ctx, &data)
+	readDataError := r.vmApi.readVM(ctx, &data, expectLive)
 
 	if readDataError != nil {
 		// if the resource was not found, likely deleted outside of terraform
@@ -1193,6 +1222,8 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating VM state %s", stateData.Id.ValueString()))
 
+	cloudInitEqualBefore := cloudInitFilesEqual(planData.CloudInitFiles, stateData.CloudInitFiles)
+
 	// Update VM attributes only. Power is applied after the boot disk
 	// sync so a VM started in this apply boots with that disk.
 	// Extra drives and NICs are separate resources. They hotplug when the
@@ -1248,7 +1279,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	usePlannedShutdownSettings(&stateData, &planData)
 
 	// Read the VM from the API to get all the data.
-	if readError := r.vmApi.readVM(ctx, &stateData); readError != nil {
+	if readError := r.vmApi.readVM(ctx, &stateData, false); readError != nil {
 		resp.Diagnostics.AddError(
 			"Error reading the VM",
 			readError.Error(),
@@ -1279,6 +1310,20 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// The file rows were written above. readVM loads those bodies, possibly
 	// in API order. Saving the plan keeps the configured order.
 	usePlannedCloudInitFiles(&stateData, &planData)
+
+	// A cloud-init sync that wrote or removed rows updates whether refresh
+	// should treat an empty live list as drift. Detach-only creates leave
+	// expect-live unset; recreating files after drift sets it again.
+	if !cloudInitEqualBefore && resp.Private != nil {
+		if len(planData.CloudInitFiles) > 0 {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, cloudInitExpectLivePrivateKey, []byte("true"))...)
+		} else {
+			resp.Diagnostics.Append(resp.Private.SetKey(ctx, cloudInitExpectLivePrivateKey, nil)...)
+		}
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)

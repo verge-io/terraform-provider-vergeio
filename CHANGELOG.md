@@ -30,6 +30,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_vm` refresh detects when every configured `cloudinit_files` entry was deleted outside Terraform while those files were still expected to be live (for example after create with `powerstate = false`). Power-on detach still keeps an empty plan so the provider does not recreate files it removed after the first boot.
 - `vergeio_network.interface_vnet` set to `0` is treated as unset toward VergeOS (create and update omit it). Refresh stores `0` when VergeOS has no parent, so a configured `0` keeps a valid empty plan without rewriting the planned value.
 - `vergeio_network` refresh stores `mtu`, `layer2_id`, `layer2_type`, `interface_vnet`, and `enable_bonding` from VergeOS. A configured MTU applies. A missing parent is stored as `interface_vnet = 0`.
 - Changing the `rule` list on `vergeio_network_rules`, or adding a `vergeio_device` to an existing VM, no longer fails apply with "Provider produced inconsistent result". A nested id is taken from the object with the same name. `orderid` is kept only when that rule is still at the same index. A new object, or a rule that moved, is planned unknown.

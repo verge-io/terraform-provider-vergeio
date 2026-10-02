@@ -112,7 +112,7 @@ func (va *VMApi) machineIDForVM(ctx context.Context, vmID string) (types.Int32, 
 		return types.Int32Null(), errors.New("vm_id is empty")
 	}
 	data := &VMResourceModel{Id: types.StringValue(vmID)}
-	if err := va.readVM(ctx, data); err != nil {
+	if err := va.readVM(ctx, data, false); err != nil {
 		return types.Int32Null(), err
 	}
 	if data.Machine.IsNull() || data.Machine.IsUnknown() {

@@ -112,7 +112,7 @@ func (r *VMResource) adoptOrphanVM(ctx context.Context, data *VMResourceModel) e
 
 	data.Id = types.StringValue(id)
 	tflog.Info(ctx, fmt.Sprintf("Adopting existing VM %s (id %s) after a name conflict", name, id))
-	if err := r.vmApi.readVM(ctx, data); err != nil {
+	if err := r.vmApi.readVM(ctx, data, false); err != nil {
 		return fmt.Errorf("VM %q (id %s) matches this configuration but reading it failed: %w", name, id, err)
 	}
 	return nil

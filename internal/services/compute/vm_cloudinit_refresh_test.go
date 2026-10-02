@@ -8,8 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
-	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-vergeio/internal/client"
@@ -44,8 +42,9 @@ func TestReadVMStoresCloudInitFileEditedOutsideTerraform(t *testing.T) {
 }
 
 func TestReadVMKeepsCloudInitFilesRemovedFromVergeOS(t *testing.T) {
-	// Power-on deletes every configured file after the guest boots. Refresh
-	// has to keep them, or the next plan creates the rows again.
+	// Power-on detach leaves cloudInitExpectLive unset. Refresh keeps the
+	// prior list when VergeOS has none, or the next plan creates the rows
+	// again.
 	fake := newFakeCloudInit()
 	prior := []CloudInitFile{
 		cloudInitFile("/user-data", cloudInitFirst),
@@ -58,6 +57,40 @@ func TestReadVMKeepsCloudInitFilesRemovedFromVergeOS(t *testing.T) {
 			t.Fatalf("downloaded a missing file: %#v", fake.cloudInitCalls())
 		}
 	}
+}
+
+func TestReadVMDropsAllCloudInitFilesWhenExpectLive(t *testing.T) {
+	// Create with powerstate=false sets expect-live. An external wipe of
+	// every file must clear state so the next plan recreates them.
+	fake := newFakeCloudInit()
+	prior := []CloudInitFile{
+		cloudInitFile("/user-data", cloudInitFirst),
+		cloudInitFile("/meta-data", cloudInitMeta),
+	}
+	got := runCloudInitReadExpectLive(t, fake, prior, true)
+	assertCloudInitFiles(t, got, []CloudInitFile{})
+}
+
+func TestReadVMDropsSingleCloudInitFileWhenExpectLiveAndOnlyFileDeleted(t *testing.T) {
+	fake := newFakeCloudInit()
+	got := runCloudInitReadExpectLive(t, fake, []CloudInitFile{
+		cloudInitFile("/user-data", cloudInitFirst),
+	}, true)
+	assertCloudInitFiles(t, got, []CloudInitFile{})
+}
+
+func TestCloudInitFilesForStateEmptyLive(t *testing.T) {
+	prior := []CloudInitFile{
+		cloudInitFile("/user-data", cloudInitFirst),
+		cloudInitFile("/meta-data", cloudInitMeta),
+	}
+	kept := cloudInitFilesForState(prior, nil, false)
+	assertCloudInitFilesModel(t, kept, prior)
+	cleared := cloudInitFilesForState(prior, nil, true)
+	assertCloudInitFilesModel(t, cleared, []CloudInitFile{})
+	partialLive := []CloudInitFile{cloudInitFile("/meta-data", cloudInitMeta)}
+	partial := cloudInitFilesForState(prior, partialLive, true)
+	assertCloudInitFilesModel(t, partial, []CloudInitFile{cloudInitFile("/meta-data", cloudInitMeta)})
 }
 
 func TestReadVMDropsCloudInitFileDeletedWhileAnotherRemains(t *testing.T) {
@@ -114,18 +147,20 @@ func TestReadVMKeepsCloudInitOrderWhenVergeOSReturnsAnotherOrder(t *testing.T) {
 
 func runCloudInitRead(t *testing.T, fake *fakeCloudInit, stateFiles []CloudInitFile) VMResourceModel {
 	t.Helper()
+	return runCloudInitReadExpectLive(t, fake, stateFiles, false)
+}
+
+func runCloudInitReadExpectLive(t *testing.T, fake *fakeCloudInit, stateFiles []CloudInitFile, expectLive bool) VMResourceModel {
+	t.Helper()
 
 	server := httptest.NewServer(fake.handler(t))
 	t.Cleanup(server.Close)
 
 	ctx := t.Context()
 	vergeClient := vergeio.NewClient(server.URL, "user", "pass", true)
-	vmResource := &VMResource{vmApi: mustAPI(NewVMApi(vergeClient))}
+	api := mustAPI(NewVMApi(vergeClient))
 
-	schemaResp := &fwresource.SchemaResponse{}
-	vmResource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
-
-	stateModel := VMResourceModel{
+	data := VMResourceModel{
 		Id:             types.StringValue("7"),
 		Machine:        types.Int32Value(1),
 		Name:           types.StringValue("web"),
@@ -133,19 +168,20 @@ func runCloudInitRead(t *testing.T, fake *fakeCloudInit, stateFiles []CloudInitF
 		CloudInitFiles: stateFiles,
 		GuestAgentIPs:  types.ListNull(types.StringType),
 	}
-	state := tfsdk.State{Schema: schemaResp.Schema}
-	if diags := state.Set(ctx, &stateModel); diags.HasError() {
-		t.Fatalf("state: %v", diags)
+	if err := api.readVM(ctx, &data, expectLive); err != nil {
+		t.Fatalf("readVM: %v", err)
 	}
+	return data
+}
 
-	resp := &fwresource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-	vmResource.Read(ctx, fwresource.ReadRequest{State: state}, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("read: %v", resp.Diagnostics)
+func assertCloudInitFilesModel(t *testing.T, got, want []CloudInitFile) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("files len=%d want %d; got %#v want %#v", len(got), len(want), got, want)
 	}
-	var got VMResourceModel
-	if diags := resp.State.Get(ctx, &got); diags.HasError() {
-		t.Fatalf("refreshed state: %v", diags)
+	for i := range want {
+		if got[i].Name.ValueString() != want[i].Name.ValueString() || got[i].Contents.ValueString() != want[i].Contents.ValueString() {
+			t.Fatalf("files[%d]=%#v want %#v", i, got[i], want[i])
+		}
 	}
-	return got
 }
