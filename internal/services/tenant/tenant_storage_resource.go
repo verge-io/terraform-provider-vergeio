@@ -53,7 +53,7 @@ func (r *TenantStorageResource) Metadata(ctx context.Context, req resource.Metad
 
 func (r *TenantStorageResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Storage tier allocation for a VergeOS tenant. provisioned is the quota in bytes. Changing tenant_id or tier replaces the allocation.",
+		MarkdownDescription: "Storage tier allocation for a VergeOS tenant. provisioned is the quota in bytes and must be a whole number of GiB (multiples of 1073741824). Changing tenant_id or tier replaces the allocation.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Tenant storage key assigned by VergeOS.",
@@ -77,10 +77,11 @@ func (r *TenantStorageResource) Schema(ctx context.Context, req resource.SchemaR
 				},
 			},
 			"provisioned": schema.Int64Attribute{
-				MarkdownDescription: "Provisioned storage in bytes.",
+				MarkdownDescription: "Provisioned storage in bytes. Must be a positive multiple of 1073741824 (1 GiB); VergeOS floors non-aligned values.",
 				Required:            true,
 				Validators: []validator.Int64{
 					int64validator.AtLeast(1),
+					provisionedMultipleOfGiB{},
 				},
 			},
 			"used": schema.Int64Attribute{

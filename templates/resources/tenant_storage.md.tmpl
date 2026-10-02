@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tenant_storage (Resource)
 
-Allocates capacity from a storage tier to a tenant. `provisioned` is the quota in bytes. Changing `tenant_id` or `tier` replaces the allocation. `tier` is the storage tier key (0 through 5 on a typical system).
+Allocates capacity from a storage tier to a tenant. `provisioned` is the quota in bytes and must be a whole number of GiB (a positive multiple of 1073741824). VergeOS floors non-aligned values, so the provider rejects them at plan time. Changing `tenant_id` or `tier` replaces the allocation. `tier` is the storage tier key (0 through 5 on a typical system).
 
 ## Example Usage
 
@@ -19,7 +19,7 @@ Allocates capacity from a storage tier to a tenant. `provisioned` is the quota i
 
 ### Required
 
-- `provisioned` (Number) Provisioned storage in bytes.
+- `provisioned` (Number) Provisioned storage in bytes. Must be a positive multiple of 1073741824 (1 GiB).
 - `tenant_id` (String) Key of the parent `vergeio_tenant`. Changing it replaces the allocation.
 - `tier` (Number) Storage tier key. Changing it replaces the allocation.
 
