@@ -465,7 +465,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
 
 	// Read the VM from the API to get all the data.
-	if readError := va.readVM(ctx, data); readError != nil {
+	if readError := va.readVM(ctx, data, false); readError != nil {
 		return errors.New("Error reading the VM: " + readError.Error())
 	}
 
@@ -1228,7 +1228,12 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 }
 
 // Read the VM from the API.
-func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
+// expectLiveCloudInit is true when private state says the provider still
+// expects the configured cloud-init files to exist in VergeOS (they were
+// not detached after power-on). An empty live list then clears state so the
+// next plan recreates them. When false, an empty live list keeps the prior
+// files so a post-detach plan stays empty.
+func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel, expectLiveCloudInit bool) error {
 	if err := va.ensureSDK(); err != nil {
 		return err
 	}
@@ -1264,7 +1269,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 	if err := va.useMachinePowerState(ctx, data); err != nil {
 		return err
 	}
-	if err := va.readCloudInitFiles(ctx, data, vmID); err != nil {
+	if err := va.readCloudInitFiles(ctx, data, vmID, expectLiveCloudInit); err != nil {
 		return err
 	}
 
@@ -1276,7 +1281,7 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 // readCloudInitFiles stores the cloud-init files owned by this VM.
 // List names the rows. The body is only on GET cloudinit_files/<key>?download=1,
 // which GetContents reads. A contents value on the list response is ignored.
-func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, vmID int) error {
+func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, vmID int, expectLive bool) error {
 	if va.sdk == nil || va.sdk.CloudInitFiles == nil {
 		return fmt.Errorf("cloud-init client is not configured")
 	}
@@ -1300,7 +1305,7 @@ func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, 
 			Contents: types.StringValue(contents),
 		})
 	}
-	data.CloudInitFiles = cloudInitFilesForState(data.CloudInitFiles, live)
+	data.CloudInitFiles = cloudInitFilesForState(data.CloudInitFiles, live, expectLive)
 	return nil
 }
 
@@ -1314,11 +1319,14 @@ func (va *VMApi) readCloudInitFiles(ctx context.Context, data *VMResourceModel, 
 // prior rows leaves null when state has never stored the list, and an empty
 // list when it was cleared.
 //
-// An empty live list keeps the prior files. Power-on deletes every configured
-// file after the guest boots, and dropping them makes the next plan create
-// them again. A file missing while another row is still present is dropped,
-// so a later plan can put that one file back.
-func cloudInitFilesForState(prior, live []CloudInitFile) []CloudInitFile {
+// An empty live list keeps the prior files when expectLive is false: power-on
+// deletes every configured file after the guest boots, and dropping them
+// makes the next plan create them again. When expectLive is true (private
+// state says the provider did not detach them), an empty live list clears
+// state so an external wipe of every file shows in the plan. A file missing
+// while another row is still present is always dropped, so a later plan can
+// put that one file back.
+func cloudInitFilesForState(prior, live []CloudInitFile, expectLive bool) []CloudInitFile {
 	if len(prior) == 0 {
 		if prior == nil {
 			return nil
@@ -1326,6 +1334,9 @@ func cloudInitFilesForState(prior, live []CloudInitFile) []CloudInitFile {
 		return []CloudInitFile{}
 	}
 	if len(live) == 0 {
+		if expectLive {
+			return []CloudInitFile{}
+		}
 		return cloneCloudInitFiles(prior)
 	}
 	byName := make(map[string][]CloudInitFile, len(live))

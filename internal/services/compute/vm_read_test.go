@@ -14,11 +14,11 @@ import (
 )
 
 func TestReadVMNilClientDoesNotPanic(t *testing.T) {
-	err := (*VMApi)(nil).readVM(t.Context(), &VMResourceModel{Id: types.StringValue("4")})
+	err := (*VMApi)(nil).readVM(t.Context(), &VMResourceModel{Id: types.StringValue("4")}, false)
 	if err == nil {
 		t.Fatal("nil VM api should return an error")
 	}
-	err = (&VMApi{}).readVM(t.Context(), &VMResourceModel{Id: types.StringValue("4")})
+	err = (&VMApi{}).readVM(t.Context(), &VMResourceModel{Id: types.StringValue("4")}, false)
 	if err == nil {
 		t.Fatal("unconfigured VM api should return an error")
 	}
@@ -45,7 +45,7 @@ func TestReadVMEmptyResponseDoesNotPanic(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
-	err := api.readVM(t.Context(), &VMResourceModel{Id: types.StringValue("4")})
+	err := api.readVM(t.Context(), &VMResourceModel{Id: types.StringValue("4")}, false)
 	if err == nil {
 		t.Fatal("empty VM response should be an error")
 	}
@@ -73,7 +73,7 @@ func TestReadVMAppliesSnapshotProfile(t *testing.T) {
 
 	api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &VMResourceModel{Id: types.StringValue("4")}
-	if err := api.readVM(t.Context(), data); err != nil {
+	if err := api.readVM(t.Context(), data, false); err != nil {
 		t.Fatal(err)
 	}
 	if data.Name.ValueString() != "web" || data.SnapshotProfile.ValueInt32() != 12 || data.Machine.ValueInt32() != 3 {
@@ -119,7 +119,7 @@ func TestReadVMRetriesSDKSetup(t *testing.T) {
 	// SDK was not stored. Configure no longer does that; this covers the retry.
 	retry := &VMApi{name: "VM Api", client: vergeClient}
 	data := &VMResourceModel{Id: types.StringValue("4")}
-	if err := retry.readVM(t.Context(), data); err != nil {
+	if err := retry.readVM(t.Context(), data, false); err != nil {
 		t.Fatal(err)
 	}
 	if data.SnapshotProfile.ValueInt32() != 12 {
@@ -161,7 +161,7 @@ func TestReadVMReusesSDKClient(t *testing.T) {
 	}
 	api := &VMApi{client: vergeClient}
 	data := &VMResourceModel{Id: types.StringValue("4")}
-	if err := api.readVM(t.Context(), data); err != nil {
+	if err := api.readVM(t.Context(), data, false); err != nil {
 		t.Fatal(err)
 	}
 	if versionCalls != 1 {
@@ -197,7 +197,7 @@ func TestReadVMPrefersMachineRunning(t *testing.T) {
 
 	api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &VMResourceModel{Id: types.StringValue("4")}
-	if err := api.readVM(t.Context(), data); err != nil {
+	if err := api.readVM(t.Context(), data, false); err != nil {
 		t.Fatal(err)
 	}
 	if data.PowerState.IsNull() || data.PowerState.ValueBool() {
@@ -230,7 +230,7 @@ func TestReadVMKeepsPowerStateAlias(t *testing.T) {
 
 	api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
 	data := &VMResourceModel{Id: types.StringValue("4")}
-	if err := api.readVM(t.Context(), data); err != nil {
+	if err := api.readVM(t.Context(), data, false); err != nil {
 		t.Fatal(err)
 	}
 	if data.PowerState.IsNull() || !data.PowerState.ValueBool() {

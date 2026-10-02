@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -956,4 +957,232 @@ func TestAccVMResource_TPMVersionReplace(t *testing.T) {
 			},
 		},
 	})
+}
+
+// TestAccVMResource_CloudInitFilesExternalDelete covers #188: wiping every
+// configured cloud-init file outside Terraform must plan a recreate when the
+// VM was created with powerstate=false (files still expected live). Deleting
+// one of several files is still detected.
+func TestAccVMResource_CloudInitFilesExternalDelete(t *testing.T) {
+	vmName := acctest.Name("vm-ci188")
+	oneFile := testAccVMCloudInitConfig(vmName, false, false)
+	twoFiles := testAccVMCloudInitConfig(vmName, true, false)
+
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: oneFile,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "1"),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				PreConfig: func() {
+					if err := testAccDeleteAllCloudInitFilesOutsideTerraform(vmID); err != nil {
+						t.Fatalf("delete all cloud-init files: %v", err)
+					}
+				},
+				Config: oneFile,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "1"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 1),
+				),
+			},
+			{
+				Config: twoFiles,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "2"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 2),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				PreConfig: func() {
+					if err := testAccDeleteCloudInitFileOutsideTerraform(vmID, "/meta-data"); err != nil {
+						t.Fatalf("delete one cloud-init file: %v", err)
+					}
+				},
+				Config: twoFiles,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "2"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 2),
+				),
+			},
+			{
+				PreConfig: func() {
+					if err := testAccDeleteAllCloudInitFilesOutsideTerraform(vmID); err != nil {
+						t.Fatalf("delete all cloud-init files: %v", err)
+					}
+				},
+				Config: twoFiles,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "2"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 2),
+				),
+			},
+		},
+	})
+}
+
+// TestAccVMResource_CloudInitFilesPowerOnDetachEmptyPlan covers the #185 path
+// preserved by #188: after create with powerstate=true the provider detaches
+// cloud-init files, state still lists them, and the next plan stays empty.
+func TestAccVMResource_CloudInitFilesPowerOnDetachEmptyPlan(t *testing.T) {
+	vmName := acctest.Name("vm-ci188-pon")
+	poweredOn := testAccVMCloudInitConfig(vmName, false, true)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: poweredOn,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "powerstate", "true"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "cloudinit_files.#", "1"),
+					testAccCheckVMCloudInitFileCount("vergeio_vm.test", 0),
+				),
+			},
+			{
+				Config: poweredOn,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccVMCloudInitConfig(vmName string, two, powerOn bool) string {
+	if err := acctest.RequirePrefix(vmName); err != nil {
+		panic(err)
+	}
+	power := "false"
+	if powerOn {
+		power = "true"
+	}
+	files := `
+  cloudinit_files = [
+    { name = "/user-data", contents = "#cloud-config\nhostname: third\n" },
+  ]`
+	if two {
+		files = `
+  cloudinit_files = [
+    { name = "/user-data", contents = "#cloud-config\nhostname: third\n" },
+    { name = "/meta-data", contents = "instance-id: x\n" },
+  ]`
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_vm" "test" {
+  name                 = %q
+  cpu_cores            = 1
+  ram                  = 1024
+  powerstate           = %s
+  cloudinit_datasource = "nocloud"
+  %s
+}
+`, vmName, power, files))
+}
+
+func testAccDeleteAllCloudInitFilesOutsideTerraform(id string) error {
+	vmID, err := strconv.Atoi(id)
+	if err != nil {
+		return fmt.Errorf("vm id %q: %w", id, err)
+	}
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	files, err := client.CloudInitFiles.ListByVM(ctx, vmID)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		if err := client.CloudInitFiles.Delete(ctx, file.Key.Int()); err != nil {
+			return fmt.Errorf("delete cloud-init file %q: %w", file.Name, err)
+		}
+	}
+	return nil
+}
+
+func testAccDeleteCloudInitFileOutsideTerraform(id, name string) error {
+	vmID, err := strconv.Atoi(id)
+	if err != nil {
+		return fmt.Errorf("vm id %q: %w", id, err)
+	}
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	files, err := client.CloudInitFiles.ListByVM(ctx, vmID)
+	if err != nil {
+		return err
+	}
+	want := strings.TrimPrefix(name, "/")
+	deleted := false
+	for _, file := range files {
+		if strings.TrimPrefix(file.Name, "/") == want {
+			if err := client.CloudInitFiles.Delete(ctx, file.Key.Int()); err != nil {
+				return fmt.Errorf("delete cloud-init file %q: %w", file.Name, err)
+			}
+			deleted = true
+		}
+	}
+	if !deleted {
+		return fmt.Errorf("cloud-init file %q not found on vm %s", name, id)
+	}
+	return nil
+}
+
+func testAccCheckVMCloudInitFileCount(resourceName string, want int) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource not found: %s", resourceName)
+		}
+		vmID, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil {
+			return fmt.Errorf("vm id %q: %w", rs.Primary.ID, err)
+		}
+		client, err := acctest.SDKClient()
+		if err != nil {
+			return err
+		}
+		files, err := client.CloudInitFiles.ListByVM(context.Background(), vmID)
+		if err != nil {
+			return err
+		}
+		if len(files) != want {
+			return fmt.Errorf("vm %s has %d cloud-init files, want %d", rs.Primary.ID, len(files), want)
+		}
+		return nil
+	}
 }
