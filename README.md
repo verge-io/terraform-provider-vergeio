@@ -64,8 +64,10 @@ provider "vergeio" {}
 - vergeio_tenant_storage
 - vergeio_user
 - vergeio_vm
+- vergeio_vm_drive
+- vergeio_vm_nic
 
-Drives and NICs are `vergeio_vm_drive` and `vergeio_vm_nic`. Devices stay nested on `vergeio_vm`.
+Devices stay nested on `vergeio_vm`.
 
 `vergeio_group` creates a group. `vergeio_permission` grants a user or a group list, read, create, modify, and delete on a table or one object. `vergeio_member` adds a user or another object to a group. `vergeio_users` lists users the same way `vergeio_groups` lists groups.
 
