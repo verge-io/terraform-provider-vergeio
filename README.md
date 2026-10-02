@@ -64,6 +64,8 @@ provider "vergeio" {}
 - vergeio_tenant_storage
 - vergeio_user
 - vergeio_vm
+- vergeio_vm_drive
+- vergeio_vm_nic
 
 Drives and NICs are `vergeio_vm_drive` and `vergeio_vm_nic`. Devices stay nested on `vergeio_vm`.
 
