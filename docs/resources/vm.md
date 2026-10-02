@@ -309,7 +309,7 @@ Optional:
   - `enable_profiling` (Boolean) - Enable profiling
 - `tpm_settings` (Object) - Settings for TPM devices:
   - `model` (String) - TPM model (e.g., `"crb"`)
-  - `version` (String) - TPM version. `"2.0"` and `"1.2"` are display labels stored as `"2"` and `"1"`. `"2"` and `"1"` are accepted unchanged. The version is sent when the device is created. VergeOS treats it as read-only afterward, so updates omit it. Remove the device and add it again to change the version.
+  - `version` (String) - TPM version. `"2.0"` and `"1.2"` are display labels stored as `"2"` and `"1"`. `"2"` and `"1"` are accepted unchanged. The version is sent when the device is created. VergeOS treats it as read-only afterward, so updates omit it. Changing version on an existing device replaces the VM so create can send the new value. Adding a TPM device is still an in-place update.
 - `usb_settings` (Object) - Settings for USB devices:
   - `guest_reset` (Boolean) - Allow guest to reset device
   - `guest_resets_all` (Boolean) - Guest reset affects all USB devices

@@ -873,3 +873,87 @@ func TestAccVMResource_AddDevice(t *testing.T) {
 		},
 	})
 }
+
+// TestAccVMResource_TPMVersionReplace creates a VM with TPM version 2,
+// then changes version to 1.2. VergeOS cannot update version in place, so
+// the plan must replace the VM (RequiresReplace) instead of a doomed
+// in-place update that leaves version unchanged.
+func TestAccVMResource_TPMVersionReplace(t *testing.T) {
+	vmName := acctest.Name("vm-tpm-ver")
+	withV2 := testAccVMResourceConfig(vmName, `
+  enabled    = true
+  cpu_cores  = 1
+  ram        = 1024
+  powerstate = false
+
+  vergeio_device {
+    name = "tpm"
+    type = "tpm"
+    tpm_settings = {
+      model   = "crb"
+      version = "2"
+    }
+  }
+`)
+	withV12 := testAccVMResourceConfig(vmName, `
+  enabled    = true
+  cpu_cores  = 1
+  ram        = 1024
+  powerstate = false
+
+  vergeio_device {
+    name = "tpm"
+    type = "tpm"
+    tpm_settings = {
+      model   = "crb"
+      version = "1.2"
+    }
+  }
+`)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: withV2,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.version", "2"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.model", "crb"),
+				),
+			},
+			{
+				Config: withV2,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: withV12,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionReplace),
+						plancheck.ExpectKnownValue("vergeio_vm.test", tfjsonpath.New("vergeio_device").AtSliceIndex(0).AtMapKey("tpm_settings").AtMapKey("version"), knownvalue.StringExact("1.2")),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.version", "1.2"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "vergeio_device.0.tpm_settings.model", "crb"),
+					resource.TestCheckResourceAttrSet("vergeio_vm.test", "vergeio_device.0.key"),
+				),
+			},
+			{
+				Config: withV12,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}

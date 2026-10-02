@@ -453,26 +453,38 @@ func (da *DeviceApi) syncDevices(ctx context.Context, planData *[]*deviceResourc
 	// Compare the plan data with the state data and update
 	for _, plan := range *planData {
 		for _, state := range *stateData {
-			if plan.Name.ValueString() == state.Name.ValueString() {
-				if plan.Description.ValueString() != state.Description.ValueString() ||
-					plan.Enabled.ValueBool() != state.Enabled.ValueBool() ||
-					(plan.Type.ValueString() == "node_usb_devices" &&
-						(plan.DeviceUSBSettingsModel.GuestReset != state.DeviceUSBSettingsModel.GuestReset ||
-							plan.DeviceUSBSettingsModel.GuestResetsAll != state.DeviceUSBSettingsModel.GuestResetsAll)) ||
-					(plan.Type.ValueString() == "tpm" &&
-						(plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model ||
-							plan.DeviceTPMSettingsModel.Version != state.DeviceTPMSettingsModel.Version)) ||
-					(plan.Type.ValueString() == "node_nvidia_vgpu_devices" &&
-						(plan.DeviceNvidiaVGPUSettingsModel.ProfileType != state.DeviceNvidiaVGPUSettingsModel.ProfileType ||
-							// plan.DeviceNvidiaVGPUSettingsModel.AttachDrivers != state.DeviceNvidiaVGPUSettingsModel.AttachDrivers ||
-							plan.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter != state.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter ||
-							plan.DeviceNvidiaVGPUSettingsModel.DisableVNC != state.DeviceNvidiaVGPUSettingsModel.DisableVNC ||
-							plan.DeviceNvidiaVGPUSettingsModel.EnableUVM != state.DeviceNvidiaVGPUSettingsModel.EnableUVM ||
-							plan.DeviceNvidiaVGPUSettingsModel.EnableDebugging != state.DeviceNvidiaVGPUSettingsModel.EnableDebugging ||
-							plan.DeviceNvidiaVGPUSettingsModel.EnableProfiling != state.DeviceNvidiaVGPUSettingsModel.EnableProfiling)) {
-					if err := da.updateDevice(ctx, plan, state); err != nil {
-						return fmt.Errorf("failed to update device: %v", err)
-					}
+			if plan.Name.ValueString() != state.Name.ValueString() {
+				continue
+			}
+			// TPM version is create-time only. VergeOS returns 422 when a
+			// settings update includes it (#184). Recreate the device so
+			// create can send the new stored version. Schema RequiresReplace
+			// also replaces the VM when version changes; this path covers
+			// sync callers and keeps model-only updates on the omit path.
+			if plan.Type.ValueString() == "tpm" && tpmStoredVersionDiffers(plan, state) {
+				if err := da.replaceTPMDevice(ctx, plan, state, machineId); err != nil {
+					return err
+				}
+				continue
+			}
+			if plan.Description.ValueString() != state.Description.ValueString() ||
+				plan.Enabled.ValueBool() != state.Enabled.ValueBool() ||
+				(plan.Type.ValueString() == "node_usb_devices" &&
+					(plan.DeviceUSBSettingsModel.GuestReset != state.DeviceUSBSettingsModel.GuestReset ||
+						plan.DeviceUSBSettingsModel.GuestResetsAll != state.DeviceUSBSettingsModel.GuestResetsAll)) ||
+				(plan.Type.ValueString() == "tpm" &&
+					plan.DeviceTPMSettingsModel != nil && state.DeviceTPMSettingsModel != nil &&
+					plan.DeviceTPMSettingsModel.Model != state.DeviceTPMSettingsModel.Model) ||
+				(plan.Type.ValueString() == "node_nvidia_vgpu_devices" &&
+					(plan.DeviceNvidiaVGPUSettingsModel.ProfileType != state.DeviceNvidiaVGPUSettingsModel.ProfileType ||
+						// plan.DeviceNvidiaVGPUSettingsModel.AttachDrivers != state.DeviceNvidiaVGPUSettingsModel.AttachDrivers ||
+						plan.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter != state.DeviceNvidiaVGPUSettingsModel.FrameRateLimiter ||
+						plan.DeviceNvidiaVGPUSettingsModel.DisableVNC != state.DeviceNvidiaVGPUSettingsModel.DisableVNC ||
+						plan.DeviceNvidiaVGPUSettingsModel.EnableUVM != state.DeviceNvidiaVGPUSettingsModel.EnableUVM ||
+						plan.DeviceNvidiaVGPUSettingsModel.EnableDebugging != state.DeviceNvidiaVGPUSettingsModel.EnableDebugging ||
+						plan.DeviceNvidiaVGPUSettingsModel.EnableProfiling != state.DeviceNvidiaVGPUSettingsModel.EnableProfiling)) {
+				if err := da.updateDevice(ctx, plan, state); err != nil {
+					return fmt.Errorf("failed to update device: %v", err)
 				}
 			}
 		}
@@ -635,6 +647,36 @@ func tpmCreateSettings(data *deviceResourceModel) map[string]string {
 		return nil
 	}
 	return map[string]string{"version": version}
+}
+
+// tpmStoredVersionDiffers reports whether plan and state disagree on the
+// version VergeOS stores. Display labels such as "2.0" and "2" match.
+func tpmStoredVersionDiffers(plan, state *deviceResourceModel) bool {
+	if plan == nil || state == nil || plan.DeviceTPMSettingsModel == nil || state.DeviceTPMSettingsModel == nil {
+		return false
+	}
+	planVersion, planOK := storedTPMVersion(plan.DeviceTPMSettingsModel.Version)
+	stateVersion, stateOK := storedTPMVersion(state.DeviceTPMSettingsModel.Version)
+	if !planOK && !stateOK {
+		return false
+	}
+	return planVersion != stateVersion
+}
+
+// replaceTPMDevice deletes the existing TPM device and creates it again so
+// create can send settings_args.version. In-place settings updates cannot
+// change version (422 readonly).
+func (da *DeviceApi) replaceTPMDevice(ctx context.Context, plan, state *deviceResourceModel, machineId types.Int32) error {
+	tflog.Debug(ctx, "Replacing TPM device for version change: "+plan.Name.ValueString())
+	if err := da.deleteDevice(ctx, state); err != nil {
+		return fmt.Errorf("failed to delete TPM device for version replace: %v", err)
+	}
+	plan.Machine = machineId
+	if err := da.createDevice(ctx, plan); err != nil {
+		return fmt.Errorf("failed to create TPM device for version replace: %v", err)
+	}
+	*state = *plan
+	return nil
 }
 
 // UpdateTPMSettings updates TPM settings for the device.

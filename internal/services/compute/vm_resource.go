@@ -569,10 +569,13 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 									Computed: true,
 								},
 								"version": schema.StringAttribute{
-									MarkdownDescription: "TPM version. Display labels `\"2.0\"` and `\"1.2\"` are stored as `\"2\"` and `\"1\"`. Sent when the device is created. VergeOS treats version as read-only afterward, so updates omit it.",
+									MarkdownDescription: "TPM version. Display labels `\"2.0\"` and `\"1.2\"` are stored as `\"2\"` and `\"1\"`. Sent when the device is created. VergeOS treats version as read-only afterward, so updates omit it. Changing version on an existing device replaces the VM so create can send the new value. Adding a TPM device is still an in-place update.",
 									Optional:            true,
 									Computed:            true,
 									CustomType:          TPMVersionType{},
+									PlanModifiers: []planmodifier.String{
+										tpmVersionRequiresReplace(),
+									},
 								},
 							},
 						},
