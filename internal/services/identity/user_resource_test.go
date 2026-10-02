@@ -7,7 +7,12 @@ import (
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	resschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"terraform-provider-vergeio/internal/client"
 )
@@ -53,12 +58,24 @@ func TestUserResource_Schema(t *testing.T) {
 		t.Error("name should be required")
 	}
 
-	// Check computed id attribute
-	if idAttr, ok := resp.Schema.Attributes["id"]; !ok {
-		t.Error("id attribute should exist")
-	} else if !idAttr.IsComputed() {
+	// Check computed id attribute keeps prior state across in-place updates
+	// (#193). Without UseStateForUnknown, email/enabled updates plan id as
+	// unknown and force-replace vergeio_member / vergeio_permission.
+	idAttr, ok := resp.Schema.Attributes["id"].(resschema.StringAttribute)
+	if !ok {
+		t.Fatal("id attribute should exist and be a string")
+	}
+	if !idAttr.IsComputed() {
 		t.Error("id should be computed")
 	}
+	if len(idAttr.PlanModifiers) != 1 {
+		t.Fatalf("id plan modifiers = %d, want 1", len(idAttr.PlanModifiers))
+	}
+	wantID := stringplanmodifier.UseStateForUnknown().Description(context.Background())
+	if got := idAttr.PlanModifiers[0].Description(context.Background()); got != wantID {
+		t.Errorf("id plan modifier %q, want UseStateForUnknown %q", got, wantID)
+	}
+	assertUserIDKeepsState(t, idAttr.PlanModifiers[0], "6")
 
 	// Check optional enabled attribute
 	if enabledAttr, ok := resp.Schema.Attributes["enabled"]; !ok {
@@ -216,5 +233,24 @@ func TestUserResourceModel_NullValues(t *testing.T) {
 	// Name should not be null as it's required
 	if model.Name.IsNull() {
 		t.Error("Name should not be null")
+	}
+}
+
+// assertUserIDKeepsState checks that an unknown planned id is replaced with
+// the prior state value. That is what stops member.member and
+// permission.user_id from going unknown on an in-place user update.
+func assertUserIDKeepsState(t *testing.T, mod planmodifier.String, prior string) {
+	t.Helper()
+
+	priorState := tfsdk.State{Raw: tftypes.NewValue(tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}, map[string]tftypes.Value{})}
+	resp := &planmodifier.StringResponse{PlanValue: types.StringUnknown()}
+	mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringNull(),
+		PlanValue:   types.StringUnknown(),
+		StateValue:  types.StringValue(prior),
+		State:       priorState,
+	}, resp)
+	if resp.PlanValue.IsUnknown() || resp.PlanValue.ValueString() != prior {
+		t.Fatalf("id unknown plan = %s, want prior state %q", resp.PlanValue, prior)
 	}
 }
