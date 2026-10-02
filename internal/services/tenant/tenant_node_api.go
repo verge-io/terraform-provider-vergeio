@@ -5,7 +5,10 @@ package tenant
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"terraform-provider-vergeio/internal/client"
@@ -153,6 +156,12 @@ func assignTenantNode(data *TenantNodeResourceModel, node *vergeos.TenantNode) {
 // tenant took siblings and the tenant network down. Kill/PowerOff only this
 // node so running siblings stay up. A stopped node deletes while the tenant
 // stays online.
+//
+// VergeOS also only allows deleting the tenant node with the highest nodeid
+// (#222). Terraform destroys independent resources concurrently, so a
+// non-last node can get HTTP 405 "Only the last node can be deleted". Retry
+// that refusal with the same sleep pattern as power waits until the sibling
+// delete finishes or the power timeout elapses. NotFound is success.
 func (a *API) deleteTenantNode(ctx context.Context, data *TenantNodeResourceModel) error {
 	id, err := parseID(data.Id, "tenant node")
 	if err != nil {
@@ -161,11 +170,37 @@ func (a *API) deleteTenantNode(ctx context.Context, data *TenantNodeResourceMode
 	if err := a.ensureTenantNodeStopped(ctx, id); err != nil {
 		return err
 	}
-	if err := a.sdk.TenantNodes.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-		return err
+	deadline := time.Now().Add(tenantPowerTimeout)
+	for {
+		err := a.sdk.TenantNodes.Delete(ctx, id)
+		if err == nil || vergeos.IsNotFoundError(err) {
+			tflog.Debug(ctx, fmt.Sprintf("deleted tenant node %d", id))
+			return nil
+		}
+		if !isLastNodeDeleteError(err) {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting to delete tenant node %d (only the last node can be deleted); the node still exists and can be imported", id)
+		}
+		tflog.Debug(ctx, fmt.Sprintf("tenant node %d delete refused (not last); retrying", id))
+		if err := sleepPower(ctx); err != nil {
+			return err
+		}
 	}
-	tflog.Debug(ctx, fmt.Sprintf("deleted tenant node %d", id))
-	return nil
+}
+
+// isLastNodeDeleteError reports whether err is VergeOS refusing a tenant node
+// delete because a higher nodeid still exists (#222).
+func isLastNodeDeleteError(err error) bool {
+	var apiErr *vergeos.APIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return false
+	}
+	if apiErr.StatusCode != http.StatusMethodNotAllowed {
+		return false
+	}
+	return strings.Contains(apiErr.Message, "Only the last node can be deleted")
 }
 
 // ensureTenantNodeStopped stops a running tenant node before delete. A

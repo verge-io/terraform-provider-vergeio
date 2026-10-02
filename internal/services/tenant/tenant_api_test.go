@@ -5,6 +5,7 @@ package tenant
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -826,6 +827,155 @@ func TestDeleteStoppedTenantNodeSkipsStop(t *testing.T) {
 	}
 	if nodeActions := fake.recordedNodeActions(); len(nodeActions) != 0 {
 		t.Fatalf("node actions = %#v", nodeActions)
+	}
+}
+
+func TestDeleteTenantNodeRetriesLastNode405(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.lastNodeDeleteFails = 2
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.deleteTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	deletes := fake.callCount(http.MethodDelete, "/api/v4/tenant_nodes/"+node.Id.ValueString())
+	if deletes < 3 {
+		t.Fatalf("delete calls = %d, want at least 3 (2x 405 then success)", deletes)
+	}
+	if _, ok := fake.nodes[mustParseID(t, node.Id)]; ok {
+		t.Fatal("node still present after successful retry delete")
+	}
+}
+
+func TestDeleteTenantNodePermanentError(t *testing.T) {
+	fake := newFake(t)
+	fake.nodeDeleteFailStatus = http.StatusInternalServerError
+	fake.nodeDeleteFailMessage = "forced node delete failure"
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	err := api.deleteTenantNode(context.Background(), node)
+	if err == nil {
+		t.Fatal("expected permanent delete error")
+	}
+	if !strings.Contains(err.Error(), "forced node delete failure") {
+		t.Fatalf("error = %v, want forced failure message", err)
+	}
+	if fake.callCount(http.MethodDelete, "/api/v4/tenant_nodes/"+node.Id.ValueString()) != 1 {
+		t.Fatal("permanent errors must not be retried")
+	}
+}
+
+func TestDeleteTenantNodeLastNode405Timeout(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantPowerInterval = 5 * time.Millisecond
+
+	fake := newFake(t)
+	fake.lastNodeDeleteFails = 1000
+	api := fake.api(t)
+	tenant := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	node := &TenantNodeResourceModel{
+		TenantID: tenant.Id,
+		Name:     types.StringValue("node1"),
+		CPUCores: types.Int32Value(2),
+		RAM:      types.Int32Value(2048),
+		Enabled:  types.BoolValue(true),
+	}
+	if err := api.createTenantNode(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	err := api.deleteTenantNode(context.Background(), node)
+	if err == nil {
+		t.Fatal("expected timeout waiting for last-node delete")
+	}
+	if !strings.Contains(err.Error(), "timed out waiting to delete tenant node") {
+		t.Fatalf("error = %v, want timeout message", err)
+	}
+	if !strings.Contains(err.Error(), "still exists and can be imported") {
+		t.Fatalf("error = %v, want import guidance", err)
+	}
+}
+
+func TestIsLastNodeDeleteError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "not found", err: &vergeos.NotFoundError{Resource: "tenant_nodes", ID: 1}, want: false},
+		{
+			name: "405 last node",
+			err:  &vergeos.APIError{StatusCode: http.StatusMethodNotAllowed, Endpoint: "/tenant_nodes/1", Message: "Only the last node can be deleted"},
+			want: true,
+		},
+		{
+			name: "405 running",
+			err:  &vergeos.APIError{StatusCode: http.StatusMethodNotAllowed, Endpoint: "/tenant_nodes/1", Message: "Tenant node cannot be deleted while running"},
+			want: false,
+		},
+		{
+			name: "500",
+			err:  &vergeos.APIError{StatusCode: http.StatusInternalServerError, Endpoint: "/tenant_nodes/1", Message: "Only the last node can be deleted"},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isLastNodeDeleteError(tc.err); got != tc.want {
+				t.Fatalf("isLastNodeDeleteError() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

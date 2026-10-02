@@ -36,18 +36,24 @@ type fakeVerge struct {
 	seenTransition  map[int]bool
 	tenantGets      int
 	failTenantGet   int
-	tenants         map[int]map[string]any
-	status          map[int]map[string]any
-	addresses       map[int]map[string]any
-	nodes           map[int]map[string]any
-	storage         map[int]map[string]any
-	vnets           map[int]map[string]any
-	machines        map[int]map[string]any
-	calls           []string
-	bodies          []recordedBody
-	actions         []map[string]any
-	vnetActions     []map[string]any
-	nodeActions     []map[string]any
+	// lastNodeDeleteFails is how many remaining DELETE /tenant_nodes/{id}
+	// calls should return 405 "Only the last node can be deleted" (#222).
+	lastNodeDeleteFails int
+	// nodeDeleteFailStatus/Message force a permanent delete failure when set.
+	nodeDeleteFailStatus  int
+	nodeDeleteFailMessage string
+	tenants               map[int]map[string]any
+	status                map[int]map[string]any
+	addresses             map[int]map[string]any
+	nodes                 map[int]map[string]any
+	storage               map[int]map[string]any
+	vnets                 map[int]map[string]any
+	machines              map[int]map[string]any
+	calls                 []string
+	bodies                []recordedBody
+	actions               []map[string]any
+	vnetActions           []map[string]any
+	nodeActions           []map[string]any
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -431,6 +437,21 @@ func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, p
 					return
 				}
 			}
+		}
+		if f.nodeDeleteFailStatus > 0 {
+			msg := f.nodeDeleteFailMessage
+			if msg == "" {
+				msg = "forced node delete failure"
+			}
+			writeJSON(f.t, w, f.nodeDeleteFailStatus, map[string]string{"err": msg})
+			return
+		}
+		if f.lastNodeDeleteFails > 0 {
+			f.lastNodeDeleteFails--
+			writeJSON(f.t, w, http.StatusMethodNotAllowed, map[string]string{
+				"err": "Only the last node can be deleted",
+			})
+			return
 		}
 	}
 	f.serveCollection(w, r, id, payload, f.nodes, func(id int, payload map[string]any) map[string]any {
