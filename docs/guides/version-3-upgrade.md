@@ -136,9 +136,9 @@ resource "vergeio_vm_nic" "lan" {
 }
 ```
 
-`boot_disk` is the only drive `vergeio_vm` deletes or resizes. Do not give a `vergeio_vm_drive` the same name. Changing `boot_disk.media` or `boot_disk.source` replaces the VM. Changing `media` or `media_source` on `vergeio_vm_drive` replaces that drive. Destroying the VM still deletes its drives and NICs in VergeOS. Terraform destroys `vergeio_vm_drive` and `vergeio_vm_nic` first because they reference `vm_id`. A running guest that never releases the NIC is powered off with kill so the NIC can be deleted and destroy can continue to the VM.
+`boot_disk` is the only drive `vergeio_vm` deletes or resizes. Do not give a `vergeio_vm_drive` the same name. Changing `boot_disk.media` or `boot_disk.source` on a disk Terraform already owns replaces the VM. Setting either one while adopting a disk after import, or after a 2.x upgrade, does not. Changing `media` or `media_source` on `vergeio_vm_drive` replaces that drive. Destroying the VM still deletes its drives and NICs in VergeOS. Terraform destroys `vergeio_vm_drive` and `vergeio_vm_nic` first because they reference `vm_id`. A running guest that never releases the NIC is powered off with kill so the NIC can be deleted and destroy can continue to the VM.
 
-Importing a VM imports machine settings only. Add `boot_disk` or the standalone resources and apply again so each device is adopted by name. `vergeio_vms` still returns drives and NICs on each VM. That data source is read-only and does not own them.
+Importing a VM imports machine settings only. Import stores the machine type VergeOS returns. Configuration can keep the short name `q35` or `pc` while state holds `pc-q35-10.0` or `pc-i440fx-10.0`. Those pairs match, so the plan is empty once the boot disk is adopted. Add `boot_disk` or the standalone resources and apply again so each device is adopted by name. `vergeio_vms` still returns drives and NICs on each VM. That data source is read only and does not own them.
 
 ## Behavior changes
 

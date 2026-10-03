@@ -8,13 +8,13 @@ description: |-
 
 # vergeio_tenant (Resource)
 
-Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for terminal online or offline status (not merely starting or stopping) and for the tenant network to stop when powering off. Destroy powers a running tenant off and waits for its network to stop before delete. `vergeio_tenant_node` destroy gracefully powers off only that node when it is running (then kills if needed), so sibling nodes stay up. `powerstate = true` with no nodes yet defers power-on on create and update until a later apply after `vergeio_tenant_node` exists.
+Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for terminal online or offline status (not merely starting or stopping) and for the tenant network to stop when powering off. Destroy powers a running tenant off and waits for its network to stop before delete. `vergeio_tenant_node` destroy gracefully powers off only that node when it is running (then kills if needed), so sibling nodes stay up. `powerstate = true` defers power on when the tenant has no node yet, including the first apply of a configuration that also declares `vergeio_tenant_node`. Refresh stores the offline power state. The next apply powers the tenant on.
 
 `ui_address` is the IP of the tenant UI, resolved from the `ui_address` row (`ui_address_id`). It stays empty until VergeOS assigns that address. Use it as the `host` of a second Terraform configuration that manages the inside of the tenant. See the [tenants guide](../guides/tenants.html).
 
 `password` is the tenant admin user's password. VergeOS does not return it. Terraform keeps the configured value in state. `change_password` is sent only when the tenant is created and is kept the same way, so a later refresh does not replace the tenant when VergeOS clears the first-login flag. `preferred_node` is sent only when `powerstate` changes to true. VergeOS does not return it either.
 
-Network blocks (`vnet_cidrs`) and external IPs are not resources in this provider. govergeos has no `vnet_cidrs` service and no helper that assigns an external IP to a tenant ([govergeos#55](https://github.com/verge-io/govergeos/issues/55)). Assigning either in the VergeOS UI can stage firewall changes and leave `need_fw_apply` set on the parent external network. Apply that network's firewall, with `vergeio_network_rules` or the UI, before treating the address as live. This resource does not see or clear that flag.
+Network blocks (`vnet_cidrs`) and external IPs are not resources in this provider. The SDK this provider builds against can assign both and reports `need_fw_apply` on the parent network. This provider does not call those methods. Assigning either in the VergeOS UI can leave `need_fw_apply` set on the parent external network. Apply that network firewall, with `vergeio_network_rules` or the UI, before you treat the address as live. This resource does not see or clear that flag.
 
 ## Example Usage
 
@@ -37,7 +37,7 @@ Network blocks (`vnet_cidrs`) and external IPs are not resources in this provide
 - `note` (String) Free-form note stored on the tenant.
 - `oidc_application` (Number) OIDC application key for SSO.
 - `password` (String, Sensitive) Password for the tenant admin user. Omit to leave the current password unchanged.
-- `powerstate` (Boolean) Whether the tenant is powered on. Omit to leave the current power unchanged. `true` with no nodes yet defers power-on on create and update.
+- `powerstate` (Boolean) Whether the tenant is powered on. Omit to leave the current power unchanged. `true` defers power on when the tenant has no node yet, including the first apply of a configuration that also declares `vergeio_tenant_node`. Refresh stores the offline power state. The next apply powers the tenant on.
 - `preferred_node` (Number) Host node used when `powerstate` changes to true. Changing it while the tenant is already on does not move the tenant.
 - `theme_access` (String) Theme visibility: `specified`, `host_only`, `local_only`, or `both`.
 - `url` (String) Optional URL recorded on the tenant.

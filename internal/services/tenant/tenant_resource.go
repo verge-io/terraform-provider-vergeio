@@ -29,7 +29,7 @@ const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the 
 	"powerstate powers the tenant on or off and waits up to 2 minutes for terminal online or offline status and a stopped tenant network. " +
 	"ui_address is the IP of the tenant UI, read from the ui_address row. " +
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
-	"Network blocks and external IPs are not resources here. govergeos has no vnet_cidrs service and no helper that assigns an external IP to a tenant. " +
+	"Network blocks (vnet_cidrs) and external IPs are not resources here. The SDK can assign both. This provider does not. " +
 	"Assigning either outside Terraform can leave need_fw_apply set on the parent external network. Apply that network's firewall before treating the address as live."
 
 var (
@@ -175,7 +175,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"powerstate": schema.BoolAttribute{
-				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy gracefully powers off only that node when it is running (then kills if needed), leaving sibling nodes alone. The wait is 2 minutes. powerstate=true with no nodes yet defers power-on on create and update: apply leaves the tenant offline and a later apply powers it on once vergeio_tenant_node exists.",
+				MarkdownDescription: "Whether the tenant is powered on. true calls power on and waits until status is terminal online (not merely starting). false calls power off and waits until status is terminal offline (not merely stopping) and the tenant network is stopped. Omit to leave the current power unchanged. Destroy powers the tenant off and waits for its network to stop before delete. vergeio_tenant_node destroy gracefully powers off only that node when it is running (then kills if needed), leaving sibling nodes alone. The wait is 2 minutes. powerstate set to true defers power on when the tenant has no node yet, including the first apply of a configuration that also declares vergeio_tenant_node. Refresh stores the offline power state. The next apply powers the tenant on.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Bool{

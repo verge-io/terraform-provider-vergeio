@@ -74,6 +74,7 @@ VergeOS stages some updates on a running network, including DHCP range and addre
 - `description` (String) - Network description. Omit to leave an existing description unchanged.
 - `enabled` (Boolean) - Default = True
 - `ipaddress` (String) - Uses the system default (192.168.0.1/24) if not specified.
+- `network` (String) - CIDR of this network, for example `192.168.0.0/24`. This is separate from `ipaddress`, which is the address on the network. Omit it to leave the current CIDR unchanged.
 - `vnet_default_gateway` (Number) - Key (ID) of the external network used for outbound traffic. Typically **`vnet 3`** which is created during install. If a key is not specified a default route will not be created when the resource is provisioned.
 - `dhcp_enabled` (Boolean) - Default = False
 - `dynamic_dhcp` (Boolean) - Default = False, Depends on `dhcp_enabled`
@@ -91,6 +92,8 @@ VergeOS stages some updates on a running network, including DHCP range and addre
 - `type` (String) - Default = Internal, Type of vNET to create (Internal/External)
 - `interface_vnet` (Number) - Physical vNET ID to attach an external vNET to, Depends on `type=external`. `0` is unset and is not sent. It matches a network with no parent.
 - `layer2_id` (Number) - VLAN ID to assign an external vNET, Depends on `type=external`
+- `layer2_type` (String) - Layer 2 type of an external network. The external example sets `vlan`. Refresh stores the value VergeOS reports. Omit it to leave the current value unchanged.
+- `mtu` (Number) - MTU. A configured value is sent on create and on update. Refresh stores the MTU VergeOS reports. Omit it to leave the current MTU unchanged.
 - `rate_limit` (Number) - Bandwidth cap in megabytes per second. `0` removes the cap. Omit to leave an existing cap unchanged.
 - `ipaddress_type` (String) - `none` is required for a Layer 2 vNET
 - `enable_bonding` (Boolean) - Enables VLAN bonding across physical interfaces, Default = False, Depends on `type=external`
