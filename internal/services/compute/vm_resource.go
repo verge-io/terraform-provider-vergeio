@@ -35,6 +35,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &VMResource{}
 var _ resource.ResourceWithImportState = &VMResource{}
+var _ resource.ResourceWithModifyPlan = &VMResource{}
 var _ resource.ResourceWithUpgradeState = &VMResource{}
 
 func NewVMResource() resource.Resource {
