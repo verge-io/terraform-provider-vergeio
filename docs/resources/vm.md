@@ -189,7 +189,7 @@ resource "vergeio_vm" "web-server" {
     - `q35` - Q35 + ICH9, 2009 chipset (alias for latest version)
     - `pc-q35-X.X` - Specific versions of Q35 chipset (e.g., `pc-q35-9.0`)
 
-    **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider
+    **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider. Import stores the expanded type VergeOS returns. `q35` in configuration and `pc-q35-10.0` in state are the same type, and so are `pc` and `pc-i440fx-10.0`. After `boot_disk` is adopted, that pair does not plan a change.
 - `nested_virtualization` (Boolean), Default = False
 - `on_power_loss` (String) - Sets the power state of the VM after a power loss
     - `last_state` Last Power State (**Default**)

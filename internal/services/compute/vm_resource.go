@@ -177,7 +177,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"machine_type": schema.StringAttribute{
-				MarkdownDescription: "Machine type (validated dynamically against VergeOS API)",
+				MarkdownDescription: "Machine type, validated against the VergeOS system. q35 matches an expanded pc-q35 type and pc matches an expanded pc-i440fx type. Import stores the expanded type, and that pair does not plan a change once the boot disk is adopted.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{

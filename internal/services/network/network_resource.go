@@ -116,7 +116,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				Computed:            true,
 			},
 			"network": schema.StringAttribute{
-				MarkdownDescription: "Network address",
+				MarkdownDescription: "CIDR of this network, for example 192.168.0.0/24. This is separate from ipaddress. Omit to leave the current CIDR unchanged.",
 				Optional:            true,
 				Computed:            true,
 			},
@@ -204,7 +204,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"mtu": schema.Int32Attribute{
-				MarkdownDescription: "Network MTU",
+				MarkdownDescription: "MTU. A configured value is sent on create and on update. Refresh stores the MTU VergeOS reports. Omit to leave the current MTU unchanged.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.Int32{
@@ -233,7 +233,7 @@ func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"layer2_type": schema.StringAttribute{
-				MarkdownDescription: "Layer2 type of the vnet",
+				MarkdownDescription: "Layer 2 type of an external network. Refresh stores the value VergeOS reports. Omit to leave the current value unchanged.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{

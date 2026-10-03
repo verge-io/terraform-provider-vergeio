@@ -77,7 +77,7 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
 
-Network blocks and external IPs are not resources yet. govergeos has no `vnet_cidrs` service and no helper that assigns an external IP to a tenant. Assigning those in the UI can leave `need_fw_apply` set on the parent external network. Apply that network's firewall before treating the address as live.
+Network blocks and external IPs are not resources in this provider. The SDK can assign both, and this provider does not. Assigning them in the UI can leave `need_fw_apply` set on the parent external network. Apply that network firewall before you treat the address as live.
 
 ## Data Sources
 
