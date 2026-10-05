@@ -441,7 +441,7 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 // so two reads return the same block order.
 func (da *DiskApi) readDisksByMachine(ctx context.Context, machineID int32) ([]*diskResourceModel, error) {
 	// List takes a VM $key and resolves the machine. Callers have the machine
-	// id, which is what govergeos v0.3.0 filtered on directly.
+	// id, so this lists with a machine filter instead.
 	drives, err := da.sdk.VMDrives.ListAll(ctx, vergeos.WithFilter(fmt.Sprintf("machine eq %d", machineID)))
 	if err != nil {
 		return nil, fmt.Errorf("listing drives for machine %d: %w", machineID, err)

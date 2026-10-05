@@ -29,10 +29,9 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		// TODO: Update this string with the published name of your provider.
-		// Also update the tfplugindocs generate command to either remove the
-		// -provider-name flag or set its value to the updated provider name.
-
+		// Local builds are served at vergeio/cloud/vergeio so dev_overrides
+		// can load them. Published docs use the registry source verge-io/vergeio.
+		// tools/tools.go passes -provider-name vergeio to tfplugindocs.
 		Address: "vergeio/cloud/vergeio",
 		Debug:   debug,
 	}
