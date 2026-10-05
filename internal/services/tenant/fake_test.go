@@ -50,10 +50,16 @@ type fakeVerge struct {
 	// nodePowerOffNotRunning makes poweroff return 422 as when VergeOS
 	// rejects poweroff on a non-running node.
 	nodePowerOffNotRunning bool
-	tenants                map[int]map[string]any
-	status                 map[int]map[string]any
-	addresses              map[int]map[string]any
-	cidrs                  map[int]map[string]any
+	// isolateFail makes isolateon and isolateoff return 500 and leave the
+	// tenant row unchanged.
+	isolateFail bool
+	// isolateIgnore accepts isolateon and isolateoff without changing the
+	// row, so readback still disagrees with the plan.
+	isolateIgnore bool
+	tenants       map[int]map[string]any
+	status        map[int]map[string]any
+	addresses     map[int]map[string]any
+	cidrs         map[int]map[string]any
 	// cidrDeleteStatus, when non-zero, makes DELETE /vnet_cidrs/{id} fail
 	// with that status and cidrDeleteMessage, leaving the row in place.
 	cidrDeleteStatus  int
@@ -421,6 +427,19 @@ func (f *fakeVerge) serveTenantAction(w http.ResponseWriter, payload map[string]
 	f.actions = append(f.actions, payload)
 	id := intField(payload["tenant"])
 	action, _ := payload["action"].(string)
+	if action == "isolateon" || action == "isolateoff" {
+		if f.isolateFail {
+			writeJSON(f.t, w, http.StatusInternalServerError, map[string]string{"err": "isolate failed"})
+			return
+		}
+		if !f.isolateIgnore {
+			if tenant, ok := f.tenants[id]; ok {
+				tenant["isolate"] = action == "isolateon"
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if f.holdPower {
 		w.WriteHeader(http.StatusOK)
 		return

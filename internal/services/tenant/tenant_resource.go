@@ -32,7 +32,8 @@ const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the 
 	"vergeio_tenant_external_ip assigns one parent external IP to this tenant. The first assigned IP becomes ui_address. The next plan stores that address once it exists. " +
 	"vergeio_tenant_network_block assigns one routed CIDR (vnet_cidrs) from a parent network to this tenant. " +
 	"Assigning an address or a block can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip and vergeio_tenant_network_block report that as parent_firewall_pending. Apply that network's firewall before treating the assignment as live. " +
-	"vergeio_tenant_layer2_network bridges one parent layer 2 network into this tenant (tenant_layer2_vnets). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation."
+	"vergeio_tenant_layer2_network bridges one parent layer 2 network into this tenant (tenant_layer2_vnets). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation. " +
+	"isolate turns tenant network isolation on or off. true calls isolate on and false calls isolate off. Omit it to leave the current isolation unchanged. A change made in the parent UI is drift, and the next apply restores the configured value."
 
 var (
 	_ resource.Resource                = &TenantResource{}
@@ -211,8 +212,12 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 			},
 			"isolate": schema.BoolAttribute{
-				MarkdownDescription: "Whether network isolation is enabled. Read from VergeOS. This resource does not change isolation.",
+				MarkdownDescription: "Whether network isolation is enabled. true calls isolate on. false calls isolate off. Omit to leave the current isolation unchanged. A change made in the parent UI is drift, and the next apply restores the configured value.",
+				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"is_snapshot": schema.BoolAttribute{
 				MarkdownDescription: "Whether this tenant record is a snapshot.",
@@ -288,6 +293,11 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Error creating tenant", err.Error())
 		return
 	}
+	plannedIsolate := data.Isolate
+	if err := r.api.reconcileIsolate(ctx, id, plannedIsolate); err != nil {
+		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
+		return
+	}
 	desiredPower := data.PowerState
 	deferred, err := r.api.reconcilePowerOnCreate(ctx, id, data.PowerState, data.PreferredNode)
 	if err != nil {
@@ -296,6 +306,10 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	if err := r.api.readTenant(ctx, &data); err != nil {
 		resp.Diagnostics.AddError("Error reading tenant", err.Error())
+		return
+	}
+	if err := requireIsolate(plannedIsolate, data.Isolate); err != nil {
+		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
 		return
 	}
 	// powerstate=true with no nodes yet defers power-on (#207). Keep the
@@ -333,6 +347,7 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 	desiredPower := plan.PowerState
+	plannedIsolate := plan.Isolate
 	deferred, err := r.api.updateTenant(ctx, &plan, &state)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating tenant", err.Error())
@@ -343,6 +358,10 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	// would replace the tenant after the first-login flag clears.
 	if err := r.api.readTenant(ctx, &plan); err != nil {
 		resp.Diagnostics.AddError("Error reading tenant", err.Error())
+		return
+	}
+	if err := requireIsolate(plannedIsolate, plan.Isolate); err != nil {
+		resp.Diagnostics.AddError("Error updating tenant", err.Error())
 		return
 	}
 	// powerstate=true with no nodes yet defers power-on (#219), same as
@@ -431,6 +450,30 @@ func tenantForState(data *TenantResourceModel) TenantResourceModel {
 	stored.Creator = knownString(data.Creator)
 	stored.Created = knownInt64(data.Created)
 	return stored
+}
+
+// requireIsolate fails the apply when a configured isolate value is not the
+// value read back from the tenant row. An omitted value is left alone.
+// Storing a different bool would make Terraform reject the apply as an
+// inconsistent result (#213).
+func requireIsolate(planned, actual types.Bool) error {
+	if planned.IsNull() || planned.IsUnknown() {
+		return nil
+	}
+	if !actual.IsNull() && !actual.IsUnknown() && actual.ValueBool() == planned.ValueBool() {
+		return nil
+	}
+	return fmt.Errorf("isolate is %s, want %t", isolateText(actual), planned.ValueBool())
+}
+
+func isolateText(v types.Bool) string {
+	if v.IsNull() || v.IsUnknown() {
+		return "unset"
+	}
+	if v.ValueBool() {
+		return "true"
+	}
+	return "false"
 }
 
 func knownString(v types.String) types.String {

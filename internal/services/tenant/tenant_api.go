@@ -97,9 +97,45 @@ func (a *API) updateTenant(ctx context.Context, plan, state *TenantResourceModel
 		}
 		tflog.Debug(ctx, fmt.Sprintf("updated tenant %d", id))
 	}
+	// isolate is read-only on the tenants row. isolateon and isolateoff are
+	// the writes. A null or unknown value leaves the current isolation (#213).
+	if err := a.reconcileIsolate(ctx, id, plan.Isolate); err != nil {
+		return false, err
+	}
 	// Same no-nodes defer as create (#219): powerstate=true with an empty
 	// node list must not PowerOn + waitPower(true).
 	return a.reconcilePowerOnCreate(ctx, id, plan.PowerState, plan.PreferredNode)
+}
+
+// reconcileIsolate applies isolate when the plan sets it and the tenant row
+// differs. VergeOS stores the column as read-only. IsolateOn and IsolateOff
+// are the writes. A null or unknown value leaves isolation unchanged, so an
+// omitted argument does not undo a change made in the parent UI. A configured
+// value that differs from the row is drift, and the next apply corrects it.
+func (a *API) reconcileIsolate(ctx context.Context, id int, desired types.Bool) error {
+	if desired.IsNull() || desired.IsUnknown() {
+		return nil
+	}
+	tenant, err := a.sdk.Tenants.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	want := desired.ValueBool()
+	if tenant.Isolate == want {
+		return nil
+	}
+	if want {
+		if err := a.sdk.Tenants.IsolateOn(ctx, id); err != nil {
+			return err
+		}
+		tflog.Debug(ctx, fmt.Sprintf("enabled isolation on tenant %d", id))
+		return nil
+	}
+	if err := a.sdk.Tenants.IsolateOff(ctx, id); err != nil {
+		return err
+	}
+	tflog.Debug(ctx, fmt.Sprintf("disabled isolation on tenant %d", id))
+	return nil
 }
 
 func (a *API) readTenant(ctx context.Context, data *TenantResourceModel) error {

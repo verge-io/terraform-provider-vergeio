@@ -1072,6 +1072,161 @@ func TestAccTenantKeyReuseDoesNotAdoptForeign(t *testing.T) {
 	})
 }
 
+// TestAccTenantIsolateToggleAndDrift covers #213: isolate is optional,
+// applied through isolateon and isolateoff, read back from the tenant row,
+// and corrected when the parent UI flips it. Those tenant_actions are what
+// VergeOS 26.1.8 uses to change the read-only isolate column. An older
+// cluster that rejects the action fails this test at create.
+func TestAccTenantIsolateToggleAndDrift(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-iso")
+	isolated := testAccTenantIsolateConfig(tenantName, true)
+	open := testAccTenantIsolateConfig(tenantName, false)
+
+	var tenantID int
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: isolated,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "isolate", "true"),
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "powerstate", "false"),
+					testAccCaptureTenantID("vergeio_tenant.test", &tenantID),
+					testAccCheckTenantIsolate("vergeio_tenant.test", true),
+				),
+			},
+			{
+				Config: isolated,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: open,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "isolate", "false"),
+					testAccCheckTenantIsolate("vergeio_tenant.test", false),
+				),
+			},
+			{
+				Config: open,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				PreConfig: func() {
+					if tenantID <= 0 {
+						t.Fatal("tenant id was not captured")
+					}
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := client.Tenants.IsolateOn(ctx, tenantID); err != nil {
+						t.Fatalf("isolate on outside terraform: %v", err)
+					}
+					got, err := client.Tenants.Get(ctx, tenantID)
+					if err != nil {
+						t.Fatalf("read tenant after isolate on: %v", err)
+					}
+					if !got.Isolate {
+						t.Fatalf("tenant %d isolate = false after IsolateOn", tenantID)
+					}
+				},
+				Config: open,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "isolate", "false"),
+					testAccCheckTenantIsolate("vergeio_tenant.test", false),
+				),
+			},
+			{
+				Config: open,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccTenantIsolateConfig(tenantName string, isolate bool) string {
+	if err := acctest.RequirePrefix(tenantName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_tenant" "test" {
+  name        = %q
+  description = "acc isolate"
+  password    = "Tf-acc-tenant-password1"
+  powerstate  = false
+  isolate     = %t
+}
+`, tenantName, isolate))
+}
+
+func testAccCaptureTenantID(address string, id *int) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[address]
+		if !ok {
+			return fmt.Errorf("missing %s", address)
+		}
+		got, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil || got <= 0 {
+			return fmt.Errorf("tenant id %q: %v", rs.Primary.ID, err)
+		}
+		*id = got
+		return nil
+	}
+}
+
+func testAccCheckTenantIsolate(address string, want bool) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[address]
+		if !ok {
+			return fmt.Errorf("missing %s", address)
+		}
+		id, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("tenant id %q: %v", rs.Primary.ID, err)
+		}
+		client, err := acctest.SDKClient()
+		if err != nil {
+			return err
+		}
+		got, err := client.Tenants.Get(context.Background(), id)
+		if err != nil {
+			return err
+		}
+		if got.Isolate != want {
+			return fmt.Errorf("tenant %d isolate = %v, want %v", id, got.Isolate, want)
+		}
+		return nil
+	}
+}
+
 func testAccTenantKeyReuseConfig(tenantName string, tier int) string {
 	if err := acctest.RequirePrefix(tenantName); err != nil {
 		panic(err)
