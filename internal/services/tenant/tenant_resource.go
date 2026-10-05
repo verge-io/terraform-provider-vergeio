@@ -29,8 +29,9 @@ const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the 
 	"powerstate powers the tenant on or off and waits up to 2 minutes for terminal online or offline status and a stopped tenant network. " +
 	"ui_address is the IP of the tenant UI, read from the ui_address row. " +
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
-	"Network blocks (vnet_cidrs) and external IPs are not resources here. The SDK can assign both. This provider does not. " +
-	"Assigning either outside Terraform can leave need_fw_apply set on the parent external network. Apply that network's firewall before treating the address as live."
+	"vergeio_tenant_external_ip assigns one parent external IP to this tenant. The first assigned IP becomes ui_address. The next plan stores that address once it exists. " +
+	"Network blocks (vnet_cidrs) are not resources here. " +
+	"Assigning an address can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip reports that as parent_firewall_pending. Apply that network's firewall before treating the address as live."
 
 var (
 	_ resource.Resource                = &TenantResource{}
@@ -205,7 +206,7 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				Computed:            true,
 			},
 			"ui_address": schema.StringAttribute{
-				MarkdownDescription: "IP address of the tenant UI, resolved from ui_address_id. Use this as the host of the provider configuration that manages the inside of the tenant. Empty until VergeOS assigns an address.",
+				MarkdownDescription: "IP address of the tenant UI, resolved from ui_address_id. The first IP from vergeio_tenant_external_ip becomes this address. The next plan stores it once VergeOS has assigned it. Use it as the host of the provider configuration that manages the inside of the tenant.",
 				Computed:            true,
 			},
 			"isolate": schema.BoolAttribute{

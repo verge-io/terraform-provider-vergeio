@@ -31,7 +31,7 @@ The 3.0 provider registers these objects:
 
 | Kind | Names |
 | --- | --- |
-| Resources | `vergeio_group`, `vergeio_member`, `vergeio_network`, `vergeio_network_rule`, `vergeio_network_rule_alias`, `vergeio_network_rules`, `vergeio_permission`, `vergeio_snapshot_profile`, `vergeio_tag`, `vergeio_tag_category`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_user`, `vergeio_vm`, `vergeio_vm_drive`, `vergeio_vm_nic` |
+| Resources | `vergeio_group`, `vergeio_member`, `vergeio_network`, `vergeio_network_rule`, `vergeio_network_rule_alias`, `vergeio_network_rules`, `vergeio_permission`, `vergeio_snapshot_profile`, `vergeio_tag`, `vergeio_tag_category`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_external_ip`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_user`, `vergeio_vm`, `vergeio_vm_drive`, `vergeio_vm_nic` |
 | Data sources | `vergeio_cloudinit_files`, `vergeio_clusters`, `vergeio_groups`, `vergeio_mediasources`, `vergeio_networks`, `vergeio_nodes`, `vergeio_resource_groups`, `vergeio_tags`, `vergeio_tenants`, `vergeio_users`, `vergeio_version`, `vergeio_vms` |
 
 Devices stay nested on `vergeio_vm`. Drives and NICs do not.

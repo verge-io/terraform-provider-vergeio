@@ -21,7 +21,8 @@ FEATURES:
 
 - **New Resource:** `vergeio_vm_drive` and `vergeio_vm_nic`. A drive or NIC added while the VM is already running is hotplugged.
 - **New Resource:** `vergeio_network_rule` (one firewall rule, matched by name), `vergeio_network_rules` (every non-system rule on one network, written together and refreshed once), and `vergeio_network_rule_alias` (a named address or port group referenced as `alias:<id>`).
-- **New Resource:** `vergeio_tenant`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. **New Data Source:** `vergeio_tenants`. Network blocks and external IPs are not resources.
+- **New Resource:** `vergeio_tenant`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. **New Data Source:** `vergeio_tenants`. Network blocks are not a resource.
+- **New Resource:** `vergeio_tenant_external_ip`. It assigns one virtual IP on a parent network to a tenant. The first assigned IP becomes the tenant UI address. The next plan of `vergeio_tenant` stores that address in `ui_address`. `apply_parent_firewall` applies the parent network rules on create, update, and delete. `parent_firewall_pending` reports `need_fw_apply` (#210).
 - **New Resource:** `vergeio_group` and `vergeio_permission`. **New Data Source:** `vergeio_users`. A permission grants a user or a group list, read, create, modify, and delete on a table or one object.
 - **New Resource:** `vergeio_tag_category` and `vergeio_tag`. Deleting a category deletes its tags and their assignments. A `taggable_*` flag is sent only when the configuration sets it.
 - **New Resource:** `vergeio_snapshot_profile`. Each `period` sets the frequency, the time of day, a required retention in seconds, and whether the snapshot is quiesced. `vergeio_vm.snapshot_profile` is that profile's key.
@@ -32,7 +33,7 @@ FEATURES:
 BUG FIXES:
 
 - Import of a `vergeio_vm` whose configuration says `machine_type = "q35"` or `machine_type = "pc"` no longer plans an update on every refresh. Import stores the expanded type VergeOS returns, such as `pc-q35-10.0` or `pc-i440fx-10.0`. That short name and the expanded type are the same machine type, so the plan is empty once `boot_disk` is adopted. A real change, including a different machine type, still plans (#237).
-- An empty import id is rejected on `vergeio_vm`, `vergeio_user`, `vergeio_group`, `vergeio_member`, `vergeio_permission`, `vergeio_network`, `vergeio_tag_category`, `vergeio_tag`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. The error names the id that resource expects. A non empty id is still passed through (#235).
+- An empty import id is rejected on `vergeio_vm`, `vergeio_user`, `vergeio_group`, `vergeio_member`, `vergeio_permission`, `vergeio_network`, `vergeio_tag_category`, `vergeio_tag`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_external_ip`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. The error names the id that resource expects. A non empty id is still passed through (#235).
 - Destroying more than one `vergeio_tenant_node` on a tenant retries when VergeOS returns 405 because only the last node can be deleted. Each node is removed once it is last. Sibling nodes stay up until their own destroy (#222).
 - Setting `boot_disk.media` or `boot_disk.source` while adopting a disk after import, or after a 2.x upgrade, does not replace the VM. Changing either value on a disk Terraform already owns still replaces the VM (#198).
 - `vergeio_tenant_storage.provisioned` must be a positive multiple of 1073741824 bytes (1 GiB). A value VergeOS would round down is rejected while planning (#197).

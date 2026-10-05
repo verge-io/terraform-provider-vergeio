@@ -232,6 +232,20 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 		}
 	}
 
+	addresses, err := client.TenantExternalIPs.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		addresses = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tenant external IPs: %w", err)
+	}
+	for _, address := range addresses {
+		if HasPrefix(address.Hostname) {
+			left = append(left, fmt.Sprintf("tenant external IP %s (%d)", address.Hostname, address.Key.Int()))
+		}
+	}
+
 	profiles, err := client.SnapshotProfiles.List(ctx)
 	if vergeos.IsNotFoundError(err) {
 		profiles = nil
@@ -425,6 +439,9 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 		}
 		ids[tenant.Key.Int()] = tenant.Name
 	}
+	if err := sweepTenantExternalIPs(ctx, client, ids); err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -480,6 +497,45 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 		return fmt.Errorf("sweep tenants: %w", errorsJoin(errs))
 	}
 	return nil
+}
+
+func sweepTenantExternalIPs(ctx context.Context, client *vergeos.Client, tenantIDs map[int]string) error {
+	addresses, err := client.TenantExternalIPs.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tenant external IPs endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant external IPs: %w", err)
+	}
+	var errs []error
+	for _, address := range addresses {
+		_, owned := tenantIDs[address.TenantKey()]
+		if !owned && !HasPrefix(address.Hostname) {
+			continue
+		}
+		id := address.Key.Int()
+		log.Printf("[SWEEP] deleting tenant external IP %d (%s)", id, address.IP)
+		if err := deleteTenantExternalIP(ctx, client, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant external IPs: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func deleteTenantExternalIP(ctx context.Context, client *vergeos.Client, id int) error {
+	_, err := client.TenantExternalIPs.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if _, getErr := client.TenantExternalIPs.Get(ctx, id); vergeos.IsNotFoundError(getErr) {
+		log.Printf("[SWEEP] tenant external IP %d removed; firewall follow-up: %v", id, err)
+		return nil
+	}
+	return fmt.Errorf("delete tenant external IP %d: %w", id, err)
 }
 
 func deleteTenant(ctx context.Context, client *vergeos.Client, id int) error {
