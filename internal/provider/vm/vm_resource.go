@@ -105,7 +105,6 @@ func (r *VMResource) Metadata(ctx context.Context, req resource.MetadataRequest,
 // Schema defines the schema for the resource.
 func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "VM resource in VergeIO",
 		Version:             1,
 
@@ -791,7 +790,6 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		return
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
 
 	// Create disks
@@ -944,7 +942,6 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	data.CloudInitDataSource = plannedCloudInitDS
 	data.CloudInitFiles = plannedCloudInitFiles
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -979,7 +976,6 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -1089,7 +1085,6 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 		}
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)
 }
 

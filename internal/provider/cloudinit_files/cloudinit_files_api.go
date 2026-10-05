@@ -85,7 +85,6 @@ func (nc *CloudinitFileApi) createCloudinitFile(ctx context.Context, data *Cloud
 		return errors.New("invalid format received for Item")
 	}
 
-	// save into the Terraform state.
 	data.Id = types.StringValue(cloudinitFileAPIResp.Key)
 	tflog.Debug(ctx, fmt.Sprintf("Created a cloudinitFile with Id %v", data.Id.ValueString()))
 
@@ -95,7 +94,6 @@ func (nc *CloudinitFileApi) createCloudinitFile(ctx context.Context, data *Cloud
 // updateCloudinitFile updates an existing cloudinitFile.
 func (nc *CloudinitFileApi) updateCloudinitFile(ctx context.Context, planData *CloudinitFileResourceModel, stateData *CloudinitFileResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := CloudinitFileAPIResourceModel{
 
 		Id:                vergeio.StringToNil(planData.Id, stateData.Id, ""),
@@ -127,7 +125,6 @@ func (nc *CloudinitFileApi) updateCloudinitFile(ctx context.Context, planData *C
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
 
 	defer apiResp.Body.Close()
@@ -156,7 +153,6 @@ func (nc *CloudinitFileApi) deleteCloudinitFile(ctx context.Context, data *Cloud
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Deleted the cloudinitFile with the ID %v", data.Id))
 
 	defer apiResp.Body.Close()
@@ -195,7 +191,6 @@ func (nc *CloudinitFileApi) readCloudinitFile(ctx context.Context, data *Cloudin
 		return errors.New("invalid format received for Item")
 	}
 
-	// save into the resource model
 	data.Name = types.StringValue(cloudinitFileAPIResp.Name)
 	data.Contents = types.StringValue(cloudinitFileAPIResp.Contents)
 	data.ContainsVariables = types.BoolValue(cloudinitFileAPIResp.ContainsVariables)
@@ -214,7 +209,6 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 	// What fields do we want
 	opts := vergeio.Options{Fields: "$key,name,filesize,contents,containsVariables"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
@@ -242,7 +236,6 @@ func (va *CloudinitFileApi) readCloudinitFiles(ctx context.Context, data *Cloudi
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// save into the resource model
 	for _, nwAPIResp := range cloudinitFileAPIResp {
 		data.CloudinitFiles = append(data.CloudinitFiles, &CloudinitFileModel{
 			Id:                types.StringValue(nwAPIResp.Id),

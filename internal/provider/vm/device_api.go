@@ -252,7 +252,6 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 		}
 	}
 
-	// save into the Terraform state.
 	data.Key = types.StringValue(deviceAPIResp.Key)
 	tflog.Debug(ctx, fmt.Sprintf("Created a device with Id %v", data.Key.ValueString()))
 
@@ -262,7 +261,6 @@ func (da *DeviceApi) createDevice(ctx context.Context, data *deviceResourceModel
 // Update the Device in the API.
 func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceModel, stateData *deviceResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := deviceAPIResourceModel{
 		Machine:     vergeio.Int32ToNil(planData.Machine, stateData.Machine, 0),
 		Name:        vergeio.StringToNil(planData.Name, stateData.Name, ""),
@@ -292,7 +290,6 @@ func (da *DeviceApi) updateDevice(ctx context.Context, planData *deviceResourceM
 		return fmt.Errorf("missing response from the API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated device %v", apiData))
 
 	defer apiResp.Body.Close()
@@ -371,7 +368,6 @@ func (da *DeviceApi) readDevice(ctx context.Context, data *deviceResourceModel) 
 		return fmt.Errorf("invalid format received for Item %v", err)
 	}
 
-	// save into the resource model
 	data.Machine = types.Int32Value(deviceAPIResp.Machine)
 	data.Type = types.StringValue(deviceAPIResp.Type)
 	// data.MachineType = types.StringValue(deviceAPIResp.MachineType)

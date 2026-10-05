@@ -54,7 +54,6 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 
 	opts := vergeio.Options{Fields: "$key,name,description,filesize"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
@@ -81,7 +80,6 @@ func (va *MediasourceApi) readMediasources(ctx context.Context, data *Mediasourc
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// save into the resource model
 	for _, mediasourceAPIResp := range mediasourceAPIResp {
 		data.Mediasources = append(data.Mediasources, &MediasourceModel{
 			Id:          types.Int32Value(mediasourceAPIResp.Id),

@@ -39,7 +39,6 @@ func (d *VersionDataSource) Metadata(ctx context.Context, req datasource.Metadat
 
 func (d *VersionDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Version data source schema",
 
 		Attributes: map[string]schema.Attribute{
@@ -100,10 +99,8 @@ func (d *VersionDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
-	// Write logs using the tflog package
 	// Documentation: https://terraform.io/plugin/log
 	tflog.Trace(ctx, "End reading version data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

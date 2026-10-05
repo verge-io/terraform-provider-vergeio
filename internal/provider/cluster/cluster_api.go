@@ -54,7 +54,6 @@ func (va *ClusterApi) readClusters(ctx context.Context, data *ClusterDataSourceM
 	// What fields do we want
 	opts := vergeio.Options{Fields: "description,name,$key"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
@@ -82,7 +81,6 @@ func (va *ClusterApi) readClusters(ctx context.Context, data *ClusterDataSourceM
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// save into the resource model
 	for _, nwAPIResp := range clusterAPIResp {
 		data.Clusters = append(data.Clusters, &ClusterModel{
 			Id:          types.Int32Value(nwAPIResp.Id),

@@ -44,7 +44,6 @@ func (r *MemberResource) Metadata(ctx context.Context, req resource.MetadataRequ
 
 func (r *MemberResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Member or Vnet resource in VergeIO",
 
 		Attributes: map[string]schema.Attribute{
@@ -113,7 +112,6 @@ func (r *MemberResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -145,7 +143,6 @@ func (r *MemberResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -172,7 +169,6 @@ func (r *MemberResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
 }
 

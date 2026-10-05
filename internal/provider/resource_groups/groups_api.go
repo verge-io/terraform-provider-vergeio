@@ -57,7 +57,6 @@ func (va *ResourceGroupsApi) readResourceGroups(ctx context.Context, data *Resou
 	// What fields do we want
 	opts := vergeio.Options{Fields: "most"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}

@@ -49,7 +49,6 @@ func (d *ResourceGroupsDataSource) Metadata(ctx context.Context, req datasource.
 // Schema defines the schema for the data source.
 func (d *ResourceGroupsDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Resource Group data source schema",
 
 		Attributes: map[string]schema.Attribute{
@@ -134,9 +133,7 @@ func (d *ResourceGroupsDataSource) Read(ctx context.Context, req datasource.Read
 		return
 	}
 
-	// Write logs using the tflog package
 	tflog.Trace(ctx, "End reading resource groups data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
