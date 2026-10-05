@@ -134,6 +134,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		tenant.NewTenantNodeResource,
 		tenant.NewTenantStorageResource,
 		tenant.NewTenantExternalIPResource,
+		tenant.NewTenantLayer2NetworkResource,
 		tenant.NewTenantNetworkBlockResource,
 	}
 }

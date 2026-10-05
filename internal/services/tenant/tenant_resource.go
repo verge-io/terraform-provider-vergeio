@@ -31,7 +31,8 @@ const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the 
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
 	"vergeio_tenant_external_ip assigns one parent external IP to this tenant. The first assigned IP becomes ui_address. The next plan stores that address once it exists. " +
 	"vergeio_tenant_network_block assigns one routed CIDR (vnet_cidrs) from a parent network to this tenant. " +
-	"Assigning an address or a block can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip and vergeio_tenant_network_block report that as parent_firewall_pending. Apply that network's firewall before treating the assignment as live."
+	"Assigning an address or a block can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip and vergeio_tenant_network_block report that as parent_firewall_pending. Apply that network's firewall before treating the assignment as live. " +
+	"vergeio_tenant_layer2_network bridges one parent layer 2 network into this tenant (tenant_layer2_vnets). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation."
 
 var (
 	_ resource.Resource                = &TenantResource{}

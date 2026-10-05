@@ -6,7 +6,7 @@ description: |-
 
 # Tenants
 
-A VergeOS tenant is a full VergeOS instance carved from the parent: its own UI, API, nodes, storage, and networks. `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, and `vergeio_tenant_network_block` declare that bundle on the parent. `vergeio_tenants` reads it back.
+A VergeOS tenant is a full VergeOS instance carved from the parent: its own UI, API, nodes, storage, and networks. `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, and `vergeio_tenant_layer2_network` declare that bundle on the parent. `vergeio_tenants` reads it back.
 
 ## Two configurations
 
@@ -76,4 +76,10 @@ Creating or deleting the block leaves `need_fw_apply` set on that parent network
 
 VergeOS refuses to delete the block while a network inside the tenant is still built on it. Terraform returns that error and leaves the block in state. Remove the tenant network, then destroy the block.
 
-A layer 2 network handed to a tenant is not a resource. An assignment made in the VergeOS UI, or with another client, can still leave `need_fw_apply` set. `vergeio_network_rules` on the parent configuration applies `need_fw_apply` for rule edits. It does not apply a flag left by an assignment made outside Terraform.
+## Layer 2 networks
+
+`vergeio_tenant_layer2_network` bridges a tenant onto a parent network (`tenant_layer2_vnets`). It requires VergeOS 26.0 or later. VergeOS creates three things inside the tenant: a NIC on the tenant node connected to that network, a physical network whose name is "Physical" followed by the parent network name, and an external network named after the parent network. `network_id` is the parent network key, the same value as `vergeio_network.id`. Changing `tenant_id` or `network_id` replaces the assignment. `enabled` updates in place and defaults to true.
+
+Destroy disables the assignment, then deletes it. VergeOS rejects a delete that skips the disable. Networks created inside the tenant remain after the host-side delete. They belong to the tenant-side configuration. Remove them from inside the tenant. Leaving those components in place can block a later recreation of the same assignment.
+
+An assignment made in the VergeOS UI, or with another client, can still leave `need_fw_apply` set. `vergeio_network_rules` on the parent configuration applies `need_fw_apply` for rule edits. It does not apply a flag left by an assignment made outside Terraform.

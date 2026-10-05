@@ -52,6 +52,12 @@ func TestTenantImportStateEmptyID(t *testing.T) {
 			summary:  "Invalid Tenant Network Block Import ID",
 			detail:   "Import vergeio_tenant_network_block with the vnet cidr key.",
 		},
+		{
+			name:     "layer 2 network",
+			resource: NewTenantLayer2NetworkResource(),
+			summary:  "Invalid Tenant Layer 2 Network Import ID",
+			detail:   "Import vergeio_tenant_layer2_network with the tenant_layer2_vnets key.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,6 +74,7 @@ func TestTenantImportStateKeepsNonEmptyID(t *testing.T) {
 		NewTenantStorageResource(),
 		NewTenantExternalIPResource(),
 		NewTenantNetworkBlockResource(),
+		NewTenantLayer2NetworkResource(),
 	} {
 		resp := importResourceState(t, r, "abc")
 		assertImportIDPassthrough(t, resp, "abc")

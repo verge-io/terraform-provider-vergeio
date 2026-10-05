@@ -78,7 +78,7 @@ func TestTenantResourceSchema(t *testing.T) {
 	if power == nil || !power.IsOptional() || !power.IsComputed() {
 		t.Fatal("powerstate should be optional and computed")
 	}
-	if resp.Schema.MarkdownDescription == "" || !containsAll(t, resp.Schema.MarkdownDescription, "need_fw_apply", "vnet_cidrs", "second Terraform") {
+	if resp.Schema.MarkdownDescription == "" || !containsAll(t, resp.Schema.MarkdownDescription, "need_fw_apply", "vnet_cidrs", "second Terraform", "tenant_layer2_vnets", "tenant-side configuration") {
 		t.Fatalf("description should document the address gap and the second configuration: %s", resp.Schema.MarkdownDescription)
 	}
 }
