@@ -28,8 +28,9 @@ import (
 const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the parent, including its power state and UI address. " +
 	"powerstate powers the tenant on or off and waits up to 2 minutes for terminal online or offline status and a stopped tenant network. " +
 	"ui_address is the IP of the tenant UI, read from the ui_address row. " +
+	"ui_address_id chooses which assigned external IP is that address, on create and on update. Omit it to leave the current UI address unchanged. The first assigned IP becomes the UI address, and the next plan stores that address once it exists. A change made in the parent UI is drift, and the next apply restores the configured value. " +
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
-	"vergeio_tenant_external_ip assigns one parent external IP to this tenant. The first assigned IP becomes ui_address. The next plan stores that address once it exists. " +
+	"vergeio_tenant_external_ip assigns one parent external IP to this tenant. " +
 	"vergeio_tenant_network_block assigns one routed CIDR (vnet_cidrs) from a parent network to this tenant. " +
 	"Assigning an address or a block can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip and vergeio_tenant_network_block report that as parent_firewall_pending. Apply that network's firewall before treating the assignment as live. " +
 	"vergeio_tenant_layer2_network bridges one parent layer 2 network into this tenant (tenant_layer2_vnets). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation. " +
@@ -204,11 +205,15 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"ui_address_id": schema.Int32Attribute{
-				MarkdownDescription: "Key of the vnet address row that holds the tenant UI address. Empty until VergeOS assigns one.",
+				MarkdownDescription: "Key of the vnet address row that holds the tenant UI address. Set this to one of the tenant's assigned external IPs, the id of a vergeio_tenant_external_ip, to choose the UI address on create or update. Omit it to leave the current UI address unchanged. The first assigned IP becomes the UI address when none is chosen. A change made in the parent UI is drift, and the next apply restores the configured value.",
+				Optional:            true,
 				Computed:            true,
+				PlanModifiers: []planmodifier.Int32{
+					int32planmodifier.UseStateForUnknown(),
+				},
 			},
 			"ui_address": schema.StringAttribute{
-				MarkdownDescription: "IP address of the tenant UI, resolved from ui_address_id. The first IP from vergeio_tenant_external_ip becomes this address. The next plan stores it once VergeOS has assigned it. Use it as the host of the provider configuration that manages the inside of the tenant.",
+				MarkdownDescription: "IP address of the tenant UI, resolved from ui_address_id. The first IP from vergeio_tenant_external_ip becomes this address when ui_address_id is omitted. The next plan stores it once VergeOS has assigned it. Use it as the host of the provider configuration that manages the inside of the tenant.",
 				Computed:            true,
 			},
 			"isolate": schema.BoolAttribute{
@@ -294,6 +299,7 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 	plannedIsolate := data.Isolate
+	plannedUIAddressID := data.UIAddressID
 	if err := r.api.reconcileIsolate(ctx, id, plannedIsolate); err != nil {
 		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
 		return
@@ -309,6 +315,12 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 	if err := requireIsolate(plannedIsolate, data.Isolate); err != nil {
+		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
+		return
+	}
+	// A configured ui_address_id must be the row VergeOS stored. Storing a
+	// different key would make Terraform reject the apply (#214).
+	if err := requireUIAddressID(plannedUIAddressID, data.UIAddressID); err != nil {
 		resp.Diagnostics.AddError("Error creating tenant", fmt.Errorf("tenant %d was created: %w", id, err).Error())
 		return
 	}
@@ -348,6 +360,7 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	desiredPower := plan.PowerState
 	plannedIsolate := plan.Isolate
+	plannedUIAddressID := plan.UIAddressID
 	deferred, err := r.api.updateTenant(ctx, &plan, &state)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating tenant", err.Error())
@@ -361,6 +374,10 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 	if err := requireIsolate(plannedIsolate, plan.Isolate); err != nil {
+		resp.Diagnostics.AddError("Error updating tenant", err.Error())
+		return
+	}
+	if err := requireUIAddressID(plannedUIAddressID, plan.UIAddressID); err != nil {
 		resp.Diagnostics.AddError("Error updating tenant", err.Error())
 		return
 	}
@@ -464,6 +481,27 @@ func requireIsolate(planned, actual types.Bool) error {
 		return nil
 	}
 	return fmt.Errorf("isolate is %s, want %t", isolateText(actual), planned.ValueBool())
+}
+
+// requireUIAddressID fails the apply when a configured ui_address_id is not
+// the key read back from the tenant row. An omitted value is left alone.
+// Storing a different key would make Terraform reject the apply as an
+// inconsistent result (#214).
+func requireUIAddressID(planned, actual types.Int32) error {
+	if planned.IsNull() || planned.IsUnknown() {
+		return nil
+	}
+	if !actual.IsNull() && !actual.IsUnknown() && actual.ValueInt32() == planned.ValueInt32() {
+		return nil
+	}
+	return fmt.Errorf("ui_address_id is %s, want %d", uiAddressIDText(actual), planned.ValueInt32())
+}
+
+func uiAddressIDText(v types.Int32) string {
+	if v.IsNull() || v.IsUnknown() {
+		return "unset"
+	}
+	return fmt.Sprintf("%d", v.ValueInt32())
 }
 
 func isolateText(v types.Bool) string {

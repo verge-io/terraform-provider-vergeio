@@ -56,10 +56,13 @@ type fakeVerge struct {
 	// isolateIgnore accepts isolateon and isolateoff without changing the
 	// row, so readback still disagrees with the plan.
 	isolateIgnore bool
-	tenants       map[int]map[string]any
-	status        map[int]map[string]any
-	addresses     map[int]map[string]any
-	cidrs         map[int]map[string]any
+	// uiAddressIgnore accepts ui_address on create and update without
+	// storing it, so readback still disagrees with the plan.
+	uiAddressIgnore bool
+	tenants         map[int]map[string]any
+	status          map[int]map[string]any
+	addresses       map[int]map[string]any
+	cidrs           map[int]map[string]any
 	// cidrDeleteStatus, when non-zero, makes DELETE /vnet_cidrs/{id} fail
 	// with that status and cidrDeleteMessage, leaving the row in place.
 	cidrDeleteStatus  int
@@ -120,6 +123,20 @@ func (f *fakeVerge) api(t *testing.T) *API {
 		t.Fatal(err)
 	}
 	return &API{name: "Tenant Api", sdk: sdk}
+}
+
+func (f *fakeVerge) seedAddress(id int, ip string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id >= f.next {
+		f.next = id + 1
+	}
+	f.addresses[id] = map[string]any{
+		"$key": id,
+		"ip":   ip,
+		"type": "static",
+		"vnet": 3,
+	}
 }
 
 func (f *fakeVerge) seedTenant(id int, name, uiIP string, online bool) {
@@ -300,7 +317,12 @@ func (f *fakeVerge) serveTenants(w http.ResponseWriter, r *http.Request, id int,
 			"created":     int64(1700000000),
 		}
 		copyPresent(obj, payload, "expose_cloud_snapshots", "allow_branding", "change_password", "theme_access", "help_url", "note", "oidc_application")
-		if f.uiIP != "" {
+		if !f.uiAddressIgnore {
+			if addressID := intField(payload["ui_address"]); addressID > 0 {
+				obj["ui_address"] = addressID
+			}
+		}
+		if f.uiIP != "" && intField(obj["ui_address"]) == 0 {
 			addressID := 15
 			obj["ui_address"] = addressID
 			f.addresses[addressID] = map[string]any{
@@ -343,6 +365,9 @@ func (f *fakeVerge) serveTenants(w http.ResponseWriter, r *http.Request, id int,
 			return
 		}
 		for k, v := range payload {
+			if k == "ui_address" && f.uiAddressIgnore {
+				continue
+			}
 			obj[k] = v
 		}
 		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})

@@ -94,6 +94,9 @@ variable "parent_external_network_id" {
   description = "Key of the parent external network that hands the tenant its UI address and routed blocks."
 }
 
+# The first assigned IP becomes the tenant UI address.
+# Set vergeio_tenant.ui_address_id to this resource's id on a later change
+# when a different assigned IP should be the UI address.
 resource "vergeio_tenant_external_ip" "ui" {
   tenant_id             = vergeio_tenant.customer.id
   network_id            = var.parent_external_network_id
@@ -173,6 +176,8 @@ provider "vergeio" {
 ## Addresses handed down from the parent
 
 `vergeio_tenant_external_ip` declares one virtual IP on a parent network and sets the tenant as its owner. That is the address the parent UI assigns by hand today. The first assigned IP becomes the tenant UI address. A plan that runs after the address exists refreshes `vergeio_tenant` and can use `ui_address` in that same plan. `network_id` is the parent network key, the same value as `vergeio_network.id`.
+
+`ui_address_id` on `vergeio_tenant` chooses which assigned external IP is the tenant UI. Set it to the id of a `vergeio_tenant_external_ip` on a later change, after that address exists. The address resource takes `tenant_id` from the tenant, so the same apply cannot also feed that address id back into the tenant. Omit `ui_address_id` and the first assigned IP stays the UI address. `ui_address` remains the IP string. A change made in the parent UI is drift, and the next apply restores the configured value.
 
 Creating or deleting the address leaves `need_fw_apply` set on that parent network until its rules are applied. `apply_parent_firewall` applies them in the same call. `parent_firewall_pending` reports the flag afterward. A stopped parent network loads staged rules when it starts, and it may refuse a refresh while it is stopped.
 

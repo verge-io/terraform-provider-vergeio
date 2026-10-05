@@ -40,6 +40,9 @@ variable "parent_external_network_id" {
   description = "Key of the parent external network that hands the tenant its UI address and routed blocks."
 }
 
+# The first assigned IP becomes the tenant UI address.
+# Set vergeio_tenant.ui_address_id to this resource's id on a later change
+# when a different assigned IP should be the UI address.
 resource "vergeio_tenant_external_ip" "ui" {
   tenant_id             = vergeio_tenant.customer.id
   network_id            = var.parent_external_network_id

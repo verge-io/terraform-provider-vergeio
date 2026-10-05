@@ -71,8 +71,16 @@ func TestTenantResourceSchema(t *testing.T) {
 		t.Fatal("password should be sensitive")
 	}
 	ui := resp.Schema.Attributes["ui_address"]
-	if ui == nil || !ui.IsComputed() || ui.IsRequired() {
+	if ui == nil || !ui.IsComputed() || ui.IsOptional() || ui.IsRequired() {
 		t.Fatal("ui_address should be computed")
+	}
+	uiID := resp.Schema.Attributes["ui_address_id"]
+	if uiID == nil || !uiID.IsOptional() || !uiID.IsComputed() || uiID.IsRequired() {
+		t.Fatal("ui_address_id should be optional and computed")
+	}
+	uiIDAttr, ok := uiID.(schema.Int32Attribute)
+	if !ok || len(uiIDAttr.PlanModifiers) == 0 {
+		t.Fatal("ui_address_id should keep state when the configuration omits it")
 	}
 	power := resp.Schema.Attributes["powerstate"]
 	if power == nil || !power.IsOptional() || !power.IsComputed() {
@@ -86,7 +94,7 @@ func TestTenantResourceSchema(t *testing.T) {
 	if !ok || len(isolateAttr.PlanModifiers) == 0 {
 		t.Fatal("isolate should keep state when the configuration omits it")
 	}
-	if resp.Schema.MarkdownDescription == "" || !containsAll(t, resp.Schema.MarkdownDescription, "need_fw_apply", "vnet_cidrs", "second Terraform", "tenant_layer2_vnets", "tenant-side configuration", "isolate on") {
+	if resp.Schema.MarkdownDescription == "" || !containsAll(t, resp.Schema.MarkdownDescription, "need_fw_apply", "vnet_cidrs", "second Terraform", "tenant_layer2_vnets", "tenant-side configuration", "isolate on", "ui_address_id") {
 		t.Fatalf("description should document the address gap and the second configuration: %s", resp.Schema.MarkdownDescription)
 	}
 }
@@ -514,6 +522,193 @@ func TestUpdateResourceCorrectsIsolateDrift(t *testing.T) {
 	actions := fake.recordedActions()
 	if len(actions) != 1 || actions[0]["action"] != "isolateoff" {
 		t.Fatalf("actions = %#v, want isolateoff", actions)
+	}
+}
+
+func TestCreateTenantSendsUIAddress(t *testing.T) {
+	fake := newFake(t)
+	fake.seedAddress(21, "203.0.113.21")
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:        types.StringValue("customer-a"),
+		PowerState:  types.BoolValue(false),
+		UIAddressID: types.Int32Value(21),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("create diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := resp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if stored.UIAddressID.ValueInt32() != 21 {
+		t.Fatalf("ui_address_id = %#v", stored.UIAddressID)
+	}
+	if stored.UIAddress.ValueString() != "203.0.113.21" {
+		t.Fatalf("ui_address = %#v", stored.UIAddress)
+	}
+	creates := fake.bodiesFor(httpMethodPost, "/api/v4/tenants")
+	if len(creates) != 1 || intField(creates[0]["ui_address"]) != 21 {
+		t.Fatalf("create body = %#v", creates)
+	}
+}
+
+func TestCreateTenantOmitsUIAddress(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	creates := fake.bodiesFor(httpMethodPost, "/api/v4/tenants")
+	if len(creates) != 1 {
+		t.Fatalf("creates = %#v", creates)
+	}
+	if _, ok := creates[0]["ui_address"]; ok {
+		t.Fatalf("omitted ui_address_id was sent: %#v", creates[0])
+	}
+}
+
+func TestCreateErrorsWhenUIAddressReadbackDiffers(t *testing.T) {
+	fake := newFake(t)
+	fake.uiAddressIgnore = true
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:        types.StringValue("customer-a"),
+		PowerState:  types.BoolValue(false),
+		UIAddressID: types.Int32Value(21),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected ui_address_id readback to fail the apply")
+	}
+	if !containsAll(t, diagnosticText(resp.Diagnostics), "was created", "ui_address_id is unset, want 21") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	if id := tenantStateID(t, ctx, resp.State); id == "" {
+		t.Fatal("ui_address_id readback failure dropped the tenant id")
+	}
+}
+
+func TestUpdateTenantSetsAndMovesUIAddress(t *testing.T) {
+	fake := newFake(t)
+	fake.seedAddress(21, "203.0.113.21")
+	fake.seedAddress(22, "203.0.113.22")
+	ctx := context.Background()
+	createResp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	})
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create diagnostics = %s", diagnosticText(createResp.Diagnostics))
+	}
+	var state TenantResourceModel
+	if diags := createResp.State.Get(ctx, &state); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	plan := state
+	plan.UIAddressID = types.Int32Value(21)
+	updateResp := updateTenantResource(t, ctx, fake, plan, state)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("set diagnostics = %s", diagnosticText(updateResp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := updateResp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if stored.UIAddressID.ValueInt32() != 21 || stored.UIAddress.ValueString() != "203.0.113.21" {
+		t.Fatalf("after set id=%#v address=%#v", stored.UIAddressID, stored.UIAddress)
+	}
+	moved := stored
+	moved.UIAddressID = types.Int32Value(22)
+	moveResp := updateTenantResource(t, ctx, fake, moved, stored)
+	if moveResp.Diagnostics.HasError() {
+		t.Fatalf("move diagnostics = %s", diagnosticText(moveResp.Diagnostics))
+	}
+	var after TenantResourceModel
+	if diags := moveResp.State.Get(ctx, &after); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if after.UIAddressID.ValueInt32() != 22 || after.UIAddress.ValueString() != "203.0.113.22" {
+		t.Fatalf("after move id=%#v address=%#v", after.UIAddressID, after.UIAddress)
+	}
+	puts := fake.bodiesFor(httpMethodPut, "/api/v4/tenants/"+state.Id.ValueString())
+	if len(puts) != 2 || intField(puts[0]["ui_address"]) != 21 || intField(puts[1]["ui_address"]) != 22 {
+		t.Fatalf("puts = %#v", puts)
+	}
+}
+
+func TestUpdateTenantOmitsUnchangedUIAddress(t *testing.T) {
+	fake := newFake(t)
+	fake.seedAddress(21, "203.0.113.21")
+	api := fake.api(t)
+	ctx := context.Background()
+	state := &TenantResourceModel{
+		Name:        types.StringValue("customer-a"),
+		PowerState:  types.BoolValue(false),
+		UIAddressID: types.Int32Value(21),
+	}
+	if err := api.createTenant(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	plan := *state
+	plan.Description = types.StringValue("still the same ui")
+	if _, err := api.updateTenant(ctx, &plan, state); err != nil {
+		t.Fatal(err)
+	}
+	puts := fake.bodiesFor(httpMethodPut, "/api/v4/tenants/"+state.Id.ValueString())
+	if len(puts) != 1 {
+		t.Fatalf("puts = %#v", puts)
+	}
+	if _, ok := puts[0]["ui_address"]; ok {
+		t.Fatalf("unchanged ui_address_id was sent: %#v", puts[0])
+	}
+}
+
+func TestUpdateResourceCorrectsUIAddressDrift(t *testing.T) {
+	fake := newFake(t)
+	fake.seedAddress(21, "203.0.113.21")
+	fake.seedAddress(22, "203.0.113.22")
+	ctx := context.Background()
+	createResp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:        types.StringValue("customer-a"),
+		PowerState:  types.BoolValue(false),
+		UIAddressID: types.Int32Value(21),
+	})
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create diagnostics = %s", diagnosticText(createResp.Diagnostics))
+	}
+	var state TenantResourceModel
+	if diags := createResp.State.Get(ctx, &state); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	id := mustParseID(t, state.Id)
+	fake.mu.Lock()
+	fake.tenants[id]["ui_address"] = 22
+	fake.mu.Unlock()
+	state.UIAddressID = types.Int32Value(22)
+	state.UIAddress = types.StringValue("203.0.113.22")
+	plan := state
+	plan.UIAddressID = types.Int32Value(21)
+	updateResp := updateTenantResource(t, ctx, fake, plan, state)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics = %s", diagnosticText(updateResp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := updateResp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if stored.UIAddressID.ValueInt32() != 21 || stored.UIAddress.ValueString() != "203.0.113.21" {
+		t.Fatalf("ui_address_id = %#v ui_address = %#v, want 21 and 203.0.113.21", stored.UIAddressID, stored.UIAddress)
+	}
+	puts := fake.bodiesFor(httpMethodPut, "/api/v4/tenants/"+state.Id.ValueString())
+	if len(puts) != 1 || intField(puts[0]["ui_address"]) != 21 {
+		t.Fatalf("puts = %#v, want ui_address 21", puts)
 	}
 }
 
