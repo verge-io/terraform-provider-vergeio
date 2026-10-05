@@ -14,6 +14,8 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 
 `password` is the tenant admin user's password. VergeOS does not return it. Terraform keeps the configured value in state. `change_password` is sent only when the tenant is created and is kept the same way, so a later refresh does not replace the tenant when VergeOS clears the first-login flag. `preferred_node` is sent only when `powerstate` changes to true. VergeOS does not return it either.
 
+`isolate` turns tenant network isolation on or off. `true` calls isolate on and `false` calls isolate off. Omit it to leave the current isolation unchanged. A change made in the parent UI is drift, and the next apply restores the configured value.
+
 `vergeio_tenant_external_ip` assigns one parent external IP to this tenant. The first assigned IP becomes `ui_address`. The next plan stores that address once it exists. `vergeio_tenant_network_block` assigns one routed CIDR (`vnet_cidrs`) from a parent network to this tenant. Assigning an address or a block can leave `need_fw_apply` set on the parent external network. Both resources report that flag as `parent_firewall_pending`. Apply that network firewall, with `apply_parent_firewall` or `vergeio_network_rules`, before you treat the assignment as live. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into this tenant (`tenant_layer2_vnets`). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation.
 
 ## Example Usage
@@ -34,6 +36,7 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 - `description` (String) Tenant description. Omit to leave an existing description unchanged.
 - `expose_cloud_snapshots` (Boolean) Allow the tenant to request system cloud snapshots.
 - `help_url` (String) Custom help URL. `default` uses the product default. A blank value disables the help link.
+- `isolate` (Boolean) Whether network isolation is enabled. `true` calls isolate on. `false` calls isolate off. Omit to leave the current isolation unchanged. A change made in the parent UI is drift, and the next apply restores the configured value.
 - `note` (String) Free-form note stored on the tenant.
 - `oidc_application` (Number) OIDC application key for SSO.
 - `password` (String, Sensitive) Password for the tenant admin user. Omit to leave the current password unchanged.
@@ -48,7 +51,6 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 - `creator` (String) Username that created the tenant.
 - `id` (String) Tenant key assigned by VergeOS.
 - `is_snapshot` (Boolean) Whether this tenant record is a snapshot.
-- `isolate` (Boolean) Whether network isolation is enabled. This resource does not change isolation.
 - `state` (String) Simplified tenant state from tenant status: `online`, `offline`, `warning`, or `error`.
 - `status` (String) Tenant status string, such as `online`, `starting`, `stopping`, or `offline`.
 - `ui_address` (String) IP address of the tenant UI. The first IP from `vergeio_tenant_external_ip` becomes this address. The next plan stores it once VergeOS has assigned it.

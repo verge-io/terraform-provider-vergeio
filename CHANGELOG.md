@@ -34,6 +34,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_tenant.isolate` can be set in configuration. `true` calls isolate on and `false` calls isolate off. Omit it to leave the current isolation unchanged. Refresh reads the tenant row, so a change made in the parent UI is drift and the next apply restores the configured value (#213).
 - `vergeio_tenant_external_ip` waits for the parent network `need_fw_apply` flag to clear after a successful firewall apply. VergeOS accepts the refresh before the flag drops, so an immediate read left `parent_firewall_pending` true (#210).
 - Import of a `vergeio_vm` whose configuration says `machine_type = "q35"` or `machine_type = "pc"` no longer plans an update on every refresh. Import stores the expanded type VergeOS returns, such as `pc-q35-10.0` or `pc-i440fx-10.0`. That short name and the expanded type are the same machine type, so the plan is empty once `boot_disk` is adopted. A real change, including a different machine type, still plans (#237).
 - An empty import id is rejected on `vergeio_vm`, `vergeio_user`, `vergeio_group`, `vergeio_member`, `vergeio_permission`, `vergeio_network`, `vergeio_tag_category`, `vergeio_tag`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_external_ip`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. The error names the id that resource expects. A non empty id is still passed through (#235).

@@ -78,7 +78,15 @@ func TestTenantResourceSchema(t *testing.T) {
 	if power == nil || !power.IsOptional() || !power.IsComputed() {
 		t.Fatal("powerstate should be optional and computed")
 	}
-	if resp.Schema.MarkdownDescription == "" || !containsAll(t, resp.Schema.MarkdownDescription, "need_fw_apply", "vnet_cidrs", "second Terraform", "tenant_layer2_vnets", "tenant-side configuration") {
+	isolate := resp.Schema.Attributes["isolate"]
+	if isolate == nil || !isolate.IsOptional() || !isolate.IsComputed() || isolate.IsRequired() {
+		t.Fatal("isolate should be optional and computed")
+	}
+	isolateAttr, ok := isolate.(schema.BoolAttribute)
+	if !ok || len(isolateAttr.PlanModifiers) == 0 {
+		t.Fatal("isolate should keep state when the configuration omits it")
+	}
+	if resp.Schema.MarkdownDescription == "" || !containsAll(t, resp.Schema.MarkdownDescription, "need_fw_apply", "vnet_cidrs", "second Terraform", "tenant_layer2_vnets", "tenant-side configuration", "isolate on") {
 		t.Fatalf("description should document the address gap and the second configuration: %s", resp.Schema.MarkdownDescription)
 	}
 }
@@ -229,6 +237,283 @@ func TestCreateTenantOffDoesNotPower(t *testing.T) {
 	}
 	if actions := fake.recordedActions(); len(actions) != 0 {
 		t.Fatalf("actions = %#v", actions)
+	}
+}
+
+func TestCreateTenantIsolateOn(t *testing.T) {
+	fake := newFake(t)
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		Password:   types.StringValue("Tf-acc-tenant-password"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(true),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := resp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if !stored.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want true", stored.Isolate)
+	}
+	creates := fake.bodiesFor(httpMethodPost, "/api/v4/tenants")
+	if len(creates) != 1 {
+		t.Fatalf("creates = %#v", creates)
+	}
+	if _, ok := creates[0]["isolate"]; ok {
+		t.Fatalf("create body included read-only isolate: %#v", creates[0])
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 1 || actions[0]["action"] != "isolateon" {
+		t.Fatalf("actions = %#v, want isolateon", actions)
+	}
+	if intField(actions[0]["tenant"]) != mustParseID(t, stored.Id) {
+		t.Fatalf("isolate action tenant = %#v", actions[0])
+	}
+}
+
+func TestCreateTenantIsolateFalseSkipsAction(t *testing.T) {
+	fake := newFake(t)
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(false),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := resp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if stored.Isolate.IsNull() || stored.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want false", stored.Isolate)
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want none when the row is already false", actions)
+	}
+}
+
+func TestCreateTenantIsolateOmittedLeavesDefault(t *testing.T) {
+	fake := newFake(t)
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := resp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if stored.Isolate.IsNull() || stored.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want the platform default false", stored.Isolate)
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want none when isolate is omitted", actions)
+	}
+}
+
+func TestCreateKeepsIDWhenIsolateFails(t *testing.T) {
+	fake := newFake(t)
+	fake.isolateFail = true
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(true),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected isolate to fail")
+	}
+	if !containsAll(t, diagnosticText(resp.Diagnostics), "was created", "isolate") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	if id := tenantStateID(t, ctx, resp.State); id == "" {
+		t.Fatal("isolate failure dropped the tenant id")
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 1 || actions[0]["action"] != "isolateon" {
+		t.Fatalf("actions = %#v, want one failed isolateon", actions)
+	}
+}
+
+func TestUpdateTenantTogglesIsolate(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	state := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	on := *state
+	on.Isolate = types.BoolValue(true)
+	if _, err := api.updateTenant(context.Background(), &on, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), &on); err != nil {
+		t.Fatal(err)
+	}
+	if !on.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want true", on.Isolate)
+	}
+	off := on
+	off.Isolate = types.BoolValue(false)
+	if _, err := api.updateTenant(context.Background(), &off, &on); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), &off); err != nil {
+		t.Fatal(err)
+	}
+	if off.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want false", off.Isolate)
+	}
+	if fake.callCount(httpMethodPut, "/api/v4/tenants/"+state.Id.ValueString()) != 0 {
+		t.Fatal("isolate-only update should not PUT the tenant")
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 2 || actions[0]["action"] != "isolateon" || actions[1]["action"] != "isolateoff" {
+		t.Fatalf("actions = %#v, want isolateon then isolateoff", actions)
+	}
+}
+
+func TestUpdateTenantIsolateUnchangedSkipsAction(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	state := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(true),
+	}
+	if err := api.createTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, state.Id)
+	fake.mu.Lock()
+	fake.tenants[id]["isolate"] = true
+	fake.mu.Unlock()
+	if err := api.readTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	plan := *state
+	plan.Description = types.StringValue("still isolated")
+	if _, err := api.updateTenant(context.Background(), &plan, state); err != nil {
+		t.Fatal(err)
+	}
+	if actions := fake.recordedActions(); len(actions) != 0 {
+		t.Fatalf("actions = %#v, want none when isolate already matches", actions)
+	}
+}
+
+func TestUpdateTenantIsolateCorrectsParentDrift(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	state := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, state.Id)
+	fake.mu.Lock()
+	fake.tenants[id]["isolate"] = true
+	fake.mu.Unlock()
+	if err := api.readTenant(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Isolate.ValueBool() {
+		t.Fatal("refresh should store the isolation turned on in the parent UI")
+	}
+	plan := *state
+	plan.Isolate = types.BoolValue(false)
+	if _, err := api.updateTenant(context.Background(), &plan, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.readTenant(context.Background(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want false after apply corrects the parent UI", plan.Isolate)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 1 || actions[0]["action"] != "isolateoff" {
+		t.Fatalf("actions = %#v, want isolateoff", actions)
+	}
+}
+
+func TestCreateErrorsWhenIsolateReadbackDiffers(t *testing.T) {
+	fake := newFake(t)
+	fake.isolateIgnore = true
+	ctx := context.Background()
+	resp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(true),
+	})
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected isolate readback to fail the apply")
+	}
+	if !containsAll(t, diagnosticText(resp.Diagnostics), "was created", "isolate is false, want true") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	if id := tenantStateID(t, ctx, resp.State); id == "" {
+		t.Fatal("isolate readback failure dropped the tenant id")
+	}
+}
+
+func TestUpdateResourceCorrectsIsolateDrift(t *testing.T) {
+	fake := newFake(t)
+	ctx := context.Background()
+	createResp := createTenantResource(t, ctx, fake, TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+		Isolate:    types.BoolValue(false),
+	})
+	if createResp.Diagnostics.HasError() {
+		t.Fatalf("create diagnostics = %s", diagnosticText(createResp.Diagnostics))
+	}
+	var state TenantResourceModel
+	if diags := createResp.State.Get(ctx, &state); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	id := mustParseID(t, state.Id)
+	fake.mu.Lock()
+	fake.tenants[id]["isolate"] = true
+	fake.mu.Unlock()
+	state.Isolate = types.BoolValue(true)
+	plan := state
+	plan.Isolate = types.BoolValue(false)
+	updateResp := updateTenantResource(t, ctx, fake, plan, state)
+	if updateResp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics = %s", diagnosticText(updateResp.Diagnostics))
+	}
+	var stored TenantResourceModel
+	if diags := updateResp.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatalf("state get: %s", diagnosticText(diags))
+	}
+	if stored.Isolate.IsNull() || stored.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want false", stored.Isolate)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 1 || actions[0]["action"] != "isolateoff" {
+		t.Fatalf("actions = %#v, want isolateoff", actions)
 	}
 }
 

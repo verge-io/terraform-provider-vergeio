@@ -8,6 +8,8 @@ description: |-
 
 A VergeOS tenant is a full VergeOS instance carved from the parent: its own UI, API, nodes, storage, and networks. `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, and `vergeio_tenant_layer2_network` declare that bundle on the parent. `vergeio_tenants` reads it back.
 
+`isolate` on `vergeio_tenant` turns network isolation on or off. `true` calls isolate on. `false` calls isolate off. Omit it to leave the current isolation unchanged. A change made in the parent UI is drift, and the next apply restores the configured value.
+
 ## Two configurations
 
 Terraform configures a provider before it applies resources. The tenant UI address does not exist until `vergeio_tenant` is created, so the same configuration cannot point a provider at that address.
