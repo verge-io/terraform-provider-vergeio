@@ -58,15 +58,24 @@ type fakeVerge struct {
 	// with that status and cidrDeleteMessage, leaving the row in place.
 	cidrDeleteStatus  int
 	cidrDeleteMessage string
-	nodes             map[int]map[string]any
-	storage           map[int]map[string]any
-	vnets             map[int]map[string]any
-	machines          map[int]map[string]any
-	calls             []string
-	bodies            []recordedBody
-	actions           []map[string]any
-	vnetActions       []map[string]any
-	nodeActions       []map[string]any
+	layer2            map[int]map[string]any
+	// layer2DisableStatus, when non-zero, makes a PUT that sets enabled to
+	// false fail and leaves the row unchanged.
+	layer2DisableStatus  int
+	layer2DisableMessage string
+	// layer2DeleteStatus, when non-zero, makes DELETE of a disabled row fail
+	// and leave it in place. A delete of an enabled row always fails.
+	layer2DeleteStatus  int
+	layer2DeleteMessage string
+	nodes               map[int]map[string]any
+	storage             map[int]map[string]any
+	vnets               map[int]map[string]any
+	machines            map[int]map[string]any
+	calls               []string
+	bodies              []recordedBody
+	actions             []map[string]any
+	vnetActions         []map[string]any
+	nodeActions         []map[string]any
 	// fwSettleReads is how many vnet GETs after a refresh still report
 	// need_fw_apply. Zero clears the flag inside the refresh handler.
 	fwSettleReads int
@@ -83,6 +92,7 @@ func newFake(t *testing.T) *fakeVerge {
 		status:         map[int]map[string]any{},
 		addresses:      map[int]map[string]any{},
 		cidrs:          map[int]map[string]any{},
+		layer2:         map[int]map[string]any{},
 		nodes:          map[int]map[string]any{},
 		storage:        map[int]map[string]any{},
 		vnets:          map[int]map[string]any{},
@@ -167,6 +177,14 @@ func (f *fakeVerge) recordedNodeActions() []map[string]any {
 	return out
 }
 
+func (f *fakeVerge) recordedCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, len(f.calls))
+	copy(out, f.calls)
+	return out
+}
+
 func (f *fakeVerge) callCount(method, path string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -245,6 +263,8 @@ func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveAddress(w, r, id, payload)
 	case "vnet_cidrs":
 		f.serveCIDR(w, r, id, payload)
+	case "tenant_layer2_vnets":
+		f.serveLayer2(w, r, id, payload)
 	case "vnets":
 		f.serveVNet(w, r, id)
 	case "vnet_actions":
@@ -767,6 +787,74 @@ func (f *fakeVerge) serveCIDR(w http.ResponseWriter, r *http.Request, id int, pa
 	}
 }
 
+func (f *fakeVerge) serveLayer2(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	switch {
+	case r.Method == http.MethodGet && id == 0:
+		writeJSON(f.t, w, http.StatusOK, f.filterMaps(f.layer2Slice(), r.URL.Query().Get("filter")))
+	case r.Method == http.MethodGet && id > 0:
+		obj, ok := f.layer2[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		writeJSON(f.t, w, http.StatusOK, obj)
+	case r.Method == http.MethodPost && id == 0:
+		id = f.alloc()
+		enabled := true
+		if _, ok := payload["enabled"]; ok {
+			enabled = boolField(payload, "enabled")
+		}
+		f.layer2[id] = map[string]any{
+			"$key":    id,
+			"tenant":  intField(payload["tenant"]),
+			"vnet":    intField(payload["vnet"]),
+			"enabled": enabled,
+		}
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodPut && id > 0:
+		obj, ok := f.layer2[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		if f.layer2DisableStatus != 0 && payload["enabled"] == false {
+			writeJSON(f.t, w, f.layer2DisableStatus, map[string]string{"err": f.layer2DisableMessage})
+			return
+		}
+		if _, ok := payload["enabled"]; ok {
+			obj["enabled"] = boolField(payload, "enabled")
+		}
+		w.WriteHeader(http.StatusOK)
+	case r.Method == http.MethodDelete && id > 0:
+		obj, ok := f.layer2[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		if boolField(obj, "enabled") {
+			writeJSON(f.t, w, http.StatusBadRequest, map[string]string{"err": "layer 2 network must be disabled before it is deleted"})
+			return
+		}
+		if f.layer2DeleteStatus != 0 {
+			writeJSON(f.t, w, f.layer2DeleteStatus, map[string]string{"err": f.layer2DeleteMessage})
+			return
+		}
+		delete(f.layer2, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		f.t.Errorf("unexpected layer2 %s %d", r.Method, id)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
+}
+
+func (f *fakeVerge) layer2Slice() []map[string]any {
+	rows := make([]map[string]any, 0, len(f.layer2))
+	for _, row := range f.layer2 {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func (f *fakeVerge) cidrSlice() []map[string]any {
 	rows := make([]map[string]any, 0, len(f.cidrs))
 	for _, row := range f.cidrs {
@@ -864,6 +952,11 @@ func matchFilter(filter string, row map[string]any) bool {
 		case strings.HasPrefix(part, "tenant eq "):
 			want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(part, "tenant eq ")))
 			if err != nil || intField(row["tenant"]) != want {
+				return false
+			}
+		case strings.HasPrefix(part, "vnet eq "):
+			want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(part, "vnet eq ")))
+			if err != nil || intField(row["vnet"]) != want {
 				return false
 			}
 		case strings.HasPrefix(part, "machine eq "):

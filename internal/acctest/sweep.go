@@ -2,6 +2,7 @@ package acctest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -442,6 +443,9 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 	if err := sweepTenantExternalIPs(ctx, client, ids); err != nil {
 		return err
 	}
+	if err := sweepTenantLayer2Networks(ctx, client, ids); err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -524,6 +528,53 @@ func sweepTenantExternalIPs(ctx context.Context, client *vergeos.Client, tenantI
 		return fmt.Errorf("sweep tenant external IPs: %w", errorsJoin(errs))
 	}
 	return nil
+}
+
+func sweepTenantLayer2Networks(ctx context.Context, client *vergeos.Client, tenantIDs map[int]string) error {
+	if len(tenantIDs) == 0 {
+		return nil
+	}
+	rows, err := client.TenantLayer2Networks.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] tenant layer 2 networks endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant layer 2 networks: %w", err)
+	}
+	var errs []error
+	for _, row := range rows {
+		if _, ok := tenantIDs[row.Tenant.Int()]; !ok {
+			continue
+		}
+		id := row.Key.Int()
+		log.Printf("[SWEEP] deleting tenant layer 2 network %d (tenant %d network %d)", id, row.Tenant.Int(), row.VNet.Int())
+		if err := client.TenantLayer2Networks.Disable(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			if _, getErr := client.TenantLayer2Networks.Get(ctx, id); vergeos.IsNotFoundError(getErr) {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("disable tenant layer 2 network %d: %w", id, err))
+			continue
+		}
+		if err := client.TenantLayer2Networks.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			errs = append(errs, fmt.Errorf("delete tenant layer 2 network %d: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant layer 2 networks: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func listEndpointMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	if vergeos.IsNotFoundError(err) {
+		return true
+	}
+	var apiErr *vergeos.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
 }
 
 func deleteTenantExternalIP(ctx context.Context, client *vergeos.Client, id int) error {

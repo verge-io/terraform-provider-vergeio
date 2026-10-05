@@ -57,6 +57,17 @@ resource "vergeio_tenant_network_block" "routed" {
   apply_parent_firewall = true
 }
 
+variable "parent_layer2_network_id" {
+  type        = string
+  description = "Key of the parent layer 2 network bridged into the tenant. Requires VergeOS 26.0 or later."
+}
+
+resource "vergeio_tenant_layer2_network" "external" {
+  tenant_id  = vergeio_tenant.customer.id
+  network_id = var.parent_layer2_network_id
+  enabled    = true
+}
+
 output "tenant_ui_address" {
   value = vergeio_tenant.customer.ui_address
 }

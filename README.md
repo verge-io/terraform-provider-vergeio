@@ -61,6 +61,7 @@ provider "vergeio" {}
 - vergeio_tag_member
 - vergeio_tenant
 - vergeio_tenant_external_ip
+- vergeio_tenant_layer2_network
 - vergeio_tenant_network_block
 - vergeio_tenant_node
 - vergeio_tenant_storage
@@ -77,7 +78,7 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 
-`vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. `vergeio_tenant_external_ip` assigns one virtual IP on a parent network to the tenant. The first assigned IP becomes the UI address. `vergeio_tenant_network_block` assigns one routed CIDR from a parent network to the tenant. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
+`vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. `vergeio_tenant_external_ip` assigns one virtual IP on a parent network to the tenant. The first assigned IP becomes the UI address. `vergeio_tenant_network_block` assigns one routed CIDR from a parent network to the tenant. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into the tenant on VergeOS 26.0 or later. Destroy disables that assignment, then deletes it. Networks created inside the tenant remain after the host-side delete and belong to the tenant-side configuration. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
 
 Assigning an external IP or a network block can leave `need_fw_apply` set on the parent network. Both resources report that flag as `parent_firewall_pending`. Set `apply_parent_firewall` to apply the rules in the same call. VergeOS refuses to delete a network block while a tenant network is still built on it.
 
