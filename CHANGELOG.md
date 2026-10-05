@@ -3,6 +3,7 @@
 NOTES:
 
 - Rebuilt on the Terraform Plugin Framework (protocol 6), Go 1.27.1, and govergeos. The [v3 upgrade guide](docs/guides/version-3-upgrade.md) is the migration reference for configurations and state coming from 2.x (registry 1.0.0 through 2.7.8).
+- Built against govergeos commit `6b48c911` on main. That commit is not a release tag. An update that returns HTTP 404 keeps the VergeOS message. A missing row on read or delete is still reported as not found.
 
 BREAKING CHANGES:
 

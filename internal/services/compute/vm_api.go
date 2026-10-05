@@ -292,7 +292,7 @@ type VMPowerState struct {
 
 // VergeOS creates a VM with one core and 1024 MiB when cpu_cores and ram
 // are omitted. Provider v2.7.8 left those fields out and the platform
-// applied these values. govergeos v0.3.0 stores both as plain ints, so an
+// applied these values. govergeos stores both as plain ints, so an
 // omitted field arrives as 0 and Create rejects it. Create fills the same
 // platform defaults. An explicit value, including 0 or a negative number,
 // is sent unchanged. Updates still omit an unset value.

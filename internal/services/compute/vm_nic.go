@@ -285,7 +285,7 @@ func (nc *NICApi) readNIC(ctx context.Context, data *nicResourceModel) error {
 // id, so two reads return the same block order.
 func (na *NICApi) readNICsByMachine(ctx context.Context, machineID int32) ([]*nicResourceModel, error) {
 	// VMNICs.List takes a VM $key and resolves the machine. Callers have the
-	// machine id, which is what govergeos v0.3.0 filtered on directly.
+	// machine id, so this lists with a machine filter instead.
 	apiResp, err := na.client.Get(ctx, NICEndpoint, &vergeio.Options{
 		Fields: "$key,name",
 		Filter: fmt.Sprintf("machine eq %d", machineID),
