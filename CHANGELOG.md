@@ -64,4 +64,4 @@ BUG FIXES:
 - `vergeio_snapshot_profile` periods no longer include `skip_missed`. VergeOS snapshot profile periods have no such column.
 - Apply corrects `vergeio_vm.powerstate` when the configured value differs from the machine running flag, including a change made outside Terraform.
 - A govergeos client that cannot be created is returned as a diagnostic. The provider does not keep a nil client.
-- A VM create that fails after the VM exists in VergeOS keeps that id in state. A later create that collides on the name adopts the VM when it matches the plan. User and console passwords are not written to debug logs.
+- A VM create that fails after the VM exists in VergeOS keeps that id in state, including a boot disk or device failure, a power-on timeout, cloud-init detach, or a later read. A boot disk or device that already has a key is stored with the VM, so the next plan updates or replaces this VM instead of creating another one with the same name (#251). A later create that collides on the name adopts the VM when it matches the plan. User and console passwords are not written to debug logs.

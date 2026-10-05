@@ -176,6 +176,56 @@ func TestPartialVMForStateDropsUnknownNestedValues(t *testing.T) {
 	}
 }
 
+func TestPartialVMForStateKeepsCreatedBootDiskAndDevices(t *testing.T) {
+	ctx := t.Context()
+	data := &VMResourceModel{
+		Id:   types.StringValue("7"),
+		Name: types.StringValue("web"),
+		BootDisk: &bootDiskModel{
+			Key:  types.StringValue("42"),
+			Name: types.StringValue("os"),
+			Size: types.Float64Value(40),
+		},
+		Devices: []*deviceResourceModel{
+			{
+				Key:  types.StringUnknown(),
+				Name: types.StringValue("not-created"),
+			},
+			{
+				Key:    types.StringValue("9"),
+				Name:   types.StringValue("tpm"),
+				Type:   types.StringValue("tpm"),
+				Status: types.Int32Unknown(),
+				DeviceTPMSettingsModel: &DeviceTPMSettingsModel{
+					Version: TPMVersion{StringValue: types.StringUnknown()},
+				},
+			},
+		},
+	}
+
+	partial := partialVMForState(data)
+	if partial.BootDisk == nil || partial.BootDisk.Key.ValueString() != "42" {
+		t.Fatalf("boot disk = %#v, want key 42", partial.BootDisk)
+	}
+	if len(partial.Devices) != 1 || partial.Devices[0].Key.ValueString() != "9" {
+		t.Fatalf("devices = %#v, want only the created device", partial.Devices)
+	}
+	if partial.Devices[0].Status.IsUnknown() || partial.Devices[0].DeviceTPMSettingsModel.Version.IsUnknown() {
+		t.Fatal("created device still has unknown values")
+	}
+	if !data.Devices[0].Key.IsUnknown() {
+		t.Fatal("partial state preparation changed the device create still uses")
+	}
+
+	vmResource := &VMResource{}
+	schemaResp := &fwresource.SchemaResponse{}
+	vmResource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := state.Set(ctx, &partial); diags.HasError() {
+		t.Fatalf("partial state: %v", diags)
+	}
+}
+
 func TestFindVMByNameEscapesFilter(t *testing.T) {
 	ctx := t.Context()
 	name := "O'Brien"
@@ -330,6 +380,201 @@ func TestCreateKeepsIDWhenReadAfterCreateFails(t *testing.T) {
 	}
 }
 
+func TestCreateStoresBootDiskKeyWhenDriveReadFails(t *testing.T) {
+	ctx := t.Context()
+	const vmJSON = `{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":2048,"enabled":true,"powerstate":false}`
+	server := newVMCreateServer(t, nil, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			return http.StatusCreated, `{"$key":"42"}`, true
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/42":
+			return http.StatusInternalServerError, `{"err":"read failed"}`, true
+		default:
+			return 0, "", false
+		}
+	}, vmJSON)
+	defer server.Close()
+
+	resp := createVM(t, ctx, server.URL, plannedVMWithBootDisk())
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the boot disk read to fail")
+	}
+	if !strings.Contains(diagnosticText(resp.Diagnostics), "Error creating boot disk") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	got := mustStateVM(t, ctx, resp.State)
+	if got.Id.ValueString() != "7" {
+		t.Fatalf("state id = %q, want 7", got.Id.ValueString())
+	}
+	if got.BootDisk == nil || got.BootDisk.Key.ValueString() != "42" {
+		t.Fatalf("boot disk = %#v, want key 42", got.BootDisk)
+	}
+}
+
+func TestCreateStoresDeviceKeyWhenLaterDeviceFails(t *testing.T) {
+	ctx := t.Context()
+	const vmJSON = `{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":2048,"enabled":true,"powerstate":false}`
+	var devicePosts int
+	server := newVMCreateServer(t, nil, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_devices":
+			devicePosts++
+			if devicePosts == 1 {
+				return http.StatusCreated, `{"$key":"9"}`, true
+			}
+			return http.StatusInternalServerError, `{"err":"device rejected"}`, true
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_devices/9":
+			return http.StatusOK, `{"$key":"9","machine":1,"type":"node_pci_devices","name":"gpu","enabled":true}`, true
+		default:
+			return 0, "", false
+		}
+	}, vmJSON)
+	defer server.Close()
+
+	plan := plannedVM()
+	plan.Devices = []*deviceResourceModel{
+		{Name: types.StringValue("gpu"), Type: types.StringValue("node_pci_devices")},
+		{Name: types.StringValue("tpm"), Type: types.StringValue("tpm")},
+	}
+	resp := createVM(t, ctx, server.URL, plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the second device to fail")
+	}
+	if !strings.Contains(diagnosticText(resp.Diagnostics), "Error creating device") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	got := mustStateVM(t, ctx, resp.State)
+	if got.Id.ValueString() != "7" {
+		t.Fatalf("state id = %q, want 7", got.Id.ValueString())
+	}
+	if len(got.Devices) != 1 || got.Devices[0].Key.ValueString() != "9" || got.Devices[0].Name.ValueString() != "gpu" {
+		t.Fatalf("devices = %#v, want the first device key 9", got.Devices)
+	}
+}
+
+func TestCreateStoresDeviceKeyWhenDeviceReadFails(t *testing.T) {
+	ctx := t.Context()
+	const vmJSON = `{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":2048,"enabled":true,"powerstate":false}`
+	server := newVMCreateServer(t, nil, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_devices":
+			return http.StatusCreated, `{"$key":"9"}`, true
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_devices/9":
+			return http.StatusInternalServerError, `{"err":"read failed"}`, true
+		default:
+			return 0, "", false
+		}
+	}, vmJSON)
+	defer server.Close()
+
+	plan := plannedVM()
+	plan.Devices = []*deviceResourceModel{
+		{Name: types.StringValue("gpu"), Type: types.StringValue("node_pci_devices")},
+	}
+	resp := createVM(t, ctx, server.URL, plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the device read to fail")
+	}
+	if !strings.Contains(diagnosticText(resp.Diagnostics), "Error creating device") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	got := mustStateVM(t, ctx, resp.State)
+	if got.Id.ValueString() != "7" {
+		t.Fatalf("state id = %q, want 7", got.Id.ValueString())
+	}
+	if len(got.Devices) != 1 || got.Devices[0].Key.ValueString() != "9" || got.Devices[0].Name.ValueString() != "gpu" {
+		t.Fatalf("devices = %#v, want key 9", got.Devices)
+	}
+}
+
+func TestCreateStoresVMIdWhenPowerOnTimesOut(t *testing.T) {
+	ctx := t.Context()
+	withFastVMPower(t)
+	const vmJSON = `{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":2048,"enabled":true,"powerstate":false}`
+	server := newVMCreateServer(t, nil, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/machine_drives":
+			return http.StatusCreated, `{"$key":"42"}`, true
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/machine_drives/42":
+			return http.StatusOK, `{"$key":"42","machine":1,"name":"os","disksize":42949672960,"enabled":true}`, true
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			return http.StatusOK, `{}`, true
+		default:
+			return 0, "", false
+		}
+	}, vmJSON)
+	defer server.Close()
+
+	plan := plannedVMWithBootDisk()
+	plan.PowerState = types.BoolValue(true)
+	resp := createVM(t, ctx, server.URL, plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected power on to time out")
+	}
+	detail := diagnosticText(resp.Diagnostics)
+	if !strings.Contains(detail, "Error powering on VM") || !strings.Contains(detail, "did not become running") {
+		t.Fatalf("diagnostics = %s", detail)
+	}
+	got := mustStateVM(t, ctx, resp.State)
+	if got.Id.ValueString() != "7" {
+		t.Fatalf("state id = %q, want 7", got.Id.ValueString())
+	}
+	if got.BootDisk == nil || got.BootDisk.Key.ValueString() != "42" {
+		t.Fatalf("boot disk = %#v, want key 42 kept after power-on failure", got.BootDisk)
+	}
+	if !got.PowerState.IsNull() && got.PowerState.ValueBool() {
+		t.Fatal("state recorded the VM as running after power-on timed out")
+	}
+}
+
+func TestCreateStoresVMIdWhenCloudInitDetachFails(t *testing.T) {
+	ctx := t.Context()
+	withFastVMPower(t)
+	origDelay := cloudInitDetachDelay
+	cloudInitDetachDelay = 0
+	t.Cleanup(func() { cloudInitDetachDelay = origDelay })
+
+	const vmJSON = `{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":2048,"enabled":true,"powerstate":false}`
+	var cloudInitLists int
+	server := newVMCreateServer(t, nil, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			return http.StatusOK, `{}`, true
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Query().Get("fields"), "as running"):
+			return http.StatusOK, `{"running":true,"status":"running"}`, true
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
+			cloudInitLists++
+			if cloudInitLists > 1 {
+				return http.StatusInternalServerError, `{"err":"list failed"}`, true
+			}
+			return http.StatusOK, `[]`, true
+		default:
+			return 0, "", false
+		}
+	}, vmJSON)
+	defer server.Close()
+
+	plan := plannedVM()
+	plan.PowerState = types.BoolValue(true)
+	plan.CloudInitFiles = []CloudInitFile{
+		{Name: types.StringValue("user-data"), Contents: types.StringValue("#cloud-config\n")},
+	}
+	resp := createVM(t, ctx, server.URL, plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected cloud-init detach to fail")
+	}
+	if !strings.Contains(diagnosticText(resp.Diagnostics), "Error detaching cloud-init") {
+		t.Fatalf("diagnostics = %s", diagnosticText(resp.Diagnostics))
+	}
+	got := mustStateVM(t, ctx, resp.State)
+	if got.Id.ValueString() != "7" {
+		t.Fatalf("state id = %q, want 7", got.Id.ValueString())
+	}
+	if got.PowerState.IsNull() || !got.PowerState.ValueBool() {
+		t.Fatalf("powerstate = %#v, want true after power-on succeeded", got.PowerState)
+	}
+}
+
 func TestCreateDoesNotStoreStateWhenCreateFails(t *testing.T) {
 	ctx := t.Context()
 	server := newVMCreateServer(t, nil, func(w http.ResponseWriter, r *http.Request) (int, string, bool) {
@@ -442,11 +687,34 @@ func stateID(t *testing.T, ctx context.Context, state tfsdk.State) string {
 	if state.Raw.Type() == nil || state.Raw.IsNull() {
 		return ""
 	}
+	return mustStateVM(t, ctx, state).Id.ValueString()
+}
+
+func mustStateVM(t *testing.T, ctx context.Context, state tfsdk.State) VMResourceModel {
+	t.Helper()
+	if state.Raw.Type() == nil || state.Raw.IsNull() {
+		t.Fatal("state is empty")
+	}
 	var got VMResourceModel
 	if diags := state.Get(ctx, &got); diags.HasError() {
 		t.Fatalf("state: %v", diags)
 	}
-	return got.Id.ValueString()
+	return got
+}
+
+func withFastVMPower(t *testing.T) {
+	t.Helper()
+	origWait := vmPowerWaitTimeout
+	origInterval := powerOnInterval
+	origSettle := powerOnSettle
+	vmPowerWaitTimeout = 0
+	powerOnInterval = 0
+	powerOnSettle = 0
+	t.Cleanup(func() {
+		vmPowerWaitTimeout = origWait
+		powerOnInterval = origInterval
+		powerOnSettle = origSettle
+	})
 }
 
 func diagnosticText(diags diag.Diagnostics) string {

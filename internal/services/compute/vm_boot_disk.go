@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -144,9 +145,24 @@ func (r *VMResource) adoptOrCreateBootDisk(ctx context.Context, plan *bootDiskMo
 	}
 
 	if err := r.diskApi.createDisk(ctx, planned); err != nil {
-		return nil, fmt.Errorf("failed to create boot disk: %w", err)
+		// The drive row can exist before the follow-up read fails. Hand the
+		// key back with the error so create can store it. A POST that never
+		// returned a key leaves the disk nil.
+		created := bootDiskFromDisk(planned, plan)
+		if !bootDiskKeySet(created) {
+			created = nil
+		}
+		return created, fmt.Errorf("failed to create boot disk: %w", err)
 	}
 	return bootDiskFromDisk(planned, plan), nil
+}
+
+// bootDiskKeySet reports a drive key VergeOS has already assigned.
+func bootDiskKeySet(disk *bootDiskModel) bool {
+	if disk == nil || disk.Key.IsNull() || disk.Key.IsUnknown() {
+		return false
+	}
+	return strings.TrimSpace(disk.Key.ValueString()) != ""
 }
 
 // knownMediaChanged reports a media or source change where both sides are known.
