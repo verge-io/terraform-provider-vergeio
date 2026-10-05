@@ -34,6 +34,12 @@ func NewVMApi(c *vergeio.Client) *VMApi {
 	}
 }
 
+// Poll knobs for changeVMPowerState. Package vars so tests can shrink the wait.
+var (
+	powerStatePollInterval = 5 * time.Second
+	powerStateMaxRetries   = 5
+)
+
 type VMApi struct {
 	name   string
 	client *vergeio.Client
@@ -463,7 +469,7 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 	}
 
 	//just wait for 30 second to make sure the vm is up and running
-	time.Sleep(5 * time.Second)
+	time.Sleep(powerStatePollInterval)
 
 	return nil
 }
@@ -645,7 +651,7 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 	for *currentPowerState != *boolDesriredState {
 
 		// Wait for a short period to allow the kill operation to complete
-		time.Sleep(5 * time.Second)
+		time.Sleep(powerStatePollInterval)
 
 		// Check the power state of the VM
 		if currentPowerState, err = va.isVMRunning(ctx, data.Id.ValueString()); err != nil {
@@ -656,12 +662,23 @@ func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, 
 		Retries += 1
 
 		// We are only going to retry 5 times before giving up
-		if Retries > 5 {
-			// TODO: add logic to rollback the VM creation if the power state is not running after 5 retries
-			// for now we will just return
+		if Retries > powerStateMaxRetries {
+			if currentPowerState != nil && *currentPowerState != *boolDesriredState {
+				return fmt.Errorf(
+					"timeout waiting for VM %v power state %v: still %v after %d checks",
+					data.Id.ValueString(), desiredState, *currentPowerState, Retries,
+				)
+			}
 			break
 		}
 		continue
+	}
+
+	if currentPowerState == nil || *currentPowerState != *boolDesriredState {
+		return fmt.Errorf(
+			"timeout waiting for VM %v power state %v",
+			data.Id.ValueString(), desiredState,
+		)
 	}
 
 	return nil
