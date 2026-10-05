@@ -3,7 +3,7 @@ HOSTNAME=vergeio
 NAMESPACE=cloud
 NAME=vergeio
 BINARY=terraform-provider-${NAME}
-VERSION=0.2.0
+VERSION=2.7.9
 OS_ARCH=$$(go env GOOS)_$$(go env GOARCH)
 
 default: install

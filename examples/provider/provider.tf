@@ -3,8 +3,9 @@
 terraform {
   required_providers {
     vergeio = {
-      source = "vergeio/cloud/vergeio"
-      #version = "1.5.3"
+      source  = "verge-io/vergeio"
+      version = "~> 2.7"
+      # For a provider built with `make install`, use source = "vergeio/cloud/vergeio" instead.
     }
   }
 }

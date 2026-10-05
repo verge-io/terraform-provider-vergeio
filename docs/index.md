@@ -10,7 +10,7 @@ description: |-
 
 The provider is used to interact with resources and data sources supported by VergeOS.
 
-Use the navigation on the left to read about the available resources and data sources this provider can use.
+Use the navigation on the left to read about the available resources and data sources this provider can use. Release history is in the repository's [CHANGELOG.md](https://github.com/verge-io/terraform-provider-vergeio/blob/HEAD/CHANGELOG.md).
 
 ## Support
 VergeIO welcomes pull requests and responds to issues on a best-effort basis. VergeIO maintains public GitHub repositories for initiatives that help customers integrate the VergeIO platform with other third-party products. Support for these initiatives is handled directly via the GitHub repository. Issues and enhancement requests can be submitted in the Issues tab of each repository. Search for and review existing open issues before submitting a new issue.
@@ -21,7 +21,7 @@ terraform {
 	required_providers {
 		vergeio = {
 			source  = "verge-io/vergeio"
-			version = "2.X.X"
+			version = "~> 2.7"
 		}
 	}
 }
