@@ -6,7 +6,7 @@ description: |-
 
 # Tenants
 
-A VergeOS tenant is a full VergeOS instance carved from the parent: its own UI, API, nodes, storage, and networks. `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, and `vergeio_tenant_external_ip` declare that bundle on the parent. `vergeio_tenants` reads it back.
+A VergeOS tenant is a full VergeOS instance carved from the parent: its own UI, API, nodes, storage, and networks. `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, and `vergeio_tenant_network_block` declare that bundle on the parent. `vergeio_tenants` reads it back.
 
 ## Two configurations
 
@@ -89,7 +89,7 @@ resource "vergeio_tenant_storage" "tier" {
 
 variable "parent_external_network_id" {
   type        = string
-  description = "Key of the parent external network that hands the tenant its UI address."
+  description = "Key of the parent external network that hands the tenant its UI address and routed blocks."
 }
 
 resource "vergeio_tenant_external_ip" "ui" {
@@ -98,6 +98,14 @@ resource "vergeio_tenant_external_ip" "ui" {
   ip                    = "203.0.113.50"
   hostname              = "customer-a"
   description           = "Tenant UI address"
+  apply_parent_firewall = true
+}
+
+resource "vergeio_tenant_network_block" "routed" {
+  tenant_id             = vergeio_tenant.customer.id
+  network_id            = var.parent_external_network_id
+  cidr                  = "198.51.100.0/28"
+  description           = "Customer A routed addresses"
   apply_parent_firewall = true
 }
 
@@ -155,6 +163,10 @@ provider "vergeio" {
 
 Creating or deleting the address leaves `need_fw_apply` set on that parent network until its rules are applied. `apply_parent_firewall` applies them in the same call. `parent_firewall_pending` reports the flag afterward. A stopped parent network loads staged rules when it starts, and it may refuse a refresh while it is stopped.
 
-`vergeio_tenant_network_block` is not a resource in this provider. The govergeos module this provider builds against can assign a network block on `vnet_cidrs`, and that call also reports `need_fw_apply` on the parent network. This provider does not call it. A layer 2 network handed to a tenant is not a resource either.
+`vergeio_tenant_network_block` assigns one routed CIDR from a parent network to the tenant (`vnet_cidrs`). The tenant can build its own network on that range. `network_id` is the parent network key, the same value as `vergeio_network.id`. Changing `tenant_id`, `network_id`, `cidr`, or `description` replaces the block. There is no update API for the row.
 
-Assigning a network block in the VergeOS UI, or with another client, can leave `need_fw_apply` set on the parent external network. `vergeio_network_rules` on the parent configuration applies `need_fw_apply` for rule edits. It does not apply a flag left by an address assignment made outside Terraform.
+Creating or deleting the block leaves `need_fw_apply` set on that parent network until its rules are applied. `apply_parent_firewall` applies them in the same call and waits until the flag clears. `parent_firewall_pending` reports the flag afterward.
+
+VergeOS refuses to delete the block while a network inside the tenant is still built on it. Terraform returns that error and leaves the block in state. Remove the tenant network, then destroy the block.
+
+A layer 2 network handed to a tenant is not a resource. An assignment made in the VergeOS UI, or with another client, can still leave `need_fw_apply` set. `vergeio_network_rules` on the parent configuration applies `need_fw_apply` for rule edits. It does not apply a flag left by an assignment made outside Terraform.

@@ -37,7 +37,7 @@ resource "vergeio_tenant_storage" "tier" {
 
 variable "parent_external_network_id" {
   type        = string
-  description = "Key of the parent external network that hands the tenant its UI address."
+  description = "Key of the parent external network that hands the tenant its UI address and routed blocks."
 }
 
 resource "vergeio_tenant_external_ip" "ui" {
@@ -46,6 +46,14 @@ resource "vergeio_tenant_external_ip" "ui" {
   ip                    = "203.0.113.50"
   hostname              = "customer-a"
   description           = "Tenant UI address"
+  apply_parent_firewall = true
+}
+
+resource "vergeio_tenant_network_block" "routed" {
+  tenant_id             = vergeio_tenant.customer.id
+  network_id            = var.parent_external_network_id
+  cidr                  = "198.51.100.0/28"
+  description           = "Customer A routed addresses"
   apply_parent_firewall = true
 }
 

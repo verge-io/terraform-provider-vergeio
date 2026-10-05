@@ -14,7 +14,7 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 
 `password` is the tenant admin user's password. VergeOS does not return it. Terraform keeps the configured value in state. `change_password` is sent only when the tenant is created and is kept the same way, so a later refresh does not replace the tenant when VergeOS clears the first-login flag. `preferred_node` is sent only when `powerstate` changes to true. VergeOS does not return it either.
 
-`vergeio_tenant_external_ip` assigns one parent external IP to this tenant. The first assigned IP becomes `ui_address`. The next plan stores that address once it exists. Network blocks (`vnet_cidrs`) are not resources in this provider. Assigning an address can leave `need_fw_apply` set on the parent external network. `vergeio_tenant_external_ip` reports that flag as `parent_firewall_pending`. Apply that network firewall, with `apply_parent_firewall` or `vergeio_network_rules`, before you treat the address as live.
+`vergeio_tenant_external_ip` assigns one parent external IP to this tenant. The first assigned IP becomes `ui_address`. The next plan stores that address once it exists. `vergeio_tenant_network_block` assigns one routed CIDR (`vnet_cidrs`) from a parent network to this tenant. Assigning an address or a block can leave `need_fw_apply` set on the parent external network. Both resources report that flag as `parent_firewall_pending`. Apply that network firewall, with `apply_parent_firewall` or `vergeio_network_rules`, before you treat the assignment as live.
 
 ## Example Usage
 
