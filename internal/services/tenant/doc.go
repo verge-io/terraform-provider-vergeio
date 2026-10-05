@@ -1,8 +1,9 @@
 // Copyright (c) HashiCorp, Inc.
 // SPDX-License-Identifier: MIT
 
-// Package tenant manages a VergeOS tenant and the compute and storage handed to it.
+// Package tenant manages a VergeOS tenant and the compute, storage, and parent
+// external IP handed to it.
 //
-// Network blocks (vnet_cidrs) and tenant external IPs are not resources.
-// The SDK can assign both. This provider does not. See the tenants guide.
+// Network blocks (vnet_cidrs) are not resources. A layer 2 network handed to a
+// tenant is not a resource either. See the tenants guide.
 package tenant

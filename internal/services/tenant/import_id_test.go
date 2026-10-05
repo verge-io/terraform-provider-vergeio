@@ -40,6 +40,12 @@ func TestTenantImportStateEmptyID(t *testing.T) {
 			summary:  "Invalid Tenant Storage Import ID",
 			detail:   "Import vergeio_tenant_storage with the tenant storage key.",
 		},
+		{
+			name:     "external IP",
+			resource: NewTenantExternalIPResource(),
+			summary:  "Invalid Tenant External IP Import ID",
+			detail:   "Import vergeio_tenant_external_ip with the vnet address key.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -54,6 +60,7 @@ func TestTenantImportStateKeepsNonEmptyID(t *testing.T) {
 		NewTenantResource(),
 		NewTenantNodeResource(),
 		NewTenantStorageResource(),
+		NewTenantExternalIPResource(),
 	} {
 		resp := importResourceState(t, r, "abc")
 		assertImportIDPassthrough(t, resp, "abc")

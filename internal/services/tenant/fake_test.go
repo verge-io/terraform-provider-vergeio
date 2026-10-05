@@ -62,6 +62,10 @@ type fakeVerge struct {
 	actions                []map[string]any
 	vnetActions            []map[string]any
 	nodeActions            []map[string]any
+	// fwSettleReads is how many vnet GETs after a refresh still report
+	// need_fw_apply. Zero clears the flag inside the refresh handler.
+	fwSettleReads int
+	fwSettleLeft  map[int]int
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -232,7 +236,7 @@ func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
 	case "tenant_storage":
 		f.serveStorage(w, r, id, payload)
 	case "vnet_addresses":
-		f.serveAddress(w, r, id)
+		f.serveAddress(w, r, id, payload)
 	case "vnets":
 		f.serveVNet(w, r, id)
 	case "vnet_actions":
@@ -566,7 +570,7 @@ func (f *fakeVerge) serveVNet(w http.ResponseWriter, r *http.Request, id int) {
 			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
 			return
 		}
-		writeJSON(f.t, w, http.StatusOK, obj)
+		writeJSON(f.t, w, http.StatusOK, f.vnetRead(obj, id))
 	default:
 		f.t.Errorf("unexpected vnets %s id %d", r.Method, id)
 		http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -582,7 +586,43 @@ func (f *fakeVerge) serveVNetAction(w http.ResponseWriter, payload map[string]an
 			vnet["running"] = false
 		}
 	}
+	if action == "refresh" {
+		if vnet, ok := f.vnets[id]; ok {
+			if f.fwSettleReads > 0 {
+				vnet["need_fw_apply"] = true
+				if f.fwSettleLeft == nil {
+					f.fwSettleLeft = map[int]int{}
+				}
+				f.fwSettleLeft[id] = f.fwSettleReads
+			} else {
+				vnet["need_fw_apply"] = false
+				delete(f.fwSettleLeft, id)
+			}
+		}
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// vnetRead reports need_fw_apply for one GET. The first fwSettleReads
+// reads after a refresh stay pending; the stored flag is clear after that.
+func (f *fakeVerge) vnetRead(obj map[string]any, id int) map[string]any {
+	left := f.fwSettleLeft[id]
+	if left <= 0 {
+		return obj
+	}
+	left--
+	if left == 0 {
+		delete(f.fwSettleLeft, id)
+		obj["need_fw_apply"] = false
+	} else {
+		f.fwSettleLeft[id] = left
+	}
+	reported := make(map[string]any, len(obj))
+	for key, value := range obj {
+		reported[key] = value
+	}
+	reported["need_fw_apply"] = true
+	return reported
 }
 
 func (f *fakeVerge) serveNodeAction(w http.ResponseWriter, payload map[string]any) {
@@ -632,18 +672,96 @@ func (f *fakeVerge) serveMachineStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
 }
 
-func (f *fakeVerge) serveAddress(w http.ResponseWriter, r *http.Request, id int) {
-	if r.Method != http.MethodGet || id == 0 {
+func (f *fakeVerge) serveAddress(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	switch {
+	case r.Method == http.MethodGet && id == 0:
+		writeJSON(f.t, w, http.StatusOK, f.filterMaps(f.addressSlice(), r.URL.Query().Get("filter")))
+	case r.Method == http.MethodGet && id > 0:
+		obj, ok := f.addresses[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		writeJSON(f.t, w, http.StatusOK, obj)
+	case r.Method == http.MethodPost && id == 0:
+		id = f.alloc()
+		obj := map[string]any{
+			"$key":        id,
+			"vnet":        intField(payload["vnet"]),
+			"ip":          stringField(payload, "ip"),
+			"type":        stringField(payload, "type"),
+			"owner":       stringField(payload, "owner"),
+			"hostname":    stringField(payload, "hostname"),
+			"description": stringField(payload, "description"),
+		}
+		f.addresses[id] = obj
+		f.markFirewallPending(intField(obj["vnet"]))
+		f.assignFirstUIAddress(obj)
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodDelete && id > 0:
+		obj, ok := f.addresses[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		vnetID := intField(obj["vnet"])
+		delete(f.addresses, id)
+		f.markFirewallPending(vnetID)
+		w.WriteHeader(http.StatusOK)
+	default:
 		f.t.Errorf("unexpected address %s %d", r.Method, id)
 		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
+}
+
+func (f *fakeVerge) addressSlice() []map[string]any {
+	rows := make([]map[string]any, 0, len(f.addresses))
+	for _, row := range f.addresses {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (f *fakeVerge) markFirewallPending(vnetID int) {
+	if vnetID <= 0 {
 		return
 	}
-	obj, ok := f.addresses[id]
+	vnet, ok := f.vnets[vnetID]
 	if !ok {
-		writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+		vnet = map[string]any{
+			"$key":    vnetID,
+			"name":    fmt.Sprintf("vnet-%d", vnetID),
+			"running": false,
+		}
+		f.vnets[vnetID] = vnet
+	}
+	vnet["need_fw_apply"] = true
+}
+
+// assignFirstUIAddress models VergeOS: the first virtual IP owned by a tenant
+// becomes that tenant's UI address.
+func (f *fakeVerge) assignFirstUIAddress(address map[string]any) {
+	if stringField(address, "type") != "virtual" {
 		return
 	}
-	writeJSON(f.t, w, http.StatusOK, obj)
+	tenantID := tenantIDFromOwner(stringField(address, "owner"))
+	tenant, ok := f.tenants[tenantID]
+	if !ok || intField(tenant["ui_address"]) > 0 {
+		return
+	}
+	tenant["ui_address"] = intField(address["$key"])
+}
+
+func tenantIDFromOwner(owner string) int {
+	rest, ok := strings.CutPrefix(owner, "tenants/")
+	if !ok || rest == "" {
+		return 0
+	}
+	id, err := strconv.Atoi(rest)
+	if err != nil || id <= 0 {
+		return 0
+	}
+	return id
 }
 
 func (f *fakeVerge) alloc() int {
@@ -695,6 +813,26 @@ func matchFilter(filter string, row map[string]any) bool {
 		case strings.HasPrefix(part, "$key eq "):
 			want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(part, "$key eq ")))
 			if err != nil || intField(row["$key"]) != want {
+				return false
+			}
+		case strings.HasPrefix(part, "type eq '"):
+			want := strings.TrimSuffix(strings.TrimPrefix(part, "type eq '"), "'")
+			if stringField(row, "type") != want {
+				return false
+			}
+		case strings.HasPrefix(part, "owner bw '"):
+			prefix := strings.TrimSuffix(strings.TrimPrefix(part, "owner bw '"), "'")
+			if !strings.HasPrefix(stringField(row, "owner"), prefix) {
+				return false
+			}
+		case strings.HasPrefix(part, "owner eq '"):
+			want := strings.TrimSuffix(strings.TrimPrefix(part, "owner eq '"), "'")
+			if stringField(row, "owner") != want {
+				return false
+			}
+		case strings.HasPrefix(part, "ip eq '"):
+			want := strings.TrimSuffix(strings.TrimPrefix(part, "ip eq '"), "'")
+			if stringField(row, "ip") != want {
 				return false
 			}
 		default:

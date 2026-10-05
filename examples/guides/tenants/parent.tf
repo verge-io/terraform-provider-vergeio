@@ -35,6 +35,20 @@ resource "vergeio_tenant_storage" "tier" {
   provisioned = 107374182400
 }
 
+variable "parent_external_network_id" {
+  type        = string
+  description = "Key of the parent external network that hands the tenant its UI address."
+}
+
+resource "vergeio_tenant_external_ip" "ui" {
+  tenant_id             = vergeio_tenant.customer.id
+  network_id            = var.parent_external_network_id
+  ip                    = "203.0.113.50"
+  hostname              = "customer-a"
+  description           = "Tenant UI address"
+  apply_parent_firewall = true
+}
+
 output "tenant_ui_address" {
   value = vergeio_tenant.customer.ui_address
 }
