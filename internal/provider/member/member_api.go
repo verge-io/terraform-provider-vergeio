@@ -51,7 +51,6 @@ type MemberAPIResourceModel struct {
 // createMember creates a new member.
 func (nc *MemberApi) createMember(ctx context.Context, data *MemberResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := MemberAPIResourceModel{
 		Group:  data.Group.ValueInt32(),
 		Member: data.Member.ValueString(),
@@ -97,7 +96,6 @@ func (nc *MemberApi) createMember(ctx context.Context, data *MemberResourceModel
 // updateMember updates an existing member.
 func (nc *MemberApi) updateMember(ctx context.Context, planData *MemberResourceModel, stateData *MemberResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := MemberAPIResourceModel{
 		Group:  vergeio.Int32ToNil(planData.Group, stateData.Group, 0),
 		Member: vergeio.StringToNil(planData.Member, stateData.Member, ""),
@@ -172,7 +170,6 @@ func (nc *MemberApi) readMember(ctx context.Context, data *MemberResourceModel) 
 		return fmt.Errorf("invalid format received for Item %v", err)
 	}
 
-	// save into the resource model
 	data.Group = types.Int32Value(memberAPIResp.Group)
 	data.Member = types.StringValue(memberAPIResp.Member)
 

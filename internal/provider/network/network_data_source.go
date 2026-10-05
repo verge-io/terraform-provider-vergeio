@@ -123,10 +123,8 @@ func (d *NetworkDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 
-	// Write logs using the tflog package
 	// Documentation: https://terraform.io/plugin/log
 	tflog.Trace(ctx, "End reading network data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

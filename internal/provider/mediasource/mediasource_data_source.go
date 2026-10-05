@@ -46,7 +46,6 @@ func (d *MediasourceDataSource) Metadata(ctx context.Context, req datasource.Met
 
 func (d *MediasourceDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Mediasource data source schema",
 
 		Attributes: map[string]schema.Attribute{
@@ -123,10 +122,8 @@ func (d *MediasourceDataSource) Read(ctx context.Context, req datasource.ReadReq
 		return
 	}
 
-	// Write logs using the tflog package
 	// Documentation: https://terraform.io/plugin/log
 	tflog.Trace(ctx, "End reading mediasource data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

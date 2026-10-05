@@ -106,7 +106,6 @@ func (nc *UserApi) createUser(ctx context.Context, data *UserResourceModel) erro
 // Update the user in the API.
 func (nc *UserApi) updateUser(ctx context.Context, planData *UserResourceModel, stateData *UserResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := UserAPIResourceModel{
 		Name:        vergeio.StringToNil(planData.Name, stateData.Name, ""),
 		Enabled:     vergeio.BoolToNil(planData.Enabled, stateData.Enabled, false),
@@ -143,7 +142,6 @@ func (nc *UserApi) updateUser(ctx context.Context, planData *UserResourceModel, 
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
 
 	defer apiResp.Body.Close()
@@ -182,7 +180,6 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 		return errors.New("invalid format received for Item")
 	}
 
-	// save into the resource model
 	data.Name = types.StringValue(userAPIResp.Name)
 	data.Enabled = types.BoolValue(userAPIResp.Enabled)
 	data.DisplayName = types.StringValue(userAPIResp.DisplayName)

@@ -55,7 +55,6 @@ func (va *GroupsApi) readGroups(ctx context.Context, data *GroupDataSourceModel)
 	// What fields do we want
 	opts := vergeio.Options{Fields: "$key,name,description,enabled"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}

@@ -50,7 +50,6 @@ func (va *NodeApi) readNodes(ctx context.Context, data *NodeDataSourceModel) err
 
 	opts := vergeio.Options{Fields: "description,name,$key"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}

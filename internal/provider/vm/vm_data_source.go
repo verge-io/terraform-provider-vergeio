@@ -80,7 +80,6 @@ func (d *VMDataSource) Metadata(ctx context.Context, req datasource.MetadataRequ
 
 func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "VM data source",
 
 		Attributes: map[string]schema.Attribute{
@@ -267,10 +266,8 @@ func (d *VMDataSource) Read(ctx context.Context, req datasource.ReadRequest, res
 		return
 	}
 
-	// Write logs using the tflog package
 	// Documentation: https://terraform.io/plugin/log
 	tflog.Trace(ctx, "End reading vm data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

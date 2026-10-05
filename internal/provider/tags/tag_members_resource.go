@@ -47,7 +47,6 @@ func (r *TagMemberResource) Metadata(ctx context.Context, req resource.MetadataR
 // Schema defines the schema for the resource.
 func (r *TagMemberResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Tag member resource to assign tags to VergeOS objects (requires VergeOS v26+)",
 
 		Attributes: map[string]schema.Attribute{
@@ -112,7 +111,6 @@ func (r *TagMemberResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	// Create the tag member assignment
 	if err := r.tagsApi.createTagMember(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Creating Tag Member",
@@ -121,10 +119,8 @@ func (r *TagMemberResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("created tag member resource %v", data))
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -155,7 +151,6 @@ func (r *TagMemberResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -181,7 +176,6 @@ func (r *TagMemberResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	// Update the tag member assignment
 	if err := r.tagsApi.updateTagMember(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Updating Tag Member",
@@ -201,7 +195,6 @@ func (r *TagMemberResource) Update(ctx context.Context, req resource.UpdateReque
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -218,7 +211,6 @@ func (r *TagMemberResource) Delete(ctx context.Context, req resource.DeleteReque
 
 	tflog.Debug(ctx, fmt.Sprintf("Deleting tag member %v", data))
 
-	// Delete the tag member assignment
 	if err := r.tagsApi.deleteTagMember(ctx, &data); err != nil {
 		resp.Diagnostics.AddError(
 			"Error Deleting Tag Member",

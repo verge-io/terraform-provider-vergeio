@@ -128,10 +128,8 @@ func (d *CloudinitFileDataSource) Read(ctx context.Context, req datasource.ReadR
 		return
 	}
 
-	// Write logs using the tflog package
 	// Documentation: https://terraform.io/plugin/log
 	tflog.Trace(ctx, "End reading cloudinitFile data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

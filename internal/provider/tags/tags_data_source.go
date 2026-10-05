@@ -49,7 +49,6 @@ func (d *TagsDataSource) Metadata(ctx context.Context, req datasource.MetadataRe
 
 func (d *TagsDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Tags data source to retrieve tag information from VergeOS. Supports filtering by name and/or category to handle duplicate tag names across categories.",
 
 		Attributes: map[string]schema.Attribute{
@@ -133,9 +132,7 @@ func (d *TagsDataSource) Read(ctx context.Context, req datasource.ReadRequest, r
 		return
 	}
 
-	// Write logs using the tflog package
 	tflog.Trace(ctx, "End reading tags data source")
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

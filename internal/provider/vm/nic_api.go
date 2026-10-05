@@ -135,7 +135,6 @@ func (nc *NICApi) createNIC(ctx context.Context, data *nicResourceModel) error {
 		return errors.New("invalid format received for creating the NIC")
 	}
 
-	// save into the Terraform state.
 	data.Id = types.StringValue(nicAPIResp.Key)
 	tflog.Debug(ctx, fmt.Sprintf("Created a nic with Id %v", data.Id.ValueString()))
 
@@ -200,7 +199,6 @@ func (nc *NICApi) assignIP(data *nicResourceModel) error {
 // Update the NIC in the API.
 func (nc *NICApi) updateNIC(ctx context.Context, planData *nicResourceModel, stateData *nicResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := nicAPIResourceModel{
 		Machine:     vergeio.Int32ToNil(planData.Machine, stateData.Machine, 0),
 		Name:        vergeio.StringToNil(planData.Name, stateData.Name, ""),
@@ -281,7 +279,6 @@ func (nc *NICApi) readNIC(ctx context.Context, data *nicResourceModel) error {
 		return errors.New("invalid format received for Item")
 	}
 
-	// save into the resource model
 	data.Machine = types.Int32Value(nicAPIResp.Machine)
 	data.Name = types.StringValue(nicAPIResp.Name)
 	data.Description = types.StringValue(nicAPIResp.Description)
@@ -489,7 +486,6 @@ func (na *NICApi) checkNICPowerState(ctx context.Context, key string, powerState
 		return errors.New("invalid format received for nic power state call")
 	}
 
-	// save into the resource model
 	*powerState = nicAPIResp.PowerState
 
 	tflog.Debug(ctx, fmt.Sprintf("NIC status read from API: %v", nicAPIResp.PowerState))

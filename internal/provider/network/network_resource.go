@@ -67,7 +67,6 @@ func (r *NetworkResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
 		MarkdownDescription: "Network or Vnet resource in VergeIO",
 
 		Attributes: map[string]schema.Attribute{
@@ -222,7 +221,6 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
 
 	// Read data into the model to get all the attributes
@@ -236,7 +234,6 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -268,7 +265,6 @@ func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
@@ -306,7 +302,6 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 		)
 		return
 	}
-	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
 }
 

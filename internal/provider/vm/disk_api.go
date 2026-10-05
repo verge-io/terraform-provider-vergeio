@@ -170,7 +170,6 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 		return fmt.Errorf("invalid format received for creating a disk %v", err)
 	}
 
-	// save into the Terraform state.
 	data.Key = types.StringValue(diskAPIResp.Key)
 	tflog.Debug(ctx, fmt.Sprintf("Created a disk with Id %v", data.Key.ValueString()))
 
@@ -225,7 +224,6 @@ func (da *DiskApi) createDisk(ctx context.Context, data *diskResourceModel) erro
 // Update the Disk in the API.
 func (da *DiskApi) updateDisk(ctx context.Context, planData *diskResourceModel, stateData *diskResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := diskAPIResourceModel{
 		Machine:             vergeio.Int32ToNil(planData.Machine, stateData.Machine, 0),
 		Name:                vergeio.StringToNil(planData.Name, stateData.Name, ""),
@@ -263,7 +261,6 @@ func (da *DiskApi) updateDisk(ctx context.Context, planData *diskResourceModel, 
 		return fmt.Errorf("missing response from the API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated disk %v", apiData))
 
 	defer apiResp.Body.Close()
@@ -307,7 +304,6 @@ func (da *DiskApi) readDisk(ctx context.Context, data *diskResourceModel) error 
 		return fmt.Errorf("invalid format received for Item %v", err)
 	}
 
-	// save into the resource model
 	data.Machine = types.Int32Value(diskAPIResp.Machine)
 	data.Name = types.StringValue(diskAPIResp.Name)
 	data.Description = types.StringValue(diskAPIResp.Description)
@@ -517,7 +513,6 @@ func (da *DiskApi) checkDiskPowerState(ctx context.Context, key string, powerSta
 		return errors.New("invalid format received for disk power state call")
 	}
 
-	// save into the resource model
 	*powerState = diskAPIResp.PowerState
 
 	tflog.Debug(ctx, fmt.Sprintf("Disk status read from API: %v", diskAPIResp.PowerState))

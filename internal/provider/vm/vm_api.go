@@ -268,7 +268,6 @@ type VMPowerState struct {
 // Create a new VM.
 func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := VMAPIResourceModel{
 		Machine:             data.Machine.ValueInt32(),
 		Name:                data.Name.ValueString(),
@@ -347,7 +346,6 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 
 	tflog.Debug(ctx, fmt.Sprintf("VM Key after creation %v", vmAPIResp.Response))
 
-	// save into the Terraform state.
 	data.Id = types.StringValue(vmAPIResp.Key)
 
 	tflog.Debug(ctx, fmt.Sprintf("VM Id after creation %v", data.Id))
@@ -363,7 +361,6 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 // Update the VM.
 func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	apiData := VMAPIResourceModel{
 		Id: vergeio.StringToNil(planData.Id, stateData.Id, ""),
 		// Machine is read only
@@ -428,8 +425,6 @@ func (va *VMApi) UpdateVM(ctx context.Context, planData *VMResourceModel, stateD
 
 	defer apiResp.Body.Close()
 
-	// We now have to handle the desired power state.
-	// If it's set to true, we have to check the power state.
 	if planData.PowerState.ValueBool() {
 		tflog.Debug(ctx, "Power state is set to true, checking the current power state")
 
@@ -542,7 +537,7 @@ func (va *VMApi) deleteVM(ctx context.Context, data *VMResourceModel) error {
 	return nil
 }
 
-// This function checks the power state of the VM by calling the API and set the powerstate to true or false
+// isVMRunning reports whether the VM is currently running.
 func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
 
 	// call the Get API with the vm id and get the fields we need
@@ -576,13 +571,13 @@ func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
 	return vmAPIResp.PowerState, nil
 }
 
-// This function kills the VM
+// killVM powers the VM off.
 func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill VM API for VM %v", data.Id.ValueString()))
 	return va.changeVMPowerState(ctx, data, "kill")
 }
 
-// This function powers on the VM
+// powerOnVM powers the VM on.
 func (va *VMApi) powerOnVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Power On VM API for VM %v", data.Id.ValueString()))
 	err := va.changeVMPowerState(ctx, data, "poweron")
@@ -596,9 +591,7 @@ func (va *VMApi) powerOnVM(ctx context.Context, data *VMResourceModel) error {
 	return nil
 }
 
-// This function changes the power state of the VM
-// It "kill" or "poweron" the VM based on the desired state
-// It also waits for the VM to be in the desired state
+// changeVMPowerState powers the VM on or kills it to match the desired state.
 func (va *VMApi) changeVMPowerState(ctx context.Context, data *VMResourceModel, desiredState string) error {
 
 	tflog.Debug(ctx, fmt.Sprintf("Change the power state for VM %v to %v", data.Id.ValueString(), desiredState))
@@ -706,7 +699,6 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel) error {
 		return fmt.Errorf("invalid format received for VM Item: %v", err)
 	}
 
-	// save into the resource model
 	data.Machine = types.Int32Value(vmAPIResp.Machine)
 	data.Name = types.StringValue(vmAPIResp.Name)
 	data.Cluster = types.StringValue(vmAPIResp.Cluster)
@@ -836,7 +828,6 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	// Define the fields. Not all the fields are returned by default
 	opts := vergeio.Options{Fields: "machine#$key as id, dashboard"} //"machine,name,$key,is_snapshot,cpu_type,machine_type,os_family,uefi"}
 
-	// Build filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}

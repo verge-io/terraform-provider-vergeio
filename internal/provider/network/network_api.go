@@ -136,7 +136,6 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		return errors.New("invalid format received for Item")
 	}
 
-	// save into the Terraform state.
 	data.Id = types.StringValue(networkAPIResp.Key)
 	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
 
@@ -146,7 +145,6 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 // updateNetwork updates an existing network.
 func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResourceModel, stateData *NetworkResourceModel) error {
 
-	// Prepare the API data packet from the plan
 	var defaultGateway int32
 	if !planData.Default_Gateway.IsNull() {
 		defaultGateway = planData.Default_Gateway.ValueInt32()
@@ -198,7 +196,6 @@ func (nc *NetworkApi) updateNetwork(ctx context.Context, planData *NetworkResour
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Updated a resource %v", apiData))
 
 	defer apiResp.Body.Close()
@@ -227,7 +224,6 @@ func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceMo
 		return fmt.Errorf("missing response from API %d", apiResp.StatusCode)
 	}
 
-	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("Deleted the network with the ID %v", data.Id))
 
 	defer apiResp.Body.Close()
@@ -264,7 +260,6 @@ func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkR
 		return errors.New("invalid format received for Item")
 	}
 
-	// save into the resource model
 	data.PowerState = types.StringValue(networkAPIResp.PowerState)
 
 	tflog.Debug(ctx, "Network status read from API is: "+data.PowerState.ValueString())
@@ -340,7 +335,6 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	// } else {
 	//     data.Default_Gateway = types.Int32Null()
 	// }
-	// save into the resource model
 	data.Name = types.StringValue(networkAPIResp.Name)
 	data.Enabled = types.BoolValue(networkAPIResp.Enabled)
 	data.IPaddress = types.StringValue(networkAPIResp.IPaddress)
@@ -372,12 +366,10 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 	// What fields do we want
 	opts := vergeio.Options{Fields: "description,name,$key"}
 
-	//  Build name filter
 	if fn := data.FilterName.ValueString(); fn != "" {
 		opts.Filter = fmt.Sprintf("name eq '%s'", fn)
 	}
 
-	// Build type filter
 	if ft := data.FilterType.ValueString(); ft != "" {
 		if opts.Filter != "" {
 			opts.Filter = fmt.Sprintf("%s and type eq '%s'", opts.Filter, ft)
@@ -409,7 +401,6 @@ func (va *NetworkApi) readNetworks(ctx context.Context, data *NetworkDataSourceM
 		return errors.New("invalid format received for VM Item")
 	}
 
-	// save into the resource model
 	for _, nwAPIResp := range networkAPIResp {
 		data.Networks = append(data.Networks, &NetworkModel{
 			Id:          types.Int32Value(nwAPIResp.Id),
