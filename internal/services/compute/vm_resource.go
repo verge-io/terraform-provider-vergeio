@@ -951,11 +951,8 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	if createError != nil && vmNameInUse(createError) {
 		tflog.Debug(ctx, fmt.Sprintf("VM %q is already in use; looking for an orphan to adopt", data.Name.ValueString()))
 		if err := r.adoptOrphanVM(ctx, &data); err != nil {
-			r.rememberVM(ctx, resp, &data)
-			resp.Diagnostics.AddError(
-				"Error creating VM",
-				err.Error(),
-			)
+			// Lookup can fail after the id is known. Keep that id.
+			r.createError(ctx, resp, &data, "Error creating VM", err.Error())
 			return
 		}
 		createError = nil
@@ -963,26 +960,19 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	if createError != nil {
 		// CreateVM sets the id once the VM row exists. A later read can
 		// still fail. Keep that id so the VM is not orphaned.
-		r.rememberVM(ctx, resp, &data)
-		resp.Diagnostics.AddError(
-			"Error creating VM",
-			createError.Error(),
-		)
+		r.createError(ctx, resp, &data, "Error creating VM", createError.Error())
 		return
 	}
 
 	// Log the id only. The model includes console_pass.
 	tflog.Debug(ctx, fmt.Sprintf("created a vm resource %s", data.Id.ValueString()))
 
-	// Store the id before drives, NICs, and devices. Terraform keeps this
-	// state when a later step fails or the apply is interrupted, and the
-	// next apply updates the VM instead of colliding on the name.
+	// Store the id before the boot disk, devices, and power-on. Terraform
+	// keeps this state when a later step returns an error, and the next
+	// plan updates or replaces the VM instead of creating another one.
 	r.rememberVM(ctx, resp, &data)
 	if resp.Diagnostics.HasError() {
-		resp.Diagnostics.AddError(
-			"Error saving VM state",
-			fmt.Sprintf("VM %q (id %s) exists in VergeOS but could not be stored in Terraform state. Import it with `terraform import vergeio_vm.<name> %s`, or delete it in VergeOS and apply again.", data.Name.ValueString(), data.Id.ValueString(), data.Id.ValueString()),
-		)
+		resp.Diagnostics.AddError("Error saving VM state", vmNotInStateDetail(&data))
 		return
 	}
 
@@ -990,25 +980,35 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	// NICs and extra drives are their own resources and hotplug when the VM is already running.
 	if data.BootDisk != nil {
 		boot, bootErr := r.syncBootDisk(ctx, data.BootDisk, nil, data.Machine, data.Id)
+		// A failed read can still return the drive once its key exists.
+		if boot != nil {
+			data.BootDisk = boot
+		}
 		if bootErr != nil {
-			resp.Diagnostics.AddError("Error creating boot disk", bootErr.Error())
+			r.createError(ctx, resp, &data, "Error creating boot disk", bootErr.Error())
 			return
 		}
-		data.BootDisk = boot
+		r.rememberVM(ctx, resp, &data)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
-	// Create devices
+	// Create devices. Each one is stored after it succeeds so a later device
+	// or power-on error does not drop the keys already assigned.
 	if data.Devices != nil {
 		for _, device := range data.Devices {
 			device.Machine = data.Machine
 
-			createError := r.deviceApi.createDevice(ctx, device)
-			if createError != nil {
-				tflog.Debug(ctx, fmt.Sprintf("Error creating device %v", createError))
-				resp.Diagnostics.AddError(
-					"Error creating device",
-					createError.Error(),
-				)
+			if deviceErr := r.deviceApi.createDevice(ctx, device); deviceErr != nil {
+				tflog.Debug(ctx, fmt.Sprintf("Error creating device %v", deviceErr))
+				// createDevice sets the key before the follow-up read. That
+				// key is on this device, so the checkpoint keeps it.
+				r.createError(ctx, resp, &data, "Error creating device", deviceErr.Error())
+				return
+			}
+			r.rememberVM(ctx, resp, &data)
+			if resp.Diagnostics.HasError() {
 				return
 			}
 		}
@@ -1018,10 +1018,14 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	if desiredPowerState {
 		tflog.Debug(ctx, "Powering on the VM")
 		if powerOnError := r.vmApi.powerOnVM(ctx, &data); powerOnError != nil {
-			resp.Diagnostics.AddError(
-				"Error powering on VM",
-				powerOnError.Error(),
-			)
+			r.createError(ctx, resp, &data, "Error powering on VM", powerOnError.Error())
+			return
+		}
+		// The row was read before power-on, so it still says stopped. Store
+		// the running state before detach or the guest-agent wait can fail.
+		data.PowerState = types.BoolValue(true)
+		r.rememberVM(ctx, resp, &data)
+		if resp.Diagnostics.HasError() {
 			return
 		}
 
@@ -1031,14 +1035,14 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		// cloud-init files prevents the VM from depending on them on subsequent
 		// boots.
 		if len(plannedCloudInitFiles) > 0 {
-			tflog.Debug(ctx, "Waiting 1 second before detaching cloud-init")
-			time.Sleep(1 * time.Second)
+			tflog.Debug(ctx, "Waiting before detaching cloud-init")
+			if err := sleepContext(ctx, cloudInitDetachDelay); err != nil {
+				r.createError(ctx, resp, &data, "Error detaching cloud-init", err.Error())
+				return
+			}
 
 			if detachError := r.vmApi.detachCloudInit(ctx, &data); detachError != nil {
-				resp.Diagnostics.AddError(
-					"Error detaching cloud-init",
-					detachError.Error(),
-				)
+				r.createError(ctx, resp, &data, "Error detaching cloud-init", detachError.Error())
 				return
 			}
 			// Detach cleared VergeOS. Leave cloudInitExpectLive unset so refresh
@@ -1049,6 +1053,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 		if resp.Private != nil {
 			resp.Diagnostics.Append(resp.Private.SetKey(ctx, cloudInitExpectLivePrivateKey, []byte("true"))...)
 			if resp.Diagnostics.HasError() {
+				r.rememberVM(ctx, resp, &data)
 				return
 			}
 		}
@@ -1073,10 +1078,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 
 			// Read the guest agent info.
 			if readError := r.vmApi.readGuestAgentInfo(ctx, &data, toIgnoreCidr); readError != nil {
-				resp.Diagnostics.AddError(
-					"Error reading guest agent info",
-					readError.Error(),
-				)
+				r.createError(ctx, resp, &data, "Error reading guest agent info", readError.Error())
 				return
 			}
 
@@ -1092,10 +1094,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 			fmt.Println("Checking the guest agent info after ", i, " seconds")
 			// Read the guest agent info.
 			if readError := r.vmApi.readGuestAgentInfo(ctx, &data, ""); readError != nil {
-				resp.Diagnostics.AddError(
-					"Error reading guest agent info",
-					readError.Error(),
-				)
+				r.createError(ctx, resp, &data, "Error reading guest agent info", readError.Error())
 				return
 			}
 		}
@@ -1117,10 +1116,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 
 	// read the final state of the VM
 	if _, readError := r.vmApi.readVM(ctx, &data, false); readError != nil {
-		resp.Diagnostics.AddError(
-			"Error reading the VM",
-			readError.Error(),
-		)
+		r.createError(ctx, resp, &data, "Error reading the VM", readError.Error())
 		return
 	}
 
@@ -1129,10 +1125,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	data.CloudInitFiles = plannedCloudInitFiles
 
 	if err := r.refreshBootDisk(ctx, &data); err != nil {
-		resp.Diagnostics.AddError(
-			"Error reading boot disk",
-			err.Error(),
-		)
+		r.createError(ctx, resp, &data, "Error reading boot disk", err.Error())
 		return
 	}
 

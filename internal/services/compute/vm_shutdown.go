@@ -46,6 +46,10 @@ var (
 	powerOnInterval          = 2 * time.Second
 	powerOnSettle            = 10 * time.Second
 	vmUpdateSettle           = 5 * time.Second
+	// cloudInitDetachDelay is how long create waits after the VM is running
+	// before deleting cloud-init files. The guest reads those files during
+	// boot. Tests set this to zero.
+	cloudInitDetachDelay = time.Second
 )
 
 // errVMPowerStatusMissing means the status payload had neither a running

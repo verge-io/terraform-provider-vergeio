@@ -229,10 +229,10 @@ func vmIDSet(data *VMResourceModel) bool {
 	return data != nil && !data.Id.IsNull() && !data.Id.IsUnknown() && strings.TrimSpace(data.Id.ValueString()) != ""
 }
 
-// rememberVM writes the VM id into the create response before drives, NICs,
-// and devices are added. Terraform keeps that state when a later step
-// returns an error, so the next apply updates the VM instead of creating
-// a second one with the same name.
+// rememberVM writes the VM into the create response. Terraform keeps that
+// state when a later step returns an error, so the next plan updates or
+// replaces this VM instead of creating a second one with the same name.
+// A boot disk or device is included once its key is known.
 func (r *VMResource) rememberVM(ctx context.Context, resp *resource.CreateResponse, data *VMResourceModel) {
 	if !vmIDSet(data) {
 		return
@@ -242,13 +242,51 @@ func (r *VMResource) rememberVM(ctx context.Context, resp *resource.CreateRespon
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	tflog.Debug(ctx, fmt.Sprintf("Stored VM %s in state before drives, NICs, and devices", data.Id.ValueString()))
+	tflog.Debug(ctx, fmt.Sprintf("Stored VM %s in state", data.Id.ValueString()))
 }
 
-// partialVMForState is the model stored as soon as the VM row exists.
-// Nested blocks are omitted because their computed keys are still unknown,
-// and state cannot hold unknown values. The original model is left intact
-// so create can still add those drives, NICs, and devices.
+// createError stores whatever create has already made, then records why it
+// stopped. rememberVM does nothing until the VM id is known, so a failure
+// before the VM row exists still leaves state empty. When the id is known
+// but state could not be written, the diagnostic says how to import it.
+func (r *VMResource) createError(ctx context.Context, resp *resource.CreateResponse, data *VMResourceModel, summary, detail string) {
+	r.rememberVM(ctx, resp, data)
+	if vmIDSet(data) && responseVMID(ctx, resp) == "" {
+		resp.Diagnostics.AddError("Error saving VM state", vmNotInStateDetail(data))
+	}
+	resp.Diagnostics.AddError(summary, detail)
+}
+
+func vmNotInStateDetail(data *VMResourceModel) string {
+	name := ""
+	id := ""
+	if data != nil {
+		name = data.Name.ValueString()
+		id = data.Id.ValueString()
+	}
+	return fmt.Sprintf("VM %q (id %s) exists in VergeOS but could not be stored in Terraform state. Import it with `terraform import vergeio_vm.<name> %s`, or delete it in VergeOS and apply again.", name, id, id)
+}
+
+// responseVMID is the VM id currently stored on the create response.
+// An empty string means state was never written or could not be read.
+func responseVMID(ctx context.Context, resp *resource.CreateResponse) string {
+	if resp == nil || resp.State.Raw.Type() == nil || resp.State.Raw.IsNull() {
+		return ""
+	}
+	var got VMResourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		return ""
+	}
+	if !vmIDSet(&got) {
+		return ""
+	}
+	return got.Id.ValueString()
+}
+
+// partialVMForState is the model stored as soon as the VM row exists, and
+// again after each later object is created. Nested blocks without a key are
+// omitted because state cannot hold unknown values. The original model is
+// left intact so create can still finish those drives and devices.
 func partialVMForState(data *VMResourceModel) VMResourceModel {
 	partial := *data
 	partial.Machine = knownInt32(data.Machine)
@@ -284,11 +322,14 @@ func partialVMForState(data *VMResourceModel) VMResourceModel {
 	partial.HAGroup = knownString(data.HAGroup)
 	partial.CloudInitFiles = knownCloudInitFiles(data.CloudInitFiles)
 	partial.PowerState = knownBool(data.PowerState)
+	partial.ForcePowerOff = knownBool(data.ForcePowerOff)
+	partial.ShutdownOnDestroy = knownString(data.ShutdownOnDestroy)
+	partial.Timeouts = knownTimeouts(data.Timeouts)
 	partial.GuestAgent = knownBool(data.GuestAgent)
 	partial.Advanced = knownString(data.Advanced)
 	partial.WaitForGuestAgentInfo = knownInt32(data.WaitForGuestAgentInfo)
-	partial.BootDisk = nil
-	partial.Devices = nil
+	partial.BootDisk = knownBootDisk(data.BootDisk)
+	partial.Devices = knownDevices(data.Devices)
 	partial.GuestAgentIPs = knownStringList(data.GuestAgentIPs)
 	partial.NestedVirtualization = knownBool(data.NestedVirtualization)
 	partial.DisableHypervisor = knownBool(data.DisableHypervisor)
@@ -316,6 +357,125 @@ func knownInt32(v types.Int32) types.Int32 {
 		return types.Int32Null()
 	}
 	return v
+}
+
+func knownFloat64(v types.Float64) types.Float64 {
+	if v.IsNull() || v.IsUnknown() {
+		return types.Float64Null()
+	}
+	return v
+}
+
+func knownTimeouts(timeouts *vmTimeoutsModel) *vmTimeoutsModel {
+	if timeouts == nil {
+		return nil
+	}
+	out := *timeouts
+	out.Update = knownString(timeouts.Update)
+	out.Delete = knownString(timeouts.Delete)
+	return &out
+}
+
+// knownBootDisk keeps a boot disk whose key VergeOS has already assigned.
+// A planned disk whose key is still unknown is left out of state.
+func knownBootDisk(disk *bootDiskModel) *bootDiskModel {
+	if !bootDiskKeySet(disk) {
+		return nil
+	}
+	out := *disk
+	out.Key = knownString(disk.Key)
+	out.Name = knownString(disk.Name)
+	out.Size = knownFloat64(disk.Size)
+	out.Source = knownInt32(disk.Source)
+	out.Media = knownString(disk.Media)
+	return &out
+}
+
+// knownDevices keeps devices that already have a key, in plan order.
+// A device whose create failed before VergeOS returned a key is omitted
+// so state does not store an unknown value.
+func knownDevices(devices []*deviceResourceModel) []*deviceResourceModel {
+	if len(devices) == 0 {
+		return nil
+	}
+	out := make([]*deviceResourceModel, 0, len(devices))
+	for _, device := range devices {
+		stored := knownDevice(device)
+		if stored == nil {
+			continue
+		}
+		out = append(out, stored)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func knownDevice(device *deviceResourceModel) *deviceResourceModel {
+	if device == nil || device.Key.IsNull() || device.Key.IsUnknown() || strings.TrimSpace(device.Key.ValueString()) == "" {
+		return nil
+	}
+	out := *device
+	out.Key = knownString(device.Key)
+	out.Machine = knownInt32(device.Machine)
+	out.Type = knownString(device.Type)
+	out.Name = knownString(device.Name)
+	out.Description = knownString(device.Description)
+	out.ResourceGroup = knownString(device.ResourceGroup)
+	out.Enabled = knownBool(device.Enabled)
+	out.Status = knownInt32(device.Status)
+	out.DeviceUSBSettingsModel = knownUSBSettings(device.DeviceUSBSettingsModel)
+	out.DeviceTPMSettingsModel = knownTPMSettings(device.DeviceTPMSettingsModel)
+	out.DeviceNvidiaVGPUSettingsModel = knownVGPUSettings(device.DeviceNvidiaVGPUSettingsModel)
+	return &out
+}
+
+func knownUSBSettings(in *DeviceUSBSettingsModel) *DeviceUSBSettingsModel {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Key = knownInt32(in.Key)
+	out.MachineDevice = knownInt32(in.MachineDevice)
+	out.GuestReset = knownBool(in.GuestReset)
+	out.GuestResetsAll = knownBool(in.GuestResetsAll)
+	return &out
+}
+
+func knownTPMSettings(in *DeviceTPMSettingsModel) *DeviceTPMSettingsModel {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Key = knownInt32(in.Key)
+	out.MachineDevice = knownInt32(in.MachineDevice)
+	out.Model = knownString(in.Model)
+	out.Version = knownTPMVersion(in.Version)
+	return &out
+}
+
+func knownTPMVersion(v TPMVersion) TPMVersion {
+	if v.IsNull() || v.IsUnknown() {
+		return NewTPMVersionNull()
+	}
+	return v
+}
+
+func knownVGPUSettings(in *DeviceNvidiaVGPUSettingsModel) *DeviceNvidiaVGPUSettingsModel {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Key = knownInt32(in.Key)
+	out.MachineDevice = knownInt32(in.MachineDevice)
+	out.ProfileType = knownString(in.ProfileType)
+	out.FrameRateLimiter = knownInt32(in.FrameRateLimiter)
+	out.DisableVNC = knownBool(in.DisableVNC)
+	out.EnableUVM = knownBool(in.EnableUVM)
+	out.EnableDebugging = knownBool(in.EnableDebugging)
+	out.EnableProfiling = knownBool(in.EnableProfiling)
+	return &out
 }
 
 func knownStringList(v types.List) types.List {
