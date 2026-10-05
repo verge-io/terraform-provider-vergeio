@@ -62,6 +62,10 @@ type fakeVerge struct {
 	actions                []map[string]any
 	vnetActions            []map[string]any
 	nodeActions            []map[string]any
+	// fwSettleReads is how many vnet GETs after a refresh still report
+	// need_fw_apply. Zero clears the flag inside the refresh handler.
+	fwSettleReads int
+	fwSettleLeft  map[int]int
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -566,7 +570,7 @@ func (f *fakeVerge) serveVNet(w http.ResponseWriter, r *http.Request, id int) {
 			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
 			return
 		}
-		writeJSON(f.t, w, http.StatusOK, obj)
+		writeJSON(f.t, w, http.StatusOK, f.vnetRead(obj, id))
 	default:
 		f.t.Errorf("unexpected vnets %s id %d", r.Method, id)
 		http.Error(w, "method", http.StatusMethodNotAllowed)
@@ -584,10 +588,41 @@ func (f *fakeVerge) serveVNetAction(w http.ResponseWriter, payload map[string]an
 	}
 	if action == "refresh" {
 		if vnet, ok := f.vnets[id]; ok {
-			vnet["need_fw_apply"] = false
+			if f.fwSettleReads > 0 {
+				vnet["need_fw_apply"] = true
+				if f.fwSettleLeft == nil {
+					f.fwSettleLeft = map[int]int{}
+				}
+				f.fwSettleLeft[id] = f.fwSettleReads
+			} else {
+				vnet["need_fw_apply"] = false
+				delete(f.fwSettleLeft, id)
+			}
 		}
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// vnetRead reports need_fw_apply for one GET. The first fwSettleReads
+// reads after a refresh stay pending; the stored flag is clear after that.
+func (f *fakeVerge) vnetRead(obj map[string]any, id int) map[string]any {
+	left := f.fwSettleLeft[id]
+	if left <= 0 {
+		return obj
+	}
+	left--
+	if left == 0 {
+		delete(f.fwSettleLeft, id)
+		obj["need_fw_apply"] = false
+	} else {
+		f.fwSettleLeft[id] = left
+	}
+	reported := make(map[string]any, len(obj))
+	for key, value := range obj {
+		reported[key] = value
+	}
+	reported["need_fw_apply"] = true
+	return reported
 }
 
 func (f *fakeVerge) serveNodeAction(w http.ResponseWriter, payload map[string]any) {

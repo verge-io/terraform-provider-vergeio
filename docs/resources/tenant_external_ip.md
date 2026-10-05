@@ -10,7 +10,7 @@ description: |-
 
 Assigns one virtual IP on a parent network to a tenant. VergeOS uses the first assigned IP as the tenant UI address. The next plan of `vergeio_tenant` stores that address in `ui_address` once it exists. Changing `tenant_id`, `network_id`, `ip`, `hostname`, or `description` replaces the address. There is no update API for the address row.
 
-`apply_parent_firewall` defaults to false. When it is true, create, update, and delete pass `WithApplyParentFirewall` and apply the parent network's firewall rules in the same call. `parent_firewall_pending` is that network's `need_fw_apply` flag. `parent_firewall_applied` records whether the last create or update applied the rules. A stopped network may refuse the refresh. Apply the parent firewall before you treat the address as live.
+`apply_parent_firewall` defaults to false. When it is true, create, update, and delete pass `WithApplyParentFirewall` and apply the parent network's firewall rules in the same call. VergeOS accepts that refresh before `need_fw_apply` clears, so Terraform waits up to a minute and stores `parent_firewall_pending` from the settled read. A read, or an apply left false, does not wait. `parent_firewall_applied` records whether the last create or update applied the rules. A stopped network may refuse the refresh. Apply the parent firewall before you treat the address as live.
 
 ## Example Usage
 
@@ -42,7 +42,7 @@ resource "vergeio_tenant_external_ip" "example" {
 
 ### Optional
 
-- `apply_parent_firewall` (Boolean) Apply the parent network's firewall rules after this address is created, updated, or deleted. Defaults to false. When false, VergeOS can leave `need_fw_apply` set. `parent_firewall_pending` reports that flag.
+- `apply_parent_firewall` (Boolean) Apply the parent network's firewall rules after this address is created, updated, or deleted. Defaults to false. When false, VergeOS can leave `need_fw_apply` set. When true, Terraform waits until that flag clears. `parent_firewall_pending` reports the flag.
 - `description` (String) Optional description. Changing it replaces the address.
 - `hostname` (String) Optional hostname stored on the address. Changing it replaces the address.
 
@@ -50,7 +50,7 @@ resource "vergeio_tenant_external_ip" "example" {
 
 - `id` (String) `vnet_addresses` key assigned by VergeOS.
 - `parent_firewall_applied` (Boolean) True when the last create or update applied the parent network's firewall rules.
-- `parent_firewall_pending` (Boolean) True when the parent network still has `need_fw_apply` set.
+- `parent_firewall_pending` (Boolean) True when the parent network still has `need_fw_apply` set. After a successful apply, Terraform reads the flag until it clears.
 
 ## Import
 

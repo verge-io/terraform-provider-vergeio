@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -251,6 +252,108 @@ func TestUpdateTenantExternalIPAppliesParentFirewall(t *testing.T) {
 	if data.ParentFirewallPending.ValueBool() || !data.ParentFirewallApplied.ValueBool() {
 		t.Fatalf("firewall status pending=%v applied=%v", data.ParentFirewallPending, data.ParentFirewallApplied)
 	}
+}
+
+func TestUpdateTenantExternalIPWaitsForParentFirewall(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := externalIPModel("7", "10", "203.0.113.50", false)
+	if err := api.createTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.fwSettleReads = 2
+	fake.mu.Unlock()
+	setParentFirewallWait(t, time.Millisecond, time.Second)
+	before := fake.callCount(http.MethodGet, "/api/v4/vnets/10")
+	data.ApplyParentFirewall = types.BoolValue(true)
+	if err := api.updateTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.ParentFirewallPending.ValueBool() || !data.ParentFirewallApplied.ValueBool() {
+		t.Fatalf("firewall status pending=%v applied=%v", data.ParentFirewallPending, data.ParentFirewallApplied)
+	}
+	if got := fake.callCount(http.MethodGet, "/api/v4/vnets/10") - before; got < 3 {
+		t.Fatalf("vnet gets after apply = %d, want at least 3", got)
+	}
+	if err := api.readTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.ParentFirewallPending.ValueBool() || !data.ParentFirewallApplied.ValueBool() {
+		t.Fatal("read after the flag settled still reported parent_firewall_pending")
+	}
+}
+
+func TestCreateTenantExternalIPWaitsForParentFirewall(t *testing.T) {
+	fake := newFake(t)
+	fake.mu.Lock()
+	fake.fwSettleReads = 2
+	fake.mu.Unlock()
+	setParentFirewallWait(t, time.Millisecond, time.Second)
+	api := fake.api(t)
+	data := externalIPModel("7", "10", "203.0.113.50", true)
+	if err := api.createTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.ParentFirewallPending.ValueBool() || !data.ParentFirewallApplied.ValueBool() {
+		t.Fatalf("firewall status pending=%v applied=%v", data.ParentFirewallPending, data.ParentFirewallApplied)
+	}
+	if got := fake.callCount(http.MethodGet, "/api/v4/vnets/10"); got < 3 {
+		t.Fatalf("vnet gets = %d, want at least 3", got)
+	}
+}
+
+func TestUpdateTenantExternalIPKeepsPendingWhenFlagStaysSet(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := externalIPModel("7", "10", "203.0.113.50", false)
+	if err := api.createTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
+	fake.fwSettleReads = 1000
+	fake.mu.Unlock()
+	setParentFirewallWait(t, time.Millisecond, 15*time.Millisecond)
+	data.ApplyParentFirewall = types.BoolValue(true)
+	start := time.Now()
+	if err := api.updateTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("apply waited %s", time.Since(start))
+	}
+	if !data.ParentFirewallPending.ValueBool() || !data.ParentFirewallApplied.ValueBool() {
+		t.Fatalf("firewall status pending=%v applied=%v", data.ParentFirewallPending, data.ParentFirewallApplied)
+	}
+}
+
+func TestUpdateTenantExternalIPDoesNotWaitWhenApplyIsFalse(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := externalIPModel("7", "10", "203.0.113.50", false)
+	if err := api.createTenantExternalIP(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if err := api.updateTenantExternalIP(ctx, data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.ParentFirewallPending.ValueBool() || data.ParentFirewallApplied.ValueBool() {
+		t.Fatalf("firewall status pending=%v applied=%v", data.ParentFirewallPending, data.ParentFirewallApplied)
+	}
+}
+
+func setParentFirewallWait(t *testing.T, interval, timeout time.Duration) {
+	t.Helper()
+	prevInterval := parentFirewallPollInterval
+	prevTimeout := parentFirewallSettleTimeout
+	parentFirewallPollInterval = interval
+	parentFirewallSettleTimeout = timeout
+	t.Cleanup(func() {
+		parentFirewallPollInterval = prevInterval
+		parentFirewallSettleTimeout = prevTimeout
+	})
 }
 
 func TestDeleteTenantExternalIP(t *testing.T) {

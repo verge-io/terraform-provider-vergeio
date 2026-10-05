@@ -103,13 +103,13 @@ func (r *TenantExternalIPResource) Schema(ctx context.Context, req resource.Sche
 				},
 			},
 			"apply_parent_firewall": schema.BoolAttribute{
-				MarkdownDescription: "Apply the parent network's firewall rules after this address is created, updated, or deleted. Defaults to false. When false, VergeOS can leave need_fw_apply set. parent_firewall_pending reports that flag.",
+				MarkdownDescription: "Apply the parent network's firewall rules after this address is created, updated, or deleted. Defaults to false. When false, VergeOS can leave need_fw_apply set. When true, Terraform waits until that flag clears. parent_firewall_pending reports the flag.",
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(false),
 			},
 			"parent_firewall_pending": schema.BoolAttribute{
-				MarkdownDescription: "True when the parent network still has need_fw_apply set.",
+				MarkdownDescription: "True when the parent network still has need_fw_apply set. After a successful apply, Terraform reads the flag until it clears.",
 				Computed:            true,
 			},
 			"parent_firewall_applied": schema.BoolAttribute{

@@ -17,6 +17,8 @@ import (
 // The parent network is internal so a lab can create it without a physical
 // NIC. The provider still sends a virtual address owned by the tenant, the
 // same call used for a parent external IP, and reads need_fw_apply afterward.
+// The apply step waits until that flag clears. VergeOS accepts the refresh
+// before need_fw_apply drops.
 func TestAccTenantExternalIP(t *testing.T) {
 	acctest.PreCheck(t)
 	tenantName := acctest.Name("tenant-ip")

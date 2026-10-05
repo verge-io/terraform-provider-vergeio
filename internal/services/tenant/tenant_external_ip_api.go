@@ -8,10 +8,19 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/verge-io/govergeos"
+)
+
+// parentFirewallSettleTimeout bounds how long a successful apply waits for
+// need_fw_apply to clear. VergeOS accepts the refresh before the flag drops.
+// parentFirewallPollInterval is the pause between those reads. Tests shorten both.
+var (
+	parentFirewallSettleTimeout = 60 * time.Second
+	parentFirewallPollInterval  = time.Second
 )
 
 func tenantExternalIPCreateRequest(data *TenantExternalIPResourceModel) (*vergeos.TenantExternalIPCreateRequest, error) {
@@ -88,7 +97,45 @@ func (a *API) syncParentFirewall(ctx context.Context, networkID int, apply bool)
 	if applyErr != nil {
 		return status, fmt.Errorf("failed to apply rules to network %d: %w", networkID, applyErr)
 	}
+	if err := a.waitForParentFirewallClear(ctx, status); err != nil {
+		return status, err
+	}
 	return status, nil
+}
+
+// waitForParentFirewallClear polls need_fw_apply after this call applied the
+// parent rules. govergeos reads the flag once, and that read can still be
+// true after ApplyRules succeeds. A call that did not apply returns
+// immediately so a legitimately pending flag is not held until the timeout.
+func (a *API) waitForParentFirewallClear(ctx context.Context, status *vergeos.ParentFirewallStatus) error {
+	if status == nil || !status.Applied || !status.Pending || status.NetworkID <= 0 {
+		return nil
+	}
+	deadline := time.Now().Add(parentFirewallSettleTimeout)
+	for status.Pending {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			tflog.Warn(ctx, fmt.Sprintf("parent network %d still has need_fw_apply set after applying firewall rules", status.NetworkID))
+			return nil
+		}
+		wait := parentFirewallPollInterval
+		if wait > remaining {
+			wait = remaining
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		network, err := a.sdk.Networks.Get(ctx, status.NetworkID)
+		if err != nil {
+			return fmt.Errorf("failed to read firewall status for network %d: %w", status.NetworkID, err)
+		}
+		status.Pending = network.NeedFWApply
+	}
+	return nil
 }
 
 func assignFirewallStatus(data *TenantExternalIPResourceModel, status *vergeos.ParentFirewallStatus) {
@@ -156,7 +203,15 @@ func (a *API) createTenantExternalIP(ctx context.Context, data *TenantExternalIP
 		assignFirewallStatus(data, status)
 		tflog.Debug(ctx, fmt.Sprintf("created tenant external IP %d", created.Key.Int()))
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if waitErr := a.waitForParentFirewallClear(ctx, status); waitErr != nil {
+		assignFirewallStatus(data, status)
+		return waitErr
+	}
+	assignFirewallStatus(data, status)
+	return nil
 }
 
 func (a *API) readTenantExternalIP(ctx context.Context, data *TenantExternalIPResourceModel) error {
@@ -248,6 +303,9 @@ func (a *API) deleteTenantExternalIP(ctx context.Context, data *TenantExternalIP
 		// resource so it can warn without leaving a deleted row in state.
 		tflog.Warn(ctx, fmt.Sprintf("deleted tenant external IP %d; firewall follow-up: %v", id, err))
 		return status, err
+	}
+	if waitErr := a.waitForParentFirewallClear(ctx, status); waitErr != nil {
+		return status, waitErr
 	}
 	tflog.Debug(ctx, fmt.Sprintf("deleted tenant external IP %d", id))
 	return status, nil
