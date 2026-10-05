@@ -30,8 +30,8 @@ const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the 
 	"ui_address is the IP of the tenant UI, read from the ui_address row. " +
 	"Resources inside the tenant use a second Terraform configuration. See the tenants guide. " +
 	"vergeio_tenant_external_ip assigns one parent external IP to this tenant. The first assigned IP becomes ui_address. The next plan stores that address once it exists. " +
-	"Network blocks (vnet_cidrs) are not resources here. " +
-	"Assigning an address can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip reports that as parent_firewall_pending. Apply that network's firewall before treating the address as live."
+	"vergeio_tenant_network_block assigns one routed CIDR (vnet_cidrs) from a parent network to this tenant. " +
+	"Assigning an address or a block can leave need_fw_apply set on the parent external network. vergeio_tenant_external_ip and vergeio_tenant_network_block report that as parent_firewall_pending. Apply that network's firewall before treating the assignment as live."
 
 var (
 	_ resource.Resource                = &TenantResource{}

@@ -53,15 +53,20 @@ type fakeVerge struct {
 	tenants                map[int]map[string]any
 	status                 map[int]map[string]any
 	addresses              map[int]map[string]any
-	nodes                  map[int]map[string]any
-	storage                map[int]map[string]any
-	vnets                  map[int]map[string]any
-	machines               map[int]map[string]any
-	calls                  []string
-	bodies                 []recordedBody
-	actions                []map[string]any
-	vnetActions            []map[string]any
-	nodeActions            []map[string]any
+	cidrs                  map[int]map[string]any
+	// cidrDeleteStatus, when non-zero, makes DELETE /vnet_cidrs/{id} fail
+	// with that status and cidrDeleteMessage, leaving the row in place.
+	cidrDeleteStatus  int
+	cidrDeleteMessage string
+	nodes             map[int]map[string]any
+	storage           map[int]map[string]any
+	vnets             map[int]map[string]any
+	machines          map[int]map[string]any
+	calls             []string
+	bodies            []recordedBody
+	actions           []map[string]any
+	vnetActions       []map[string]any
+	nodeActions       []map[string]any
 	// fwSettleReads is how many vnet GETs after a refresh still report
 	// need_fw_apply. Zero clears the flag inside the refresh handler.
 	fwSettleReads int
@@ -77,6 +82,7 @@ func newFake(t *testing.T) *fakeVerge {
 		tenants:        map[int]map[string]any{},
 		status:         map[int]map[string]any{},
 		addresses:      map[int]map[string]any{},
+		cidrs:          map[int]map[string]any{},
 		nodes:          map[int]map[string]any{},
 		storage:        map[int]map[string]any{},
 		vnets:          map[int]map[string]any{},
@@ -237,6 +243,8 @@ func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveStorage(w, r, id, payload)
 	case "vnet_addresses":
 		f.serveAddress(w, r, id, payload)
+	case "vnet_cidrs":
+		f.serveCIDR(w, r, id, payload)
 	case "vnets":
 		f.serveVNet(w, r, id)
 	case "vnet_actions":
@@ -714,6 +722,59 @@ func (f *fakeVerge) serveAddress(w http.ResponseWriter, r *http.Request, id int,
 	}
 }
 
+func (f *fakeVerge) serveCIDR(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	switch {
+	case r.Method == http.MethodGet && id == 0:
+		writeJSON(f.t, w, http.StatusOK, f.filterMaps(f.cidrSlice(), r.URL.Query().Get("filter")))
+	case r.Method == http.MethodGet && id > 0:
+		obj, ok := f.cidrs[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		writeJSON(f.t, w, http.StatusOK, obj)
+	case r.Method == http.MethodPost && id == 0:
+		id = f.alloc()
+		vnetID := intField(payload["vnet"])
+		obj := map[string]any{
+			"$key":         id,
+			"vnet":         vnetID,
+			"network_name": fmt.Sprintf("vnet-%d", vnetID),
+			"cidr":         stringField(payload, "cidr"),
+			"owner":        stringField(payload, "owner"),
+			"description":  stringField(payload, "description"),
+		}
+		f.cidrs[id] = obj
+		f.markFirewallPending(vnetID)
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodDelete && id > 0:
+		obj, ok := f.cidrs[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		if f.cidrDeleteStatus != 0 {
+			writeJSON(f.t, w, f.cidrDeleteStatus, map[string]string{"err": f.cidrDeleteMessage})
+			return
+		}
+		vnetID := intField(obj["vnet"])
+		delete(f.cidrs, id)
+		f.markFirewallPending(vnetID)
+		w.WriteHeader(http.StatusOK)
+	default:
+		f.t.Errorf("unexpected cidr %s %d", r.Method, id)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
+}
+
+func (f *fakeVerge) cidrSlice() []map[string]any {
+	rows := make([]map[string]any, 0, len(f.cidrs))
+	for _, row := range f.cidrs {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 func (f *fakeVerge) addressSlice() []map[string]any {
 	rows := make([]map[string]any, 0, len(f.addresses))
 	for _, row := range f.addresses {
@@ -833,6 +894,11 @@ func matchFilter(filter string, row map[string]any) bool {
 		case strings.HasPrefix(part, "ip eq '"):
 			want := strings.TrimSuffix(strings.TrimPrefix(part, "ip eq '"), "'")
 			if stringField(row, "ip") != want {
+				return false
+			}
+		case strings.HasPrefix(part, "cidr eq '"):
+			want := strings.TrimSuffix(strings.TrimPrefix(part, "cidr eq '"), "'")
+			if stringField(row, "cidr") != want {
 				return false
 			}
 		default:
