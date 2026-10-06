@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,10 +19,11 @@ import (
 	"terraform-provider-vergeio/internal/acctest"
 )
 
-// TestAccNetworkApplyAction stages a firewall rule with apply = false, then
+// TestAccNetworkApplyAction writes a firewall rule with apply = false, then
 // refreshes the running network from an action trigger. The trigger is on
-// terraform_data so the network resource is not updated. Skipped without
-// TF_ACC and on OpenTofu.
+// terraform_data so the network resource is not updated. A rule write does not
+// have to set need_fw_apply; the refresh must succeed and leave that flag clear.
+// Skipped without TF_ACC and on OpenTofu.
 func TestAccNetworkApplyAction(t *testing.T) {
 	acctest.RequireActions(t)
 	networkName := acctest.Name("network-apply")
@@ -35,11 +37,18 @@ func TestAccNetworkApplyAction(t *testing.T) {
 		Steps: []resource.TestStep{
 			{
 				Config: staged,
-				Check:  testAccNetworkNeedFWApply("vergeio_network.test", true),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_network_rule.ssh", "id"),
+					testAccNetworkRunning("vergeio_network.test"),
+				),
 			},
 			{
 				Config: applied,
-				Check:  testAccNetworkNeedFWApply("vergeio_network.test", false),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_network_rule.ssh", "id"),
+					testAccNetworkRunning("vergeio_network.test"),
+					testAccNetworkNeedFWApply("vergeio_network.test", false),
+				),
 			},
 		},
 	})
@@ -104,15 +113,44 @@ resource "terraform_data" "tick" {
 `, networkName, tick, lifecycle, actionBlock))
 }
 
+func testAccNetworkRunning(resourceName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		id, err := accNetworkID(s, resourceName)
+		if err != nil {
+			return err
+		}
+		client, err := acctest.SDKClient()
+		if err != nil {
+			return err
+		}
+		network, err := client.Networks.Get(context.Background(), id)
+		if err != nil {
+			return err
+		}
+		if network.Running || strings.EqualFold(strings.TrimSpace(network.Status), "running") {
+			return nil
+		}
+		return fmt.Errorf("network %d is not running (status %q)", id, network.Status)
+	}
+}
+
+func accNetworkID(s *terraform.State, resourceName string) (int, error) {
+	rs, ok := s.RootModule().Resources[resourceName]
+	if !ok {
+		return 0, fmt.Errorf("resource not found: %s", resourceName)
+	}
+	id, err := strconv.Atoi(rs.Primary.ID)
+	if err != nil {
+		return 0, fmt.Errorf("network id %q: %w", rs.Primary.ID, err)
+	}
+	return id, nil
+}
+
 func testAccNetworkNeedFWApply(resourceName string, want bool) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[resourceName]
-		if !ok {
-			return fmt.Errorf("resource not found: %s", resourceName)
-		}
-		id, err := strconv.Atoi(rs.Primary.ID)
+		id, err := accNetworkID(s, resourceName)
 		if err != nil {
-			return fmt.Errorf("network id %q: %w", rs.Primary.ID, err)
+			return err
 		}
 		client, err := acctest.SDKClient()
 		if err != nil {

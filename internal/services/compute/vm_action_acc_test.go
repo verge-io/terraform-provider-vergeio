@@ -56,15 +56,18 @@ action "vergeio_vm_snapshot" "before" {
 
 // TestAccVMPowerAction powers an empty VM on, resets it, then shuts it down
 // with a short timeout and force so a guest without ACPI does not block the
-// test. The trigger is on terraform_data. Updating vergeio_vm would restore
-// its stored powerstate and hide the action.
+// test. The trigger is on terraform_data. power_on leaves the guest running
+// while vergeio_vm.powerstate stays false, so that step's refresh plan is not
+// empty. reset then declares powerstate true, matching the refreshed state, so
+// the VM resource does not power the guest off. shutdown leaves the guest
+// stopped while powerstate stays true, so that refresh plan is not empty either.
 func TestAccVMPowerAction(t *testing.T) {
 	acctest.RequireActions(t)
 	vmName := acctest.Name("vm-power")
-	stopped := testAccVMActionConfig(vmName, "created", "", "")
-	on := testAccVMPowerStep(vmName, "on", "power_on", "")
-	reset := testAccVMPowerStep(vmName, "reset", "reset", "")
-	off := testAccVMPowerStep(vmName, "off", "shutdown", `
+	stopped := testAccVMPowerStep(vmName, "created", "false", "", "")
+	on := testAccVMPowerStep(vmName, "on", "false", "power_on", "")
+	reset := testAccVMPowerStep(vmName, "reset", "true", "reset", "")
+	off := testAccVMPowerStep(vmName, "off", "true", "shutdown", `
     timeout_seconds = 5
     force           = true
 `)
@@ -79,16 +82,18 @@ func TestAccVMPowerAction(t *testing.T) {
 				Check:  testAccVMPower("vergeio_vm.test", false),
 			},
 			{
-				Config: on,
-				Check:  testAccVMPower("vergeio_vm.test", true),
+				Config:             on,
+				ExpectNonEmptyPlan: true,
+				Check:              testAccVMPower("vergeio_vm.test", true),
 			},
 			{
 				Config: reset,
 				Check:  testAccVMPower("vergeio_vm.test", true),
 			},
 			{
-				Config: off,
-				Check:  testAccVMPower("vergeio_vm.test", false),
+				Config:             off,
+				ExpectNonEmptyPlan: true,
+				Check:              testAccVMPower("vergeio_vm.test", false),
 			},
 		},
 	})
@@ -106,7 +111,7 @@ action "vergeio_vm_snapshot" "before" {
   }
 }
 `),
-		testAccVMPowerStep("tf-acc-vm", "off", "shutdown", `
+		testAccVMPowerStep("tf-acc-vm", "off", "true", "shutdown", `
     timeout_seconds = 5
     force           = true
 `),
@@ -133,25 +138,34 @@ const vmPowerTrigger = `
     }
   }`
 
-func testAccVMPowerStep(vmName, tick, operation, extra string) string {
-	return testAccVMActionConfig(vmName, tick, vmPowerTrigger, fmt.Sprintf(`
+func testAccVMPowerStep(vmName, tick, powerstate, operation, extra string) string {
+	trigger := ""
+	action := ""
+	if operation != "" {
+		trigger = vmPowerTrigger
+		action = fmt.Sprintf(`
 action "vergeio_vm_power" "maintenance" {
   config {
     vm_id     = vergeio_vm.test.id
     operation = %q
 %s  }
 }
-`, operation, extra))
+`, operation, extra)
+	}
+	return testAccVMConfig(vmName, tick, fmt.Sprintf("\n  powerstate = %s", powerstate), trigger, action)
 }
 
 func testAccVMActionConfig(vmName, tick, lifecycle, action string) string {
+	return testAccVMConfig(vmName, tick, "\n  powerstate = false", lifecycle, action)
+}
+
+func testAccVMConfig(vmName, tick, vmBody, lifecycle, action string) string {
 	if err := acctest.RequirePrefix(vmName); err != nil {
 		panic(err)
 	}
 	return acctest.Config(fmt.Sprintf(`
 resource "vergeio_vm" "test" {
-  name       = %q
-  powerstate = false
+  name       = %q%s
 }
 
 resource "terraform_data" "tick" {
@@ -159,7 +173,7 @@ resource "terraform_data" "tick" {
 %s
 }
 %s
-`, vmName, tick, lifecycle, action))
+`, vmName, vmBody, tick, lifecycle, action))
 }
 
 func testAccVMHasSnapshot(resourceName, snapName string) resource.TestCheckFunc {
