@@ -98,8 +98,11 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_vm
 - vergeio_vm_drive
 - vergeio_vm_nic
+- vergeio_vm_recipe_instance
 
 Devices stay nested on `vergeio_vm`.
+
+`vergeio_vm_recipe_instance` deploys a VM from a catalog recipe. `vergeio_catalogs` and `vergeio_vm_recipes` look the recipe up by name. `answers` is a map of strings. A disk size is bytes, so 50 GB is `53687091200`. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. The resource deploys the VM. It has no simulate argument.
 
 `vergeio_group` creates a group. `vergeio_permission` grants a user or a group list, read, create, modify, and delete on a table or one object. `vergeio_member` adds a user or another object to a group. `vergeio_users` lists users the same way `vergeio_groups` lists groups.
 
@@ -117,6 +120,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 
 ## Data Sources
 
+- vergeio_catalogs
 - vergeio_cloudinit_files
 - vergeio_clusters
 - vergeio_groups
@@ -128,6 +132,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_tenants
 - vergeio_users
 - vergeio_version
+- vergeio_vm_recipes
 - vergeio_vms
 
 # Building Provider From Source
