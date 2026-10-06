@@ -13,6 +13,7 @@ import (
 	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/services/nas"
 	"terraform-provider-vergeio/internal/services/network"
 )
 
@@ -149,6 +150,9 @@ func Sweep(ctx context.Context) error {
 		record(ignoreNotFound(client.CloudInitFiles.Delete(ctx, id), "cloud-init file", id))
 	}
 
+	// NAS rows sit on the test VM. Shares, volumes, and the service have to
+	// go before that VM, or VergeOS refuses the VM delete.
+	record(sweepNAS(ctx, client, vmIDs))
 	record(sweepVMSnapshots(ctx, client, vmMachines))
 	for id, name := range vmIDs {
 		log.Printf("[SWEEP] deleting vm %d (%s)", id, name)
@@ -371,10 +375,75 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 		}
 	}
 
+	left = append(left, verifyNAS(ctx, client)...)
+
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
 	}
 	return nil
+}
+
+func verifyNAS(ctx context.Context, client *vergeos.Client) []string {
+	var left []string
+	services, err := client.NASServices.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		left = append(left, fmt.Sprintf("NAS services: %v", err))
+	}
+	for _, service := range services {
+		if HasPrefix(service.Name) {
+			left = append(left, fmt.Sprintf("NAS service %s (%d)", service.Name, service.Key.Int()))
+		}
+	}
+	volumes, err := client.Volumes.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("volumes: %v", err))
+	}
+	for _, volume := range volumes {
+		if !volume.IsSnapshot && HasPrefix(volume.Name) {
+			left = append(left, fmt.Sprintf("volume %s (%s)", volume.Name, firstID(volume.ID, volume.Key)))
+		}
+	}
+	users, err := client.NASServiceUsers.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("NAS users: %v", err))
+	}
+	for _, user := range users {
+		if HasPrefix(user.Name) {
+			left = append(left, fmt.Sprintf("NAS user %s (%s)", user.Name, firstID(user.ID, user.Key)))
+		}
+	}
+	cifs, err := client.VolumeCIFSShares.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("CIFS shares: %v", err))
+	}
+	for _, share := range cifs {
+		if HasPrefix(share.Name) {
+			left = append(left, fmt.Sprintf("CIFS share %s (%s)", share.Name, firstID(share.ID, share.Key)))
+		}
+	}
+	nfs, err := client.VolumeNFSShares.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("NFS shares: %v", err))
+	}
+	for _, share := range nfs {
+		if HasPrefix(share.Name) {
+			left = append(left, fmt.Sprintf("NFS share %s (%s)", share.Name, firstID(share.ID, share.Key)))
+		}
+	}
+	return left
+}
+
+func sweepNAS(ctx context.Context, client *vergeos.Client, vmIDs map[int]string) error {
+	return nas.SweepTestRows(ctx, client, vmIDs, HasPrefix)
+}
+
+func firstID(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func sweepAPIKeys(ctx context.Context, client *vergeos.Client, userIDs map[int]string) error {
