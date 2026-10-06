@@ -71,9 +71,22 @@ func userCreateModel(data *UserResourceModel) UserAPIResourceModel {
 		Email:          vergeio.KnownString(data.Email),
 		Enabled:        vergeio.KnownBool(data.Enabled),
 		Type:           vergeio.KnownString(data.Type),
-		Password:       vergeio.KnownString(data.Password),
+		Password:       userPasswordForAPI(data),
 		ChangePassword: vergeio.KnownBool(data.ChangePassword),
 	}
+}
+
+// userPasswordForAPI is the password to send. password_wo is copied onto
+// Password before create and before an update whose version changed. A
+// password_wo left only on PasswordWO is still sent on create.
+func userPasswordForAPI(data *UserResourceModel) *string {
+	if data == nil {
+		return nil
+	}
+	if password := vergeio.KnownString(data.Password); password != nil {
+		return password
+	}
+	return vergeio.KnownString(data.PasswordWO)
 }
 
 // userCreateRequest builds the SDK create body from known plan values.

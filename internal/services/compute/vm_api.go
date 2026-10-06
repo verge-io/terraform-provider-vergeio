@@ -326,7 +326,7 @@ func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 		RTCBase:              vergeio.KnownString(data.RTCBase),
 		BootOrder:            vergeio.KnownString(data.BootOrder),
 		ConsolePassEnabled:   vergeio.KnownBool(data.ConsolePassEnabled),
-		ConsolePass:          vergeio.KnownString(data.ConsolePass),
+		ConsolePass:          consolePassForAPI(data),
 		USBTablet:            vergeio.KnownBool(data.USBTablet),
 		UEFI:                 vergeio.KnownBool(data.UEFI),
 		SecureBoot:           vergeio.KnownBool(data.SecureBoot),
@@ -344,9 +344,10 @@ func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 
 	if data.CloudInitFiles != nil {
 		for _, cloudInitFile := range data.CloudInitFiles {
+			body, _ := cloudInitEffectiveContents(cloudInitFile)
 			apiData.CloudInitFiles = append(apiData.CloudInitFiles, CloudInitFileAPI{
 				Name:     cloudInitFile.Name.ValueString(),
-				Contents: cloudInitFile.Contents.ValueString(),
+				Contents: body,
 			})
 		}
 	}
@@ -972,7 +973,7 @@ func cloudInitFilesEqual(plan, state []CloudInitFile) bool {
 		return false
 	}
 	for i := range plan {
-		if !plan[i].Name.Equal(state[i].Name) || !plan[i].Contents.Equal(state[i].Contents) {
+		if !plan[i].Name.Equal(state[i].Name) || !plan[i].Contents.Equal(state[i].Contents) || !plan[i].ContentsWOVersion.Equal(state[i].ContentsWOVersion) {
 			return false
 		}
 	}
@@ -1001,21 +1002,22 @@ func cloudInitFileNameKey(name string) string {
 func indexCloudInitFiles(files []CloudInitFile) (map[string]indexedCloudInitFile, error) {
 	out := make(map[string]indexedCloudInitFile, len(files))
 	for _, file := range files {
-		if file.Name.IsUnknown() || file.Contents.IsUnknown() {
+		if file.Name.IsUnknown() || file.Contents.IsUnknown() || file.ContentsWO.IsUnknown() {
 			return nil, fmt.Errorf("cloudinit_files are not known yet")
 		}
 		name := file.Name.ValueString()
 		if file.Name.IsNull() || strings.TrimSpace(name) == "" {
 			return nil, fmt.Errorf("cloudinit_files name is empty")
 		}
-		if file.Contents.IsNull() {
+		body, ok := cloudInitEffectiveContents(file)
+		if !ok {
 			return nil, fmt.Errorf("cloudinit_files %q is missing contents", name)
 		}
 		nameKey := cloudInitFileNameKey(name)
 		if _, exists := out[nameKey]; exists {
 			return nil, fmt.Errorf("cloudinit_files name %q is duplicated", name)
 		}
-		out[nameKey] = indexedCloudInitFile{name: name, contents: file.Contents.ValueString()}
+		out[nameKey] = indexedCloudInitFile{name: name, contents: body}
 	}
 	return out, nil
 }
@@ -1359,9 +1361,16 @@ func cloudInitFilesForState(prior, live []CloudInitFile, expectLive bool) []Clou
 			continue
 		}
 		taken[nameKey] = n + 1
+		contents := rows[n].Contents
+		// A write-only body is not stored. The version stays so the next plan
+		// can change it. The live body would put the secret back in state.
+		if cloudInitWriteOnly(file) {
+			contents = types.StringNull()
+		}
 		out = append(out, CloudInitFile{
-			Name:     file.Name,
-			Contents: rows[n].Contents,
+			Name:              file.Name,
+			Contents:          contents,
+			ContentsWOVersion: file.ContentsWOVersion,
 		})
 	}
 	return out

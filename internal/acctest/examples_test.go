@@ -14,6 +14,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
+	eschema "github.com/hashicorp/terraform-plugin-framework/ephemeral/schema"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	pschema "github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -44,6 +46,16 @@ func TestExamplesCoverRegisteredObjects(t *testing.T) {
 		resp := &datasource.MetadataResponse{}
 		d.Metadata(ctx, datasource.MetadataRequest{ProviderTypeName: "vergeio"}, resp)
 		requireFile(t, filepath.Join(root, "examples", "data-sources", resp.TypeName, "data-source.tf"))
+	}
+	withEphemeral, ok := p.(provider.ProviderWithEphemeralResources)
+	if !ok {
+		t.Fatal("provider does not register ephemeral resources")
+	}
+	for _, factory := range withEphemeral.EphemeralResources(ctx) {
+		e := factory()
+		resp := &ephemeral.MetadataResponse{}
+		e.Metadata(ctx, ephemeral.MetadataRequest{ProviderTypeName: "vergeio"}, resp)
+		requireFile(t, filepath.Join(root, "examples", "ephemeral-resources", resp.TypeName, "ephemeral-resource.tf"))
 	}
 }
 
@@ -205,6 +217,7 @@ type exampleSchemas struct {
 	provider   *schemaNode
 	resources  map[string]*schemaNode
 	dataSource map[string]*schemaNode
+	ephemeral  map[string]*schemaNode
 }
 
 func providerExampleSchemas() exampleSchemas {
@@ -213,6 +226,7 @@ func providerExampleSchemas() exampleSchemas {
 	out := exampleSchemas{
 		resources:  map[string]*schemaNode{},
 		dataSource: map[string]*schemaNode{},
+		ephemeral:  map[string]*schemaNode{},
 	}
 
 	presp := &provider.SchemaResponse{}
@@ -235,7 +249,25 @@ func providerExampleSchemas() exampleSchemas {
 		d.Schema(ctx, datasource.SchemaRequest{}, sresp)
 		out.dataSource[meta.TypeName] = datasourceSchemaNode(sresp.Schema)
 	}
+	if withEphemeral, ok := p.(provider.ProviderWithEphemeralResources); ok {
+		for _, factory := range withEphemeral.EphemeralResources(ctx) {
+			e := factory()
+			meta := &ephemeral.MetadataResponse{}
+			e.Metadata(ctx, ephemeral.MetadataRequest{ProviderTypeName: "vergeio"}, meta)
+			sresp := &ephemeral.SchemaResponse{}
+			e.Schema(ctx, ephemeral.SchemaRequest{}, sresp)
+			out.ephemeral[meta.TypeName] = ephemeralSchemaNode(sresp.Schema)
+		}
+	}
 	return out
+}
+
+func ephemeralSchemaNode(s eschema.Schema) *schemaNode {
+	children := map[string]*schemaNode{}
+	for name := range s.Attributes {
+		children[name] = &schemaNode{}
+	}
+	return &schemaNode{children: children}
 }
 
 func exampleSchemaErrors(filename string, src []byte, schemas exampleSchemas) []string {
@@ -265,6 +297,11 @@ func exampleSchemaErrors(filename string, src []byte, schemas exampleSchemas) []
 				continue
 			}
 			errs = append(errs, checkBody(block.Labels[0], block.Body, schemas.provider)...)
+		case "ephemeral":
+			if len(block.Labels) < 1 {
+				continue
+			}
+			errs = append(errs, checkLabeledBlock(block, schemas.ephemeral, "ephemeral resource")...)
 		}
 	}
 	return errs
@@ -297,7 +334,7 @@ func checkBody(path string, body *hclsyntax.Body, node *schemaNode) []string {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if resourceMetaArgument(name) {
+		if resourceMetaArgument(name) || (name == "alias" && path == "vergeio") {
 			continue
 		}
 		child, ok := node.children[name]

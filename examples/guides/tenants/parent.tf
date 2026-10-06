@@ -15,10 +15,11 @@ variable "tenant_password" {
 }
 
 resource "vergeio_tenant" "customer" {
-  name        = "customer-a"
-  description = "Customer A virtual data center"
-  password    = var.tenant_password
-  powerstate  = true
+  name                = "customer-a"
+  description         = "Customer A virtual data center"
+  password_wo         = var.tenant_password
+  password_wo_version = 1
+  powerstate          = true
 }
 
 resource "vergeio_tenant_node" "node" {

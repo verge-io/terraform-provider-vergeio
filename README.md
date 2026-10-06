@@ -46,6 +46,18 @@ provider "vergeio" {
 provider "vergeio" {}
 ```
 
+A `password` or `api_key` set in the provider block is stored in state. Provider arguments cannot be write-only. Omit them and set `VERGEOS_USERNAME` and `VERGEOS_PASSWORD`, or pass an ephemeral token to `api_key`, to keep those credentials out of state.
+
+Resource passwords are stored when the attribute is not write-only. `vergeio_user.password`, `vergeio_tenant.password`, `vergeio_vm.console_pass`, and cloud-init `contents` are deprecated through v3.x. Use `password_wo`, `console_pass_wo`, and `contents_wo` with the matching `*_version` attribute. Terraform stores the version, not the secret. Increment the version to send a new value. Changing the write-only value alone does not plan an update. A console password change updates the VM in place.
+
+## Ephemeral resources
+
+- vergeio_api_key
+
+`vergeio_api_key` mints a short-lived user API key for one run. The token is not stored. Close deletes the key. `ttl_seconds` expires it if Close does not run. `name` is exclusive: Open deletes an existing key of that name for that user before creating a new one. Do not reuse a long-lived key name. The tenants guide uses this key for the configuration that manages the inside of a tenant.
+
+Write-only attributes and this ephemeral resource behave the same on Terraform and OpenTofu once the CLI is new enough: the write-only value is null in state, and ephemeral results are not in state or in the plan. OpenTofu added both features in 1.11. Terraform added ephemeral resources in 1.10 and write-only attributes in 1.11.
+
 ## Resources
 
 - vergeio_group
@@ -101,7 +113,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 
 **Prerequisites:**
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.10
+- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.10, or OpenTofu >= 1.11 for the same features. Ephemeral `vergeio_api_key` needs Terraform 1.10 or OpenTofu 1.11. Write-only attributes need Terraform 1.11 or OpenTofu 1.11. OpenTofu 1.10 and earlier reject both.
 - [Go](https://golang.org/doc/install) >= 1.27
 
 ```

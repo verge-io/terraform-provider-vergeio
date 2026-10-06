@@ -17,6 +17,7 @@ import (
 	"terraform-provider-vergeio/internal/services/tenant"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -27,6 +28,7 @@ import (
 // Ensure Provider satisfies various provider interfaces.
 var _ provider.Provider = &vergeioProvider{}
 var _ provider.ProviderWithFunctions = &vergeioProvider{}
+var _ provider.ProviderWithEphemeralResources = &vergeioProvider{}
 
 // VergeioProvider defines the provider implementation.
 type vergeioProvider struct {
@@ -111,6 +113,7 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 
 	resp.DataSourceData = client
 	resp.ResourceData = client
+	resp.EphemeralResourceData = client
 }
 
 func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resource {
@@ -136,6 +139,12 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		tenant.NewTenantExternalIPResource,
 		tenant.NewTenantLayer2NetworkResource,
 		tenant.NewTenantNetworkBlockResource,
+	}
+}
+
+func (p *vergeioProvider) EphemeralResources(ctx context.Context) []func() ephemeral.EphemeralResource {
+	return []func() ephemeral.EphemeralResource{
+		identity.NewAPIKeyEphemeralResource,
 	}
 }
 

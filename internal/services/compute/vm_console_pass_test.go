@@ -25,6 +25,17 @@ func TestConsolePassSchemaIsSensitive(t *testing.T) {
 	if !attr.Optional || !attr.Computed {
 		t.Fatalf("console_pass optional=%v computed=%v", attr.Optional, attr.Computed)
 	}
+	if attr.GetDeprecationMessage() == "" {
+		t.Fatal("console_pass should be deprecated in favor of console_pass_wo")
+	}
+	writeOnly, ok := resp.Schema.Attributes["console_pass_wo"].(schema.StringAttribute)
+	if !ok || !writeOnly.WriteOnly || !writeOnly.Sensitive || !writeOnly.Optional || writeOnly.Computed {
+		t.Fatalf("console_pass_wo = %#v", resp.Schema.Attributes["console_pass_wo"])
+	}
+	version := resp.Schema.Attributes["console_pass_wo_version"]
+	if version == nil || !version.IsOptional() || version.IsWriteOnly() {
+		t.Fatal("console_pass_wo_version should be stored")
+	}
 }
 
 // Create and refresh call applyVM. The API never returns console_pass, so the

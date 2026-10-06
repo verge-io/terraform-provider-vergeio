@@ -633,7 +633,10 @@ func createVM(t *testing.T, ctx context.Context, host string, planModel VMResour
 		t.Fatalf("plan: %v", diags)
 	}
 	resp := &fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-	vmResource.Create(ctx, fwresource.CreateRequest{Plan: plan}, resp)
+	vmResource.Create(ctx, fwresource.CreateRequest{
+		Plan:   plan,
+		Config: tfsdk.Config(plan),
+	}, resp)
 	return resp
 }
 
