@@ -15,6 +15,7 @@ import (
 	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/services/nas"
 	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/site"
 )
 
 // Sweep deletes acceptance-test leftovers whose names start with ResourcePrefix.
@@ -159,8 +160,10 @@ func Sweep(ctx context.Context) error {
 		record(deleteVM(ctx, client, id))
 	}
 	record(sweepVMRecipeInstances(ctx, client))
-	// Profiles are removed after VMs. A VM that still references a profile
-	// can make the profile delete fail.
+	// Site sync periods reference snapshot profile periods, so sites go
+	// before those profiles. A VM that still references a profile can make
+	// the profile delete fail, which is why profiles stay after VMs.
+	record(sweepSites(ctx, client))
 	record(sweepSnapshotProfiles(ctx, client))
 	for id, name := range networkIDs {
 		log.Printf("[SWEEP] deleting network %d (%s)", id, name)
@@ -376,6 +379,7 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	}
 
 	left = append(left, verifyNAS(ctx, client)...)
+	left = append(left, verifySites(ctx, client)...)
 
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
@@ -435,6 +439,14 @@ func verifyNAS(ctx context.Context, client *vergeos.Client) []string {
 
 func sweepNAS(ctx context.Context, client *vergeos.Client, vmIDs map[int]string) error {
 	return nas.SweepTestRows(ctx, client, vmIDs, HasPrefix)
+}
+
+func sweepSites(ctx context.Context, client *vergeos.Client) error {
+	return site.SweepTestRows(ctx, client, HasPrefix)
+}
+
+func verifySites(ctx context.Context, client *vergeos.Client) []string {
+	return site.Leftovers(ctx, client, HasPrefix)
 }
 
 func firstID(values ...string) string {

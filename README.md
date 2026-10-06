@@ -91,6 +91,9 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_network_rule_alias
 - vergeio_network_rules
 - vergeio_permission
+- vergeio_site
+- vergeio_site_sync_incoming
+- vergeio_site_sync_outgoing
 - vergeio_snapshot_profile
 - vergeio_tag
 - vergeio_tag_category
@@ -121,7 +124,9 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_auth_source` manages an external identity provider. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes. Terraform stores the version, not the secret. An update merges settings into the stored document so a partial change does not wipe the client secret. A key removed from `settings` stays on the auth source. Replace the auth source to drop it. Changing `driver` replaces the auth source.
 
-`vergeio_snapshot_profile` defines when snapshots are taken and how long they are kept. Each `period` block sets the frequency, the time of day, a required retention in seconds, and whether the snapshot is quiesced. Retention has no default. `vergeio_vm.snapshot_profile` is that profile's key: `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`.
+`vergeio_snapshot_profile` defines when snapshots are taken and how long they are kept. Each `period` block sets the frequency, the time of day, a required retention in seconds, and whether the snapshot is quiesced. Retention has no default. `vergeio_vm.snapshot_profile` is that profile's key: `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`. Cloud snapshots use this same profile. There is no separate cloud snapshot profile.
+
+`vergeio_site` is a remote VergeOS system. `name` and `url` are required. Create does not ask VergeOS to build syncs. `vergeio_site_sync_incoming` and `vergeio_site_sync_outgoing` are the syncs. An outgoing `period` points at a snapshot profile period and sets how long the remote copy is kept. `auth_password_wo` and `registration_code_wo` are sent when stated. Terraform stores the version, not the secret. `vergeio_site_sync_incoming_status` and `vergeio_site_sync_outgoing_status` read one sync. `max_lag_seconds` fails the plan when replication has not run, or when the last activity is older than that many seconds.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 
@@ -139,6 +144,8 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_networks
 - vergeio_nodes
 - vergeio_resource_groups
+- vergeio_site_sync_incoming_status
+- vergeio_site_sync_outgoing_status
 - vergeio_tags
 - vergeio_tenants
 - vergeio_users

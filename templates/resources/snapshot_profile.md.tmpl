@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_snapshot_profile (Resource)
 
-Creates a snapshot profile in VergeOS. A profile is the schedule a VM, volume, or cloud snapshot follows. [`vergeio_vm`](vm.html) stores the profile key in `snapshot_profile`.
+Creates a snapshot profile in VergeOS. A profile is the schedule a VM, volume, or cloud snapshot follows. [`vergeio_vm`](vm.html) stores the profile key in `snapshot_profile`. Cloud snapshots use this same profile. There is no separate cloud snapshot profile. [`vergeio_site_sync_outgoing`](site_sync_outgoing.html) points `period.profile_period` at one of these period keys.
 
 ```terraform
 snapshot_profile = tonumber(vergeio_snapshot_profile.nightly.id)
