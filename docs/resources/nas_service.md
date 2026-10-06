@@ -3,12 +3,12 @@
 page_title: "vergeio_nas_service Resource - vergeio"
 subcategory: ""
 description: |-
-  A NAS service on an existing virtual machine
+  A NAS service created from the Services recipe
 ---
 
 # vergeio_nas_service (Resource)
 
-`vergeio_nas_service` is the NAS service on a virtual machine that already exists. Set `vm_id` to `vergeio_vm.id` so Terraform removes this service before the virtual machine. Removing the service does not remove the virtual machine.
+`vergeio_nas_service` deploys the Services virtual machine recipe. VergeOS builds the virtual machine and the service together. Set `name` and `network_id`. `network_id` is the same value as `vergeio_network.id`. Create uses 4 CPU cores and 4096 MB of RAM. The guest uses DHCP. Its hostname comes from `name`. `vm_id` is the virtual machine VergeOS created. Removing the service removes that virtual machine.
 
 `user` blocks are the accounts on this service. A user left out of the configuration is deleted. Changing `name` replaces that user. `password_wo` is sent when the user is created and when `password_wo_version` changes. Terraform stores the version, not the password.
 
@@ -17,20 +17,25 @@ If deleting the service is refused because a volume remains, Terraform disables 
 ## Example Usage
 
 ```terraform
-# A NAS service on an existing virtual machine. user blocks are the accounts
+# A NAS service from the Services recipe. name is the virtual machine name.
+# network_id is the network that machine joins. user blocks are the accounts
 # on that service. password_wo is sent when the user is created and when
 # password_wo_version changes. Terraform stores the version, not the password.
 
-resource "vergeio_vm" "nas" {
-  name       = "Example NAS"
-  enabled    = true
-  cpu_cores  = 2
-  ram        = 2048
-  powerstate = false
+resource "vergeio_network" "nas" {
+  name         = "Example NAS Net"
+  type         = "internal"
+  enabled      = true
+  network      = "192.168.8.0/24"
+  ipaddress    = "192.168.8.1"
+  dhcp_enabled = true
+  dhcp_start   = "192.168.8.10"
+  dhcp_stop    = "192.168.8.200"
 }
 
 resource "vergeio_nas_service" "example" {
-  vm_id                 = vergeio_vm.nas.id
+  name                  = "Example NAS"
+  network_id            = vergeio_network.nas.id
   max_imports           = 4
   max_syncs             = 2
   disable_swap          = false
@@ -53,7 +58,8 @@ resource "vergeio_nas_service" "example" {
 
 ### Required
 
-- `vm_id` (String) Virtual machine id, the same value as vergeio_vm.id. Changing it replaces the service.
+- `name` (String) Name of the NAS service and its virtual machine. Changing it replaces the service.
+- `network_id` (String) Network id the NAS virtual machine joins, the same value as vergeio_network.id. Changing it replaces the service. Import does not read this value back.
 
 ### Optional
 
@@ -70,8 +76,8 @@ resource "vergeio_nas_service" "example" {
 - `antivirus_id` (Number) Antivirus settings id for this service.
 - `cifs_id` (Number) CIFS settings id for this service.
 - `id` (String) NAS service id.
-- `name` (String) Service name, taken from the virtual machine.
 - `nfs_id` (Number) NFS settings id for this service.
+- `vm_id` (String) Virtual machine id created for this service.
 
 <a id="nestedblock--user"></a>
 ### Nested Schema for `user`

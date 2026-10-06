@@ -17,14 +17,26 @@ import (
 // nasPollInterval and nasPollAttempts bound the wait after a volume disable.
 // Delete is refused while the volume is still enabled. Tests set the interval
 // to zero.
+//
+// nasServiceWaitInterval and nasServiceWaitAttempts bound the wait for the
+// service row after the Services recipe is deployed. The recipe creates the
+// virtual machine first. The vm_services row appears after that.
+//
+// nasRecipeDownloadInterval and nasRecipeDownloadAttempts bound the wait
+// while VergeOS downloads that recipe the first time it is used.
 var (
-	nasPollInterval = time.Second
-	nasPollAttempts = 60
+	nasPollInterval           = time.Second
+	nasPollAttempts           = 60
+	nasServiceWaitInterval    = 2 * time.Second
+	nasServiceWaitAttempts    = 90
+	nasRecipeDownloadInterval = 5 * time.Second
+	nasRecipeDownloadAttempts = 120
 )
 
 // API reads and writes NAS services, volumes, and shares through govergeos.
 type API struct {
-	sdk *vergeos.Client
+	sdk  *vergeos.Client
+	http *vergeio.Client
 }
 
 func NewAPI(c *vergeio.Client) (*API, error) {
@@ -35,7 +47,7 @@ func NewAPI(c *vergeio.Client) (*API, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &API{sdk: sdk}, nil
+	return &API{sdk: sdk, http: c}, nil
 }
 
 func configure(providerData any) (*API, diag.Diagnostics) {

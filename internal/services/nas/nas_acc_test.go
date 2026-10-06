@@ -6,6 +6,7 @@ package nas_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -20,8 +21,8 @@ import (
 
 func TestNASAcceptanceConfigParses(t *testing.T) {
 	for _, src := range []string{
-		testAccNASConfig("tf-acc-nas-vm", "tf-acc-nas-user", "tf-acc-nas-vol", "tf-acc-nas-cifs", "tf-acc-nas-nfs", "Documents", "10.0.0.0/8", 1),
-		testAccNASConfig("tf-acc-nas-vm", "tf-acc-nas-user", "tf-acc-nas-vol", "tf-acc-nas-cifs", "tf-acc-nas-nfs", "Shared documents", "192.0.2.0/24", 2),
+		testAccNASConfig("tf-acc-nas-net", "tf-acc-nas-vm", "tf-acc-nas-user", "tf-acc-nas-vol", "tf-acc-nas-cifs", "tf-acc-nas-nfs", "Documents", "10.0.0.0/8", 1),
+		testAccNASConfig("tf-acc-nas-net", "tf-acc-nas-vm", "tf-acc-nas-user", "tf-acc-nas-vol", "tf-acc-nas-cifs", "tf-acc-nas-nfs", "Shared documents", "192.0.2.0/24", 2),
 	} {
 		if _, diags := hclsyntax.ParseConfig([]byte(src), "acc.tf", hcl.InitialPos); diags.HasErrors() {
 			t.Fatalf("acceptance config did not parse: %s\n%s", diags.Error(), src)
@@ -30,13 +31,14 @@ func TestNASAcceptanceConfigParses(t *testing.T) {
 }
 
 func TestAccNAS_ServiceVolumeShares(t *testing.T) {
+	networkName := acctest.Name("nasnet")
 	vmName := acctest.Name("nasvm")
 	userName := acctest.Name("nasuser")
 	volumeName := acctest.Name("nasvol")
 	cifsName := acctest.Name("nascifs")
 	nfsName := acctest.Name("nasnfs")
-	created := testAccNASConfig(vmName, userName, volumeName, cifsName, nfsName, "Documents", "10.0.0.0/8", 1)
-	updated := testAccNASConfig(vmName, userName, volumeName, cifsName, nfsName, "Shared documents", "192.0.2.0/24", 2)
+	created := testAccNASConfig(networkName, vmName, userName, volumeName, cifsName, nfsName, "Documents", "10.0.0.0/8", 1)
+	updated := testAccNASConfig(networkName, vmName, userName, volumeName, cifsName, nfsName, "Shared documents", "192.0.2.0/24", 2)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },
@@ -46,7 +48,9 @@ func TestAccNAS_ServiceVolumeShares(t *testing.T) {
 			{
 				Config: created,
 				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_nas_service.test", "name", vmName),
 					resource.TestCheckResourceAttrSet("vergeio_nas_service.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_nas_service.test", "vm_id"),
 					resource.TestCheckResourceAttr("vergeio_nas_service.test", "max_imports", "4"),
 					resource.TestCheckResourceAttr("vergeio_nas_service.test", "max_syncs", "1"),
 					resource.TestCheckResourceAttr("vergeio_nas_service.test", "user.0.name", userName),
@@ -83,7 +87,7 @@ func TestAccNAS_ServiceVolumeShares(t *testing.T) {
 				ResourceName:            "vergeio_nas_service.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"user.0.password_wo_version"},
+				ImportStateVerifyIgnore: []string{"user.0.password_wo_version", "network_id"},
 			},
 			{
 				ResourceName:            "vergeio_nas_volume.test",
@@ -141,10 +145,34 @@ func testAccCheckNASDestroy(s *terraform.State) error {
 	}); err != nil {
 		return err
 	}
-	return acctest.CheckDeleted(s, "vergeio_vm", func(ctx context.Context, id int) error {
-		_, err := client.VMs.Get(ctx, id)
+	if err := checkNASVMDeleted(s, client); err != nil {
+		return err
+	}
+	return acctest.CheckDeleted(s, "vergeio_network", func(ctx context.Context, id int) error {
+		_, err := client.Networks.Get(ctx, id)
 		return err
 	})
+}
+
+func checkNASVMDeleted(s *terraform.State, client *vergeos.Client) error {
+	ctx := context.Background()
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "vergeio_nas_service" {
+			continue
+		}
+		vmID, err := strconv.Atoi(rs.Primary.Attributes["vm_id"])
+		if err != nil || vmID <= 0 {
+			return fmt.Errorf("NAS service %s has no virtual machine id", rs.Primary.ID)
+		}
+		_, err = client.VMs.Get(ctx, vmID)
+		if err == nil {
+			return fmt.Errorf("virtual machine %d for NAS service %s still exists after destroy", vmID, rs.Primary.ID)
+		}
+		if !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("checking virtual machine %d was destroyed: %w", vmID, err)
+		}
+	}
+	return nil
 }
 
 func checkStringDeleted(s *terraform.State, resourceType string, get func(string) error) error {
@@ -163,23 +191,28 @@ func checkStringDeleted(s *terraform.State, resourceType string, get func(string
 	return nil
 }
 
-func testAccNASConfig(vmName, userName, volumeName, cifsName, nfsName, volumeDesc, hosts string, maxSyncs int) string {
-	for _, name := range []string{vmName, userName, volumeName, cifsName, nfsName} {
+func testAccNASConfig(networkName, vmName, userName, volumeName, cifsName, nfsName, volumeDesc, hosts string, maxSyncs int) string {
+	for _, name := range []string{networkName, vmName, userName, volumeName, cifsName, nfsName} {
 		if err := acctest.RequirePrefix(name); err != nil {
 			panic(err)
 		}
 	}
 	return acctest.Config(fmt.Sprintf(`
-resource "vergeio_vm" "test" {
-  name       = %q
-  enabled    = true
-  cpu_cores  = 2
-  ram        = 2048
-  powerstate = false
+resource "vergeio_network" "test" {
+  name         = %q
+  type         = "internal"
+  enabled      = true
+  network      = "10.50.8.0/24"
+  ipaddress    = "10.50.8.1"
+  dhcp_enabled = true
+  dhcp_start   = "10.50.8.10"
+  dhcp_stop    = "10.50.8.200"
+  powerstate   = true
 }
 
 resource "vergeio_nas_service" "test" {
-  vm_id                 = vergeio_vm.test.id
+  name                  = %q
+  network_id            = vergeio_network.test.id
   max_imports           = 4
   max_syncs             = %d
   disable_swap          = false
@@ -219,5 +252,5 @@ resource "vergeio_nas_nfs_share" "test" {
   data_access   = "rw"
   enabled       = true
 }
-`, vmName, maxSyncs, userName, volumeName, volumeDesc, cifsName, nfsName, hosts))
+`, networkName, vmName, maxSyncs, userName, volumeName, volumeDesc, cifsName, nfsName, hosts))
 }

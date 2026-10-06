@@ -6,10 +6,40 @@ package vergeio
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestDownloadVMRecipe(t *testing.T) {
+	var method, path, query, body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+		method = r.Method
+		path = r.URL.Path
+		query = r.URL.RawQuery
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		body = string(payload)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient(server.URL, "user", "pass", true)
+	key := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := client.DownloadVMRecipe(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPut || path != "/api/v4/vm_recipes/"+key || query != "action=download" || body != "{}" {
+		t.Fatalf("request = %s %s?%s body %s", method, path, query, body)
+	}
+}
 
 func TestDeleteVMRecipeInstance(t *testing.T) {
 	var method, path string

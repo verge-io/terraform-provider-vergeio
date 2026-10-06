@@ -4,13 +4,35 @@
 package vergeio
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 )
+
+// DownloadVMRecipe asks VergeOS to download a catalog recipe so it can be
+// deployed. The request is PUT vm_recipes/{key}?action=download. A recipe
+// that is already on the node may still return an error. The caller checks
+// the downloaded flag.
+func (c *Client) DownloadVMRecipe(ctx context.Context, key string) error {
+	if c == nil {
+		return fmt.Errorf("vergeio client is nil")
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("recipe id is empty")
+	}
+	resp, err := c.Put(ctx, ObjectPath(VMRecipeEndpoint, key)+"?action=download", bytes.NewBufferString("{}"))
+	if resp != nil && resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}
+	return err
+}
 
 // DeleteVMRecipeInstance removes one recipe instance row.
 // govergeos VMRecipeInstances has no Delete method.

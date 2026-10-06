@@ -3,12 +3,12 @@
 page_title: "vergeio_nas_service Resource - vergeio"
 subcategory: ""
 description: |-
-  A NAS service on an existing virtual machine
+  A NAS service created from the Services recipe
 ---
 
 # vergeio_nas_service (Resource)
 
-`vergeio_nas_service` is the NAS service on a virtual machine that already exists. Set `vm_id` to `vergeio_vm.id` so Terraform removes this service before the virtual machine. Removing the service does not remove the virtual machine.
+`vergeio_nas_service` deploys the Services virtual machine recipe. VergeOS builds the virtual machine and the service together. Set `name` and `network_id`. `network_id` is the same value as `vergeio_network.id`. Create uses 4 CPU cores and 4096 MB of RAM. The guest uses DHCP. Its hostname comes from `name`. `vm_id` is the virtual machine VergeOS created. Removing the service removes that virtual machine.
 
 `user` blocks are the accounts on this service. A user left out of the configuration is deleted. Changing `name` replaces that user. `password_wo` is sent when the user is created and when `password_wo_version` changes. Terraform stores the version, not the password.
 

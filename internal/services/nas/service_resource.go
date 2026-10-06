@@ -22,7 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-const serviceDescription = "A VergeOS NAS service on an existing virtual machine. Set vm_id to vergeio_vm.id so Terraform removes this service before the virtual machine. Removing the service does not remove the virtual machine. user blocks are the accounts on this service. A user left out of the configuration is deleted. Changing a user name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. Terraform stores the version, not the password. If deleting the service is refused because a volume remains, Terraform disables that volume, removes its shares, and tries again so a partial create cannot leave a row that blocks destroy."
+const serviceDescription = "A VergeOS NAS service. VergeOS creates it by deploying the Services recipe, which builds the virtual machine and the service together. name is that virtual machine name. network_id is the network it joins. Create uses 4 CPU cores and 4096 MB of RAM. The guest uses DHCP. Its hostname comes from name. vm_id is the virtual machine VergeOS created. Removing the service removes that virtual machine. user blocks are the accounts on this service. A user left out of the configuration is deleted. Changing a user name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. Terraform stores the version, not the password. If deleting the service is refused because a volume remains, Terraform disables that volume, removes its shares, and tries again so a partial create cannot leave a row that blocks destroy."
 
 var (
 	_ resource.Resource                = &serviceResource{}
@@ -46,8 +46,9 @@ type serviceResource struct {
 
 type serviceModel struct {
 	ID                 types.String `tfsdk:"id"`
-	VMID               types.String `tfsdk:"vm_id"`
 	Name               types.String `tfsdk:"name"`
+	NetworkID          types.String `tfsdk:"network_id"`
+	VMID               types.String `tfsdk:"vm_id"`
 	MaxImports         types.Int64  `tfsdk:"max_imports"`
 	MaxSyncs           types.Int64  `tfsdk:"max_syncs"`
 	DisableSwap        types.Bool   `tfsdk:"disable_swap"`
@@ -80,14 +81,21 @@ func (r *serviceResource) Schema(ctx context.Context, req resource.SchemaRequest
 		MarkdownDescription: serviceDescription,
 		Attributes: map[string]schema.Attribute{
 			"id": idAttr("NAS service id."),
-			"vm_id": schema.StringAttribute{
-				MarkdownDescription: "Virtual machine id, the same value as vergeio_vm.id. Changing it replaces the service.",
+			"name": schema.StringAttribute{
+				MarkdownDescription: "Name of the NAS service and its virtual machine. Changing it replaces the service.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"name":                  stableString("Service name, taken from the virtual machine."),
+			"network_id": schema.StringAttribute{
+				MarkdownDescription: "Network id the NAS virtual machine joins, the same value as vergeio_network.id. Changing it replaces the service. Import does not read this value back.",
+				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"vm_id":                 stableString("Virtual machine id created for this service."),
 			"max_imports":           optInt("Maximum number of concurrent imports, from 1 to 200. Omit to leave the current value unchanged."),
 			"max_syncs":             optInt("Maximum number of concurrent syncs, from 0 to 200. 0 disables sync. Omit to leave the current value unchanged."),
 			"disable_swap":          optBool("Disable swap for this service. Omit to leave the current value unchanged."),

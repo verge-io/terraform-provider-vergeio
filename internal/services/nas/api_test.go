@@ -154,7 +154,8 @@ func TestCreateServiceRemovesRowWhenUserCreateFails(t *testing.T) {
 	fix.failUserCreates = 1
 	api := newNASTestAPI(t, fix)
 	service := &serviceModel{
-		VMID: types.StringValue("4"),
+		Name:      types.StringValue("filesvc"),
+		NetworkID: types.StringValue("3"),
 		Users: []userModel{{
 			Name:              types.StringValue("files"),
 			PasswordWO:        types.StringValue("secret"),
@@ -169,13 +170,20 @@ func TestCreateServiceRemovesRowWhenUserCreateFails(t *testing.T) {
 	if len(fix.snapshot("service")) != 0 || len(fix.snapshot("user")) != 0 {
 		t.Fatalf("services=%v users=%v", fix.snapshot("service"), fix.snapshot("user"))
 	}
+	if fix.countExact("POST /api/v4/vm_services") != 0 {
+		t.Fatalf("direct service create was attempted: %v", fix.callLog())
+	}
+	if fix.countExact("POST /api/v4/vm_recipe_instances") != 1 {
+		t.Fatalf("recipe deploys = %d, calls = %v", fix.countExact("POST /api/v4/vm_recipe_instances"), fix.callLog())
+	}
 }
 
 func TestCreateServiceSendsPasswordOnce(t *testing.T) {
 	fix := newNASFixture(t)
 	api := newNASTestAPI(t, fix)
 	service := &serviceModel{
-		VMID:       types.StringValue("4"),
+		Name:       types.StringValue("filesvc"),
+		NetworkID:  types.StringValue("3"),
 		MaxImports: types.Int64Value(4),
 		Users: []userModel{{
 			Name:              types.StringValue("files"),
@@ -187,6 +195,23 @@ func TestCreateServiceSendsPasswordOnce(t *testing.T) {
 	}
 	if err := api.createService(t.Context(), service, userSecrets(service.Users, nil, true)); err != nil {
 		t.Fatal(err)
+	}
+	if service.VMID.ValueString() == "" || service.VMID.ValueString() == "0" {
+		t.Fatalf("vm id = %#v", service.VMID)
+	}
+	deploys := fix.bodies(http.MethodPost, "/api/v4/vm_recipe_instances")
+	if len(deploys) != 1 {
+		t.Fatalf("deploys = %#v", deploys)
+	}
+	answers, _ := deploys[0]["answers"].(map[string]any)
+	if answers["YB_NIC_1"] != float64(3) || answers["YB_CPU_CORES"] != float64(4) || answers["YB_RAM"] != float64(4096) {
+		t.Fatalf("answers = %#v", answers)
+	}
+	if _, ok := answers["YB_DOMAINNAME"]; ok {
+		t.Fatalf("empty domain was sent: %#v", answers)
+	}
+	if fix.countExact("POST /api/v4/vm_services") != 0 {
+		t.Fatalf("direct service create was attempted: %v", fix.callLog())
 	}
 	if service.Users[0].PasswordWO.ValueString() != "" {
 		t.Fatal("password was stored on the user")
@@ -223,7 +248,7 @@ func TestCreateServiceSendsPasswordOnce(t *testing.T) {
 func TestNewUserRequiresPassword(t *testing.T) {
 	fix := newNASFixture(t)
 	api := newNASTestAPI(t, fix)
-	service := &serviceModel{VMID: types.StringValue("4")}
+	service := &serviceModel{Name: types.StringValue("filesvc"), NetworkID: types.StringValue("3")}
 	if err := api.createService(t.Context(), service, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +404,9 @@ func TestDeleteServiceRemovesVolumeWhenRefused(t *testing.T) {
 	if fix.countExact("DELETE /api/v4/vm_services/7") != 2 {
 		t.Fatalf("service deletes = %d, calls = %v", fix.countExact("DELETE /api/v4/vm_services/7"), fix.callLog())
 	}
+	if fix.countPrefix("DELETE /api/v4/vms/") != 1 {
+		t.Fatalf("virtual machine was not removed: %v", fix.callLog())
+	}
 }
 
 func withPoll(t *testing.T, attempts int) {
@@ -422,6 +450,13 @@ func assertModifier(t *testing.T, attr schema.Attribute, keep string, want bool)
 
 func newNASTestAPI(t *testing.T, fix *nasFixture) *API {
 	t.Helper()
+	prevInterval, prevAttempts := nasServiceWaitInterval, nasServiceWaitAttempts
+	nasServiceWaitInterval = 0
+	nasServiceWaitAttempts = 2
+	t.Cleanup(func() {
+		nasServiceWaitInterval = prevInterval
+		nasServiceWaitAttempts = prevAttempts
+	})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
@@ -449,6 +484,8 @@ type nasFixture struct {
 	t                   *testing.T
 	next                int
 	services            map[string]map[string]any
+	instances           map[string]map[string]any
+	vms                 map[string]map[string]any
 	users               map[string]map[string]any
 	volumes             map[string]map[string]any
 	cifs                map[string]map[string]any
@@ -473,13 +510,15 @@ type nasCall struct {
 func newNASFixture(t *testing.T) *nasFixture {
 	t.Helper()
 	return &nasFixture{
-		t:        t,
-		next:     20,
-		services: map[string]map[string]any{},
-		users:    map[string]map[string]any{},
-		volumes:  map[string]map[string]any{},
-		cifs:     map[string]map[string]any{},
-		nfs:      map[string]map[string]any{},
+		t:         t,
+		next:      20,
+		services:  map[string]map[string]any{},
+		instances: map[string]map[string]any{},
+		vms:       map[string]map[string]any{},
+		users:     map[string]map[string]any{},
+		volumes:   map[string]map[string]any{},
+		cifs:      map[string]map[string]any{},
+		nfs:       map[string]map[string]any{},
 	}
 }
 
@@ -504,6 +543,10 @@ func (f *nasFixture) table(kind string) map[string]map[string]any {
 	switch kind {
 	case "service":
 		return f.services
+	case "instance":
+		return f.instances
+	case "vm":
+		return f.vms
 	case "user":
 		return f.users
 	case "volume":
@@ -565,10 +608,24 @@ func (f *nasFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.calls = append(f.calls, r.Method+" "+r.URL.Path)
 	f.posted = append(f.posted, nasCall{method: r.Method, path: r.URL.Path, body: body})
 	switch {
+	case r.URL.Path == "/api/v4/vm_recipes" && r.Method == http.MethodGet:
+		f.listRecipes(w, r)
+	case strings.HasPrefix(r.URL.Path, "/api/v4/vm_recipes/"):
+		f.getRecipe(w, r)
+	case r.URL.Path == "/api/v4/recipe_questions" && r.Method == http.MethodGet:
+		writeJSON(f.t, w, http.StatusOK, nasRecipeQuestions())
+	case r.URL.Path == "/api/v4/vm_recipe_instances" && r.Method == http.MethodGet:
+		writeJSON(f.t, w, http.StatusOK, filterRows(f.instances, r.URL.Query().Get("filter")))
+	case r.URL.Path == "/api/v4/vm_recipe_instances" && r.Method == http.MethodPost:
+		f.deployRecipe(w, body)
+	case strings.HasPrefix(r.URL.Path, "/api/v4/vm_recipe_instances/"):
+		f.item(f.instances, w, r, body, false, false)
+	case strings.HasPrefix(r.URL.Path, "/api/v4/vms/"):
+		f.vmItem(w, r)
 	case r.URL.Path == "/api/v4/vm_services" && r.Method == http.MethodGet:
 		writeJSON(f.t, w, http.StatusOK, filterRows(f.services, r.URL.Query().Get("filter")))
 	case r.URL.Path == "/api/v4/vm_services" && r.Method == http.MethodPost:
-		f.createService(w, body)
+		writeJSON(f.t, w, http.StatusMethodNotAllowed, map[string]any{"err": "VM services cannot be directly created"})
 	case strings.HasPrefix(r.URL.Path, "/api/v4/vm_services/"):
 		f.item(f.services, w, r, body, false, true)
 	case r.URL.Path == "/api/v4/vm_service_users" && r.Method == http.MethodGet:
@@ -603,16 +660,99 @@ func (f *nasFixture) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *nasFixture) createService(w http.ResponseWriter, body map[string]any) {
-	f.next++
-	id := f.next
-	row := cloneMap(body)
-	row["$key"] = id
-	if row["name"] == nil {
-		row["name"] = fmt.Sprintf("nas%d", id)
+const nasTestRecipeKey = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func nasRecipeQuestions() []map[string]any {
+	names := []struct {
+		name string
+		kind string
+	}{
+		{"HOSTNAME", "hostname"},
+		{"YB_HOSTNAME", "string"},
+		{"YB_CPU_CORES", "num"},
+		{"YB_RAM", "ram"},
+		{"YB_NIC_1", "network"},
+		{"YB_NIC_1_IP_TYPE", "string"},
+		{"YB_TIMEZONE", "string"},
+		{"YB_NTP", "string"},
+		{"YB_DOMAINNAME", "string"},
 	}
-	f.services[strconv.Itoa(id)] = row
-	writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	rows := make([]map[string]any, 0, len(names))
+	for _, question := range names {
+		rows = append(rows, map[string]any{
+			"name":     question.name,
+			"type":     question.kind,
+			"enabled":  true,
+			"required": question.name == "YB_NIC_1" || question.name == "YB_HOSTNAME",
+			"recipe":   "vm_recipes/" + nasTestRecipeKey,
+		})
+	}
+	return rows
+}
+
+func (f *nasFixture) listRecipes(w http.ResponseWriter, r *http.Request) {
+	row := nasTestRecipeRow()
+	if !rowMatches(row, r.URL.Query().Get("filter")) {
+		writeJSON(f.t, w, http.StatusOK, []map[string]any{})
+		return
+	}
+	writeJSON(f.t, w, http.StatusOK, []map[string]any{row})
+}
+
+func (f *nasFixture) getRecipe(w http.ResponseWriter, r *http.Request) {
+	if pathID(r.URL.Path) != nasTestRecipeKey {
+		writeJSON(f.t, w, http.StatusNotFound, map[string]any{"err": "not found"})
+		return
+	}
+	writeJSON(f.t, w, http.StatusOK, nasTestRecipeRow())
+}
+
+func nasTestRecipeRow() map[string]any {
+	return map[string]any{
+		"$key":       nasTestRecipeKey,
+		"id":         nasTestRecipeKey,
+		"name":       "Services",
+		"downloaded": true,
+	}
+}
+
+func (f *nasFixture) deployRecipe(w http.ResponseWriter, body map[string]any) {
+	name, _ := body["name"].(string)
+	f.next++
+	vmID := f.next
+	f.next++
+	instanceID := f.next
+	f.next++
+	serviceID := f.next
+	f.vms[strconv.Itoa(vmID)] = map[string]any{"$key": vmID, "name": name, "powerstate": false}
+	f.instances[strconv.Itoa(instanceID)] = map[string]any{
+		"$key": instanceID, "name": name, "recipe": body["recipe"], "vm": vmID,
+	}
+	f.services[strconv.Itoa(serviceID)] = map[string]any{
+		"$key": serviceID, "vm": vmID, "name": name,
+		"max_imports": 4, "max_syncs": 0, "disable_swap": false,
+		"read_ahead_kb_default": "0", "cifs": 1, "nfs": 2, "antivirus": 3,
+	}
+	writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": instanceID})
+}
+
+func (f *nasFixture) vmItem(w http.ResponseWriter, r *http.Request) {
+	id := pathID(r.URL.Path)
+	row, ok := f.vms[id]
+	if !ok {
+		writeJSON(f.t, w, http.StatusNotFound, map[string]any{"err": "not found"})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(f.t, w, http.StatusOK, row)
+	case http.MethodDelete:
+		delete(f.vms, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		f.t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}
 }
 
 func (f *nasFixture) createUser(w http.ResponseWriter, body map[string]any) {

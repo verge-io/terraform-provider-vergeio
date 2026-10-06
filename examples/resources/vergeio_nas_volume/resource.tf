@@ -1,16 +1,20 @@
 # A volume on a NAS service. Destroy disables the volume and waits until
 # VergeOS allows the delete.
 
-resource "vergeio_vm" "nas" {
-  name       = "Example NAS"
-  enabled    = true
-  cpu_cores  = 2
-  ram        = 2048
-  powerstate = false
+resource "vergeio_network" "nas" {
+  name         = "Example NAS Net"
+  type         = "internal"
+  enabled      = true
+  network      = "192.168.8.0/24"
+  ipaddress    = "192.168.8.1"
+  dhcp_enabled = true
+  dhcp_start   = "192.168.8.10"
+  dhcp_stop    = "192.168.8.200"
 }
 
 resource "vergeio_nas_service" "example" {
-  vm_id = vergeio_vm.nas.id
+  name       = "Example NAS"
+  network_id = vergeio_network.nas.id
 }
 
 resource "vergeio_nas_volume" "example" {

@@ -14,7 +14,8 @@ import (
 
 // SweepTestRows removes NAS shares, volumes, users, and services left by
 // acceptance tests. Shares go first. Each volume is disabled and only then
-// deleted. Services go last, and the virtual machine is left in place.
+// deleted. Services go last. Deleting a service also removes the virtual
+// machine the Services recipe created for it.
 // Snapshot volumes are skipped. hasPrefix selects names the sweeper owns.
 // vmIDs are virtual machines about to be deleted. A service on one of those
 // machines is removed even when its name has no prefix, because the name

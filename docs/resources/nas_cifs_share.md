@@ -17,16 +17,20 @@ User and host lists use the form VergeOS stores, one entry on each line. If crea
 ```terraform
 # A CIFS share on a volume. User and host lists put one entry on each line.
 
-resource "vergeio_vm" "nas" {
-  name       = "Example NAS"
-  enabled    = true
-  cpu_cores  = 2
-  ram        = 2048
-  powerstate = false
+resource "vergeio_network" "nas" {
+  name         = "Example NAS Net"
+  type         = "internal"
+  enabled      = true
+  network      = "192.168.8.0/24"
+  ipaddress    = "192.168.8.1"
+  dhcp_enabled = true
+  dhcp_start   = "192.168.8.10"
+  dhcp_stop    = "192.168.8.200"
 }
 
 resource "vergeio_nas_service" "example" {
-  vm_id = vergeio_vm.nas.id
+  name       = "Example NAS"
+  network_id = vergeio_network.nas.id
 
   user {
     name                = "files"
