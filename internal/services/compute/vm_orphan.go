@@ -310,7 +310,13 @@ func partialVMForState(data *VMResourceModel) VMResourceModel {
 	partial.RTCBase = knownString(data.RTCBase)
 	partial.BootOrder = knownString(data.BootOrder)
 	partial.ConsolePassEnabled = knownBool(data.ConsolePassEnabled)
-	partial.ConsolePass = knownString(data.ConsolePass)
+	partial.ConsolePassWO = types.StringNull()
+	partial.ConsolePassWOVersion = knownInt64(data.ConsolePassWOVersion)
+	if shared.WriteOnlyVersionSet(data.ConsolePassWOVersion) {
+		partial.ConsolePass = types.StringNull()
+	} else {
+		partial.ConsolePass = knownString(data.ConsolePass)
+	}
 	partial.USBTablet = knownBool(data.USBTablet)
 	partial.UEFI = knownBool(data.UEFI)
 	partial.SecureBoot = knownBool(data.SecureBoot)
@@ -320,7 +326,7 @@ func partialVMForState(data *VMResourceModel) VMResourceModel {
 	partial.SnapshotProfile = knownInt32(data.SnapshotProfile)
 	partial.CloudInitDataSource = knownString(data.CloudInitDataSource)
 	partial.HAGroup = knownString(data.HAGroup)
-	partial.CloudInitFiles = knownCloudInitFiles(data.CloudInitFiles)
+	partial.CloudInitFiles = scrubCloudInitFiles(knownCloudInitFiles(data.CloudInitFiles))
 	partial.PowerState = knownBool(data.PowerState)
 	partial.ForcePowerOff = knownBool(data.ForcePowerOff)
 	partial.ShutdownOnDestroy = knownString(data.ShutdownOnDestroy)
@@ -355,6 +361,13 @@ func knownBool(v types.Bool) types.Bool {
 func knownInt32(v types.Int32) types.Int32 {
 	if v.IsNull() || v.IsUnknown() {
 		return types.Int32Null()
+	}
+	return v
+}
+
+func knownInt64(v types.Int64) types.Int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return types.Int64Null()
 	}
 	return v
 }

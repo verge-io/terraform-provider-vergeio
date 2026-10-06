@@ -67,6 +67,15 @@ func TestUserUpdateBodyKeepsFalseAndEmpty(t *testing.T) {
 	requireAbsent(t, body, "change_password")
 }
 
+func TestUserCreateSendsWriteOnlyPassword(t *testing.T) {
+	data := &UserResourceModel{
+		Name:              types.StringValue("ada"),
+		PasswordWO:        types.StringValue("wo-secret"),
+		PasswordWOVersion: types.Int64Value(1),
+	}
+	requireString(t, jsonObject(t, userCreateModel(data)), "password", "wo-secret")
+}
+
 func TestUserUpdateSendsChangedPassword(t *testing.T) {
 	plan := &UserResourceModel{
 		Name:           types.StringValue("ada"),

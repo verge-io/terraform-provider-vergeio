@@ -27,6 +27,89 @@ const (
 	cloudInitVendor = "vendor: extra\n"
 )
 
+func TestCloudInitFilesEqualSeesWriteOnlyVersion(t *testing.T) {
+	base := []CloudInitFile{{
+		Name:              types.StringValue("user-data"),
+		Contents:          types.StringNull(),
+		ContentsWOVersion: types.Int64Value(1),
+	}}
+	rotated := []CloudInitFile{{
+		Name:              types.StringValue("user-data"),
+		Contents:          types.StringNull(),
+		ContentsWOVersion: types.Int64Value(2),
+	}}
+	if !cloudInitFilesEqual(base, base) {
+		t.Fatal("same write-only files were not equal")
+	}
+	if cloudInitFilesEqual(base, rotated) {
+		t.Fatal("version bump was ignored")
+	}
+}
+
+func TestCloudInitFilesForStateOmitsWriteOnlyBody(t *testing.T) {
+	prior := []CloudInitFile{{
+		Name:              types.StringValue("user-data"),
+		Contents:          types.StringNull(),
+		ContentsWOVersion: types.Int64Value(2),
+	}}
+	live := []CloudInitFile{cloudInitFile("/user-data", "secret-from-api")}
+	got := cloudInitFilesForState(prior, live, true)
+	if len(got) != 1 || !got[0].Contents.IsNull() {
+		t.Fatalf("contents = %#v, want null", got)
+	}
+	if got[0].ContentsWOVersion.ValueInt64() != 2 {
+		t.Fatalf("version = %#v", got[0].ContentsWOVersion)
+	}
+}
+
+func TestIndexCloudInitFilesUsesWriteOnlyBody(t *testing.T) {
+	indexed, err := indexCloudInitFiles([]CloudInitFile{{
+		Name:       types.StringValue("user-data"),
+		ContentsWO: types.StringValue("#cloud-config\n"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexed["user-data"].contents != "#cloud-config\n" {
+		t.Fatalf("contents = %q", indexed["user-data"].contents)
+	}
+}
+
+func TestApplyVMWriteOnlyCopiesSecretWhenVersionChanges(t *testing.T) {
+	plan := &VMResourceModel{
+		ConsolePassWOVersion: types.Int64Value(2),
+		CloudInitFiles: []CloudInitFile{{
+			Name:              types.StringValue("user-data"),
+			ContentsWOVersion: types.Int64Value(2),
+		}},
+	}
+	state := &VMResourceModel{
+		ConsolePassWOVersion: types.Int64Value(1),
+		CloudInitFiles: []CloudInitFile{{
+			Name:              types.StringValue("/user-data"),
+			ContentsWOVersion: types.Int64Value(1),
+		}},
+	}
+	config := &VMResourceModel{
+		ConsolePassWO: types.StringValue("console-wo"),
+		CloudInitFiles: []CloudInitFile{{
+			ContentsWO: types.StringValue("secret-body"),
+		}},
+	}
+	plan.CloudInitFiles = cloneCloudInitFiles(plan.CloudInitFiles)
+	applyVMWriteOnly(plan, state, config)
+	if plan.ConsolePass.ValueString() != "console-wo" {
+		t.Fatalf("console = %#v", plan.ConsolePass)
+	}
+	if plan.CloudInitFiles[0].Contents.ValueString() != "secret-body" {
+		t.Fatalf("body = %#v", plan.CloudInitFiles[0].Contents)
+	}
+	scrubVMWriteOnly(plan)
+	if !plan.ConsolePass.IsNull() || !plan.CloudInitFiles[0].Contents.IsNull() {
+		t.Fatalf("scrubbed plan still holds secrets: %#v", plan)
+	}
+}
+
 func TestCloudInitFilesEqualTreatsNilAndEmptyAsDifferent(t *testing.T) {
 	file := cloudInitFile("/user-data", cloudInitFirst)
 	if !cloudInitFilesEqual(nil, nil) {
@@ -613,6 +696,10 @@ func runCloudInitUpdateRaw(t *testing.T, fake *fakeCloudInit, stateFiles, planFi
 	}
 
 	resp := &fwresource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-	vmResource.Update(ctx, fwresource.UpdateRequest{Plan: plan, State: state}, resp)
+	vmResource.Update(ctx, fwresource.UpdateRequest{
+		Plan:   plan,
+		State:  state,
+		Config: tfsdk.Config(plan),
+	}, resp)
 	return resp
 }

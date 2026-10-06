@@ -65,6 +65,70 @@ func TestAccUserResource(t *testing.T) {
 	})
 }
 
+func TestAccUserPasswordWriteOnly(t *testing.T) {
+	userName := acctest.Name("user-wo")
+	original := "TerraformTest123!"
+	rotated := "TerraformTest456!"
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckUserDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccUserPasswordWriteOnlyConfig(userName, original, 1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckUserExists("vergeio_user.test"),
+					resource.TestCheckResourceAttr("vergeio_user.test", "password_wo_version", "1"),
+					testAccCheckSecretAbsent("vergeio_user.test", "password", "password_wo"),
+					testAccCheckUserLogin(userName, original, false),
+				),
+			},
+			{
+				Config: testAccUserPasswordWriteOnlyConfig(userName, rotated, 2),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_user.test", "password_wo_version", "2"),
+					testAccCheckSecretAbsent("vergeio_user.test", "password", "password_wo"),
+					testAccCheckUserLogin(userName, rotated, false),
+					testAccCheckUserLogin(userName, original, true),
+				),
+			},
+			{
+				Config:   testAccUserPasswordWriteOnlyConfig(userName, rotated, 2),
+				PlanOnly: true,
+			},
+		},
+	})
+}
+
+func testAccCheckSecretAbsent(resourceName string, attrs ...string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource not found: %s", resourceName)
+		}
+		for _, attr := range attrs {
+			if value, exists := rs.Primary.Attributes[attr]; exists && value != "" {
+				return fmt.Errorf("%s.%s is stored in state", resourceName, attr)
+			}
+		}
+		return nil
+	}
+}
+
+func testAccUserPasswordWriteOnlyConfig(userName, password string, version int) string {
+	if err := acctest.RequirePrefix(userName); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_user" "test" {
+  name                = %q
+  password_wo         = %q
+  password_wo_version = %d
+}
+`, userName, password, version))
+}
+
 func TestAccUserPassword(t *testing.T) {
 	userName := acctest.Name("user")
 	original := "TerraformTest123!"

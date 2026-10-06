@@ -201,7 +201,11 @@ func runVMPowerApply(t *testing.T, tc vmPowerApplyCase) (types.Bool, []string) {
 	}
 
 	resp := &fwresource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-	vmResource.Update(ctx, fwresource.UpdateRequest{Plan: plan, State: state}, resp)
+	vmResource.Update(ctx, fwresource.UpdateRequest{
+		Plan:   plan,
+		State:  state,
+		Config: tfsdk.Config(plan),
+	}, resp)
 
 	mu.Lock()
 	gotActions := append([]string(nil), actions...)

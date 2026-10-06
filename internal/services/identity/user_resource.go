@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -20,6 +22,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
+
+const userPasswordDeprecation = "Deprecated. Terraform stores this value in state through v3.x. It will be removed in v4. Use password_wo and password_wo_version. Increment password_wo_version to change the password. password_wo requires Terraform 1.11 or OpenTofu 1.11."
 
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &UserResource{}
@@ -36,16 +40,18 @@ type UserResource struct {
 
 // UserResourceModel describes the resource data model.
 type UserResourceModel struct {
-	Id             types.String `tfsdk:"id"`
-	AuthSource     types.Int32  `tfsdk:"auth_source"`
-	Name           types.String `tfsdk:"name"`
-	RemoteName     types.String `tfsdk:"remote_name"`
-	Enabled        types.Bool   `tfsdk:"enabled"`
-	DisplayName    types.String `tfsdk:"displayname"`
-	Email          types.String `tfsdk:"email"`
-	Type           types.String `tfsdk:"type"`
-	Password       types.String `tfsdk:"password"`
-	ChangePassword types.Bool   `tfsdk:"change_password"`
+	Id                types.String `tfsdk:"id"`
+	AuthSource        types.Int32  `tfsdk:"auth_source"`
+	Name              types.String `tfsdk:"name"`
+	RemoteName        types.String `tfsdk:"remote_name"`
+	Enabled           types.Bool   `tfsdk:"enabled"`
+	DisplayName       types.String `tfsdk:"displayname"`
+	Email             types.String `tfsdk:"email"`
+	Type              types.String `tfsdk:"type"`
+	Password          types.String `tfsdk:"password"`
+	PasswordWO        types.String `tfsdk:"password_wo"`
+	PasswordWOVersion types.Int64  `tfsdk:"password_wo_version"`
+	ChangePassword    types.Bool   `tfsdk:"change_password"`
 }
 
 // Metadata returns the resource type name.
@@ -107,10 +113,31 @@ func (r *UserResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 				},
 			},
 			"password": schema.StringAttribute{
-				MarkdownDescription: "User password",
+				MarkdownDescription: "User password. Stored in state. Deprecated: use password_wo so the password is not stored.",
 				Optional:            true,
 				Computed:            true,
 				Sensitive:           true,
+				DeprecationMessage:  userPasswordDeprecation,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("password_wo")),
+				},
+			},
+			"password_wo": schema.StringAttribute{
+				MarkdownDescription: "User password sent on create, and again when password_wo_version changes. Terraform does not store it. Requires Terraform 1.11 or OpenTofu 1.11. Do not set password as well.",
+				Optional:            true,
+				WriteOnly:           true,
+				Sensitive:           true,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("password")),
+					stringvalidator.AlsoRequires(path.MatchRoot("password_wo_version")),
+				},
+			},
+			"password_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Version of password_wo. Increment it to set a new password. Terraform stores this number, not the password. Changing password_wo without changing this version does not update the user.",
+				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.AlsoRequires(path.MatchRoot("password_wo")),
+				},
 			},
 			"change_password": schema.BoolAttribute{
 				MarkdownDescription: "Change password",
@@ -150,19 +177,25 @@ func (r *UserResource) Configure(ctx context.Context, req resource.ConfigureRequ
 
 // Create a new user.
 func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var data UserResourceModel
+	var data, config UserResourceModel
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if err := r.userApi.createUser(ctx, &data); err != nil {
+	// password_wo is null in the plan. Copy it onto the request body only.
+	apiData := data
+	shared.ApplyWriteOnlyString(&apiData.Password, apiData.PasswordWOVersion, types.Int64Null(), config.PasswordWO, false)
+
+	if err := r.userApi.createUser(ctx, &apiData); err != nil {
 		resp.Diagnostics.AddError("Error Creating user", err.Error())
 		return
 	}
+	data.Id = apiData.Id
 
 	// Log the id only. The model includes the password.
 	tflog.Debug(ctx, fmt.Sprintf("created a user resource with id %s", data.Id.ValueString()))
@@ -177,6 +210,8 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 		)
 		return
 	}
+
+	scrubUserPassword(&data)
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -209,29 +244,30 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 
+	scrubUserPassword(&data)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 // Update a user.
 func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var planData, stateData UserResourceModel
+	var planData, stateData, config UserResourceModel
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.State.Get(ctx, &stateData)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if err := r.userApi.updateUser(ctx, &planData, &stateData); err != nil {
+	// Send password_wo only when its version changed. The plan value is null.
+	apiPlan := planData
+	shared.ApplyWriteOnlyString(&apiPlan.Password, apiPlan.PasswordWOVersion, stateData.PasswordWOVersion, config.PasswordWO, true)
+
+	if err := r.userApi.updateUser(ctx, &apiPlan, &stateData); err != nil {
 		resp.Diagnostics.AddError("Error Updating user", err.Error())
 		return
 	}
@@ -245,8 +281,23 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		return
 	}
 
+	scrubUserPassword(&planData)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
+}
+
+// scrubUserPassword drops a write-only password before state is saved.
+// password_wo is null in the plan already. When password_wo_version is set,
+// password must stay null so the secret is not written to the stored attribute.
+func scrubUserPassword(data *UserResourceModel) {
+	if data == nil {
+		return
+	}
+	data.PasswordWO = types.StringNull()
+	if shared.WriteOnlyVersionSet(data.PasswordWOVersion) {
+		data.Password = types.StringNull()
+	}
 }
 
 // Delete a user.

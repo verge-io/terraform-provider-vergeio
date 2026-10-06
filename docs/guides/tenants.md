@@ -18,9 +18,10 @@ This configuration fails. The host is unknown until apply:
 
 ```terraform
 resource "vergeio_tenant" "customer" {
-  name       = "customer-a"
-  password   = var.tenant_password
-  powerstate = true
+  name                = "customer-a"
+  password_wo         = var.tenant_password
+  password_wo_version = 1
+  powerstate          = true
 }
 
 provider "vergeio" {
@@ -49,7 +50,7 @@ depends on values that cannot be determined until apply.
 
 Use two root modules. The parent module creates the tenant and outputs `ui_address`. The tenant module reads that output with `terraform_remote_state` and configures its own provider. Apply the parent module twice before you apply the tenant module. Terraform creates the tenant before `vergeio_tenant_node`, so the first parent apply leaves the tenant offline even when that node is in the same configuration. Refresh stores the offline `powerstate`. The second parent apply powers the tenant on. `vergeio_tenant_external_ip` assigns the UI address from the parent network. The tenant is created before that address, so the first apply leaves `ui_address` empty. The next plan refreshes `vergeio_tenant` and stores the address once VergeOS has made that first IP the UI address. Apply the tenant module after the tenant is online. The UI does not answer before then. A `powerstate` of true with no node in the configuration also waits for a later apply, on create and on update.
 
-The parent module:
+The parent module passes `var.tenant_password` to `vergeio_tenant.password_wo`. Terraform stores `password_wo_version`, not the password. Increment that version to change the password. `password` still works through v3.x and is stored in state. It is deprecated and will be removed in v4. Leave the password out of the parent outputs. A `password` set on the parent provider is stored, because provider arguments cannot be write-only. `VERGEOS_PASSWORD` keeps that parent credential out of state.
 
 ```terraform
 provider "vergeio" {
@@ -69,10 +70,11 @@ variable "tenant_password" {
 }
 
 resource "vergeio_tenant" "customer" {
-  name        = "customer-a"
-  description = "Customer A virtual data center"
-  password    = var.tenant_password
-  powerstate  = true
+  name                = "customer-a"
+  description         = "Customer A virtual data center"
+  password_wo         = var.tenant_password
+  password_wo_version = 1
+  powerstate          = true
 }
 
 resource "vergeio_tenant_node" "node" {
@@ -134,13 +136,14 @@ output "tenant_id" {
 }
 ```
 
-The tenant module. `var.tenant_password` is the same value passed to `vergeio_tenant.password` in the parent module. VergeOS creates the tenant admin user (`admin`) with that password. Keep the password in both modules' inputs. Leave it out of the parent outputs.
+The tenant module does not store the admin password or a long-lived API key. The bootstrap provider reads `VERGEOS_USERNAME` and `VERGEOS_PASSWORD`. The bootstrap provider looks up the tenant admin with `vergeio_users`. `ephemeral.vergeio_api_key` mints a key for that user, and the default provider uses the token. Terraform and OpenTofu do not store ephemeral results. Close deletes the key. `ttl_seconds` expires it if Close does not run. `name` is exclusive: Open deletes an existing key of that name for that user before creating a new one. Do not reuse a long-lived key name.
 
 ```terraform
-variable "tenant_password" {
-  type      = string
-  sensitive = true
-}
+# Bootstrap credentials come from the environment, not this configuration:
+#   VERGEOS_USERNAME and VERGEOS_PASSWORD sign in as the tenant admin.
+# Those values are not written to state. Provider arguments cannot be
+# write-only, so a password or api_key set in a provider block is stored.
+# The ephemeral token is not stored either. Close deletes the key.
 
 data "terraform_remote_state" "parent" {
   backend = "local"
@@ -150,9 +153,28 @@ data "terraform_remote_state" "parent" {
 }
 
 provider "vergeio" {
+  alias    = "bootstrap"
   host     = data.terraform_remote_state.parent.outputs.tenant_ui_address
-  username = "admin"
-  password = var.tenant_password
+  insecure = true
+}
+
+data "vergeio_users" "admin" {
+  provider    = vergeio.bootstrap
+  filter_name = "admin"
+}
+
+# name is exclusive. Open deletes an existing key with this name for
+# user_id, then creates a new one. Do not reuse a long-lived key name.
+ephemeral "vergeio_api_key" "run" {
+  provider    = vergeio.bootstrap
+  user_id     = data.vergeio_users.admin.users[0].id
+  name        = "terraform-tenant"
+  ttl_seconds = 3600
+}
+
+provider "vergeio" {
+  host     = data.terraform_remote_state.parent.outputs.tenant_ui_address
+  api_key  = ephemeral.vergeio_api_key.run.token
   insecure = true
 }
 
@@ -164,14 +186,13 @@ resource "vergeio_vm" "app" {
 }
 ```
 
-After the tenant exists, create an API key in the tenant UI and switch the tenant module to that key. The parent module cannot mint the key: a key is issued by the tenant API, which is this second configuration.
+`password_wo` and `ephemeral.vergeio_api_key` need a CLI that supports them. See [Terraform and OpenTofu](#terraform-and-opentofu).
 
-```terraform
-provider "vergeio" {
-  host    = data.terraform_remote_state.parent.outputs.tenant_ui_address
-  api_key = var.tenant_api_key
-}
-```
+## Terraform and OpenTofu
+
+Write-only attributes (`password_wo`, `console_pass_wo`, and cloud-init `contents_wo`) require Terraform 1.11 or OpenTofu 1.11. Ephemeral resources require Terraform 1.10 or OpenTofu 1.11. OpenTofu 1.10 and earlier reject both ephemeral blocks and write-only attributes. Terraform 1.10 has ephemeral resources and rejects write-only attributes.
+
+Once the CLI is new enough, storage matches on both. A write-only value is null in state. Changing that value does not plan an update until the version attribute changes. Ephemeral results are not in state or in the plan. They can be used in provider configuration and in write-only attributes. Provider schema attributes cannot be write-only on either CLI. A `password` or `api_key` set in the provider block is stored.
 
 ## Addresses handed down from the parent
 

@@ -76,9 +76,10 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 ## v3.1
 
-Nothing in this section is in the provider. The issues are open.
+* #69 is closed. `password` on `vergeio_user` and `vergeio_tenant`, `console_pass` on `vergeio_vm`, and cloud-init `contents` stay through v3.x and are deprecated. The write-only forms are `password_wo`, `console_pass_wo`, and `contents_wo`, each paired with a version attribute. Terraform stores the version, not the secret. Increment the version to send the secret again. Changing the write-only value alone does not plan an update. A console password change updates the VM in place. Ephemeral `vergeio_api_key` mints a short-lived user API key. Close deletes it, and `ttl_seconds` expires it if Close does not run. The name is exclusive: Open deletes an existing key of that name for that user. The tenants guide uses that key for the tenant stack. Provider `password` and `api_key` cannot be write-only. Leave them out of the provider block and use `VERGEOS_USERNAME` and `VERGEOS_PASSWORD`, or pass the ephemeral token to `api_key`. Write-only attributes need Terraform 1.11 or OpenTofu 1.11. Ephemeral resources need Terraform 1.10 or OpenTofu 1.11. OpenTofu 1.10 and earlier reject both.
 
-* #69. Keep passwords and API keys out of state, with write only attributes and ephemeral resources.
+The remaining issues in this section are open.
+
 * #70. Resources for API keys and auth sources.
 * #71. `terraform query`, so an existing system can be discovered and imported in bulk.
 * #72. Actions for operations that are not resources, including a snapshot before a change.

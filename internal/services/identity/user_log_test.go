@@ -98,7 +98,10 @@ func TestUserCreateDoesNotLogPassword(t *testing.T) {
 	resp := &fwresource.CreateResponse{
 		State: tfsdk.State{Schema: schemaResp.Schema},
 	}
-	userResource.Create(ctx, fwresource.CreateRequest{Plan: plan}, resp)
+	userResource.Create(ctx, fwresource.CreateRequest{
+		Plan:   plan,
+		Config: tfsdk.Config(plan),
+	}, resp)
 
 	got := logs()
 	if strings.Contains(got, userPassword) || strings.Contains(got, providerPass) {

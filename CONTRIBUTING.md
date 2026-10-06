@@ -14,7 +14,7 @@ Squash-merge pull requests into `soft/dev`. Merging `soft/dev` into `main` or `V
 
 Resources and data sources live in `internal/services/<domain>`, one file per object with its tests in the same directory. `internal/client` is the only package that imports `net/http` or builds a request URL. `internal/provider` configures the provider and registers those services. `internal/shared` holds plan modifiers and similar helpers. `internal/acctest` holds provider factories, the `tf-acc-` name prefix, preconditions, and sweepers.
 
-Examples live under `examples/resources/<type>` and `examples/data-sources/<type>`. Every resource example includes `import.sh`. Resource and data source pages render those files with `tffile`, so the published example is the file the unit tests parse and check against the schema. `docs/` is written by `make generate` and is not edited by hand. Upgrade guides live in `templates/guides/`. The v3 plan, what has landed on soft/dev, and what is still open are in `design/v3-roadmap.md`.
+Examples live under `examples/resources/<type>`, `examples/data-sources/<type>`, and `examples/ephemeral-resources/<type>`. Every resource example includes `import.sh`. An ephemeral resource example is `ephemeral-resource.tf`. Resource and data source pages render those files with `tffile`, so the published example is the file the unit tests parse and check against the schema. `docs/` is written by `make generate` and is not edited by hand. Upgrade guides live in `templates/guides/`. The v3 plan, what has landed on soft/dev, and what is still open are in `design/v3-roadmap.md`.
 
 ## Provider configuration
 

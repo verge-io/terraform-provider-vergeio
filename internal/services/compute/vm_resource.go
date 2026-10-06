@@ -15,6 +15,7 @@ import (
 	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/shared"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -37,6 +38,7 @@ var _ resource.Resource = &VMResource{}
 var _ resource.ResourceWithImportState = &VMResource{}
 var _ resource.ResourceWithModifyPlan = &VMResource{}
 var _ resource.ResourceWithUpgradeState = &VMResource{}
+var _ resource.ResourceWithValidateConfig = &VMResource{}
 
 func NewVMResource() resource.Resource {
 	return &VMResource{}
@@ -68,8 +70,10 @@ func shouldSeedCloudInitExpectLive(expectLive, livePresent bool) bool {
 
 // CloudInitFile represents a cloud-init file with name and contents.
 type CloudInitFile struct {
-	Name     types.String `tfsdk:"name"`
-	Contents types.String `tfsdk:"contents"`
+	Name              types.String `tfsdk:"name"`
+	Contents          types.String `tfsdk:"contents"`
+	ContentsWO        types.String `tfsdk:"contents_wo"`
+	ContentsWOVersion types.Int64  `tfsdk:"contents_wo_version"`
 }
 
 // VMResourceModel describes the resource data model.
@@ -97,6 +101,8 @@ type VMResourceModel struct {
 	BootOrder             types.String     `tfsdk:"boot_order"`
 	ConsolePassEnabled    types.Bool       `tfsdk:"console_pass_enabled"`
 	ConsolePass           types.String     `tfsdk:"console_pass"`
+	ConsolePassWO         types.String     `tfsdk:"console_pass_wo"`
+	ConsolePassWOVersion  types.Int64      `tfsdk:"console_pass_wo_version"`
 	USBTablet             types.Bool       `tfsdk:"usb_tablet"`
 	UEFI                  types.Bool       `tfsdk:"uefi"`
 	SecureBoot            types.Bool       `tfsdk:"secure_boot"`
@@ -268,10 +274,31 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"console_pass": schema.StringAttribute{
-				MarkdownDescription: "Console password. The API does not return this value, so Terraform stores the configured value.",
+				MarkdownDescription: "Console password. The API does not return this value, so Terraform stores the configured value. Deprecated: use console_pass_wo so the password is not stored. Changing it updates the VM in place.",
 				Optional:            true,
 				Computed:            true,
 				Sensitive:           true,
+				DeprecationMessage:  "Deprecated. Terraform stores this value in state through v3.x. It will be removed in v4. Use console_pass_wo and console_pass_wo_version. Increment console_pass_wo_version to change the console password. That update does not replace the VM. console_pass_wo requires Terraform 1.11 or OpenTofu 1.11.",
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("console_pass_wo")),
+				},
+			},
+			"console_pass_wo": schema.StringAttribute{
+				MarkdownDescription: "Console password sent on create, and again when console_pass_wo_version changes. Terraform does not store it. The API does not return it. The VM is updated in place. Requires Terraform 1.11 or OpenTofu 1.11. Do not set console_pass as well.",
+				Optional:            true,
+				WriteOnly:           true,
+				Sensitive:           true,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("console_pass")),
+					stringvalidator.AlsoRequires(path.MatchRoot("console_pass_wo_version")),
+				},
+			},
+			"console_pass_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Version of console_pass_wo. Increment it to set a new console password. Terraform stores this number, not the password. Changing console_pass_wo without changing this version does not update the VM. The VM is not replaced.",
+				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.AlsoRequires(path.MatchRoot("console_pass_wo")),
+				},
 			},
 			"usb_tablet": schema.BoolAttribute{
 				MarkdownDescription: "USB tablet",
@@ -339,7 +366,29 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 							Required: true,
 						},
 						"contents": schema.StringAttribute{
-							Required: true,
+							MarkdownDescription: "File body stored in state. Deprecated when the file holds a secret: use contents_wo. One of contents or contents_wo is required.",
+							Optional:            true,
+							DeprecationMessage:  "Deprecated. Terraform stores this file body in state through v3.x. It will be removed in v4. Use contents_wo and contents_wo_version for a body that must stay out of state, including a secret. Increment contents_wo_version to write the body again. contents_wo requires Terraform 1.11 or OpenTofu 1.11.",
+							Validators: []validator.String{
+								stringvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName("contents_wo")),
+							},
+						},
+						"contents_wo": schema.StringAttribute{
+							MarkdownDescription: "File body sent on create, and again when contents_wo_version changes. Terraform does not store it. Use this when the file contains a secret. Requires Terraform 1.11 or OpenTofu 1.11. Do not set contents as well.",
+							Optional:            true,
+							WriteOnly:           true,
+							Sensitive:           true,
+							Validators: []validator.String{
+								stringvalidator.ConflictsWith(path.MatchRelative().AtParent().AtName("contents")),
+								stringvalidator.AlsoRequires(path.MatchRelative().AtParent().AtName("contents_wo_version")),
+							},
+						},
+						"contents_wo_version": schema.Int64Attribute{
+							MarkdownDescription: "Version of contents_wo. Increment it to write the file body again. Terraform stores this number, not the body. Changing contents_wo without changing this version does not update the file.",
+							Optional:            true,
+							Validators: []validator.Int64{
+								int64validator.AlsoRequires(path.MatchRelative().AtParent().AtName("contents_wo")),
+							},
 						},
 					},
 				},
@@ -942,8 +991,15 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	}
 	// readVM replaces cloud-init files with the live rows. Create still
 	// stores the plan: power-on deletes the files after the guest boots,
-	// and the apply has to match the configuration.
+	// and the apply has to match the configuration. Clone before write-only
+	// secrets are copied on, so the saved list does not contain them.
 	plannedCloudInitFiles := cloneCloudInitFiles(data.CloudInitFiles)
+	var config VMResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	applyVMWriteOnly(&data, nil, &config)
 
 	// Create a new VM. A name collision means a previous create left the VM
 	// in VergeOS without writing state. Adopt it when it matches this plan.
@@ -1123,6 +1179,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 	// Restore planned cloud-init values so Terraform's consistency check passes
 	data.CloudInitDataSource = plannedCloudInitDS
 	data.CloudInitFiles = plannedCloudInitFiles
+	scrubVMWriteOnly(&data)
 
 	if err := r.refreshBootDisk(ctx, &data); err != nil {
 		r.createError(ctx, resp, &data, "Error reading boot disk", err.Error())
@@ -1200,16 +1257,19 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		return
 	}
 
+	scrubVMWriteOnly(&data)
+
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
 // Update a VM.
 func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var planData, stateData VMResourceModel
+	var planData, stateData, config VMResourceModel
 
 	// Read Terraform plan data into the model
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &planData)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 
 	if resp.Diagnostics.HasError() {
 		return
@@ -1238,11 +1298,17 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	cloudInitEqualBefore := cloudInitFilesEqual(planData.CloudInitFiles, stateData.CloudInitFiles)
 
+	// Write-only secrets are null in the plan. Copy them onto a clone when
+	// their version changed. The plan saved below stays without those secrets.
+	apiPlan := planData
+	apiPlan.CloudInitFiles = cloneCloudInitFiles(planData.CloudInitFiles)
+	applyVMWriteOnly(&apiPlan, &stateData, &config)
+
 	// Update VM attributes only. Power is applied after the boot disk
 	// sync so a VM started in this apply boots with that disk.
 	// Extra drives and NICs are separate resources. They hotplug when the
 	// VM is already running.
-	if updateError := r.vmApi.UpdateVM(ctx, &planData, &stateData); updateError != nil {
+	if updateError := r.vmApi.UpdateVM(ctx, &apiPlan, &stateData); updateError != nil {
 		resp.Diagnostics.AddError(
 			"Error updating VM",
 			updateError.Error(),
@@ -1322,8 +1388,10 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	}
 
 	// The file rows were written above. readVM loads those bodies, possibly
-	// in API order. Saving the plan keeps the configured order.
+	// in API order. Saving the plan keeps the configured order and leaves
+	// a write-only body out of state.
 	usePlannedCloudInitFiles(&stateData, &planData)
+	scrubVMWriteOnly(&stateData)
 
 	// A cloud-init sync that wrote or removed rows updates whether refresh
 	// should treat an empty live list as drift. Detach-only creates leave

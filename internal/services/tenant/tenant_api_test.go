@@ -70,6 +70,16 @@ func TestTenantResourceSchema(t *testing.T) {
 	if password == nil || !password.IsSensitive() {
 		t.Fatal("password should be sensitive")
 	}
+	if password.GetDeprecationMessage() == "" {
+		t.Fatal("password should be deprecated in favor of password_wo")
+	}
+	passwordWO := resp.Schema.Attributes["password_wo"]
+	if passwordWO == nil || !passwordWO.IsWriteOnly() || !passwordWO.IsSensitive() || !passwordWO.IsOptional() {
+		t.Fatal("password_wo should be an optional write-only secret")
+	}
+	if version := resp.Schema.Attributes["password_wo_version"]; version == nil || !version.IsOptional() || version.IsWriteOnly() {
+		t.Fatal("password_wo_version should be a stored optional version")
+	}
 	ui := resp.Schema.Attributes["ui_address"]
 	if ui == nil || !ui.IsComputed() || ui.IsOptional() || ui.IsRequired() {
 		t.Fatal("ui_address should be computed")
@@ -2049,7 +2059,10 @@ func createTenantResource(t *testing.T, ctx context.Context, fake *fakeVerge, pl
 		t.Fatalf("plan: %v", diags)
 	}
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-	r.Create(ctx, resource.CreateRequest{Plan: plan}, resp)
+	r.Create(ctx, resource.CreateRequest{
+		Plan:   plan,
+		Config: tfsdk.Config(plan),
+	}, resp)
 	return resp
 }
 
@@ -2067,7 +2080,11 @@ func updateTenantResource(t *testing.T, ctx context.Context, fake *fakeVerge, pl
 		t.Fatalf("state: %v", diags)
 	}
 	resp := &resource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
-	r.Update(ctx, resource.UpdateRequest{Plan: plan, State: state}, resp)
+	r.Update(ctx, resource.UpdateRequest{
+		Plan:   plan,
+		State:  state,
+		Config: tfsdk.Config(plan),
+	}, resp)
 	return resp
 }
 

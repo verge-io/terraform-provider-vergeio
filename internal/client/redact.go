@@ -61,7 +61,7 @@ func secretJSONKey(key string) bool {
 		return false
 	}
 	if k == "password" || strings.Contains(k, "password") ||
-		k == "console_pass" ||
+		strings.HasPrefix(k, "console_pass") ||
 		k == "passwd" || k == "passphrase" ||
 		strings.Contains(k, "secret") ||
 		k == "token" || strings.HasSuffix(k, "_token") ||

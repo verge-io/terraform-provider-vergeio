@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -56,6 +58,8 @@ type TenantResourceModel struct {
 	Name                 types.String `tfsdk:"name"`
 	Description          types.String `tfsdk:"description"`
 	Password             types.String `tfsdk:"password"`
+	PasswordWO           types.String `tfsdk:"password_wo"`
+	PasswordWOVersion    types.Int64  `tfsdk:"password_wo_version"`
 	URL                  types.String `tfsdk:"url"`
 	OIDCApplication      types.Int32  `tfsdk:"oidc_application"`
 	ExposeCloudSnapshots types.Bool   `tfsdk:"expose_cloud_snapshots"`
@@ -106,9 +110,30 @@ func (r *TenantResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"password": schema.StringAttribute{
-				MarkdownDescription: "Password for the tenant admin user. Stored in state. VergeOS does not return it. Omit to leave the current password unchanged.",
+				MarkdownDescription: "Password for the tenant admin user. Stored in state. VergeOS does not return it. Omit to leave the current password unchanged. Deprecated: use password_wo so the password is not stored.",
 				Optional:            true,
 				Sensitive:           true,
+				DeprecationMessage:  "Deprecated. Terraform stores this value in state through v3.x. It will be removed in v4. Use password_wo and password_wo_version. Increment password_wo_version to change the tenant admin password. password_wo requires Terraform 1.11 or OpenTofu 1.11.",
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("password_wo")),
+				},
+			},
+			"password_wo": schema.StringAttribute{
+				MarkdownDescription: "Tenant admin password sent on create, and again when password_wo_version changes. Terraform does not store it. VergeOS does not return it. Requires Terraform 1.11 or OpenTofu 1.11. Do not set password as well.",
+				Optional:            true,
+				WriteOnly:           true,
+				Sensitive:           true,
+				Validators: []validator.String{
+					stringvalidator.ConflictsWith(path.MatchRoot("password")),
+					stringvalidator.AlsoRequires(path.MatchRoot("password_wo_version")),
+				},
+			},
+			"password_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Version of password_wo. Increment it to set a new tenant admin password. Terraform stores this number, not the password. Changing password_wo without changing this version does not update the tenant.",
+				Optional:            true,
+				Validators: []validator.Int64{
+					int64validator.AlsoRequires(path.MatchRoot("password_wo")),
+				},
 			},
 			"url": schema.StringAttribute{
 				MarkdownDescription: "Optional URL recorded on the tenant.",
@@ -278,15 +303,21 @@ func (r *TenantResource) Configure(ctx context.Context, req resource.ConfigureRe
 }
 
 func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var data TenantResourceModel
+	var data, config TenantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.api.createTenant(ctx, &data); err != nil {
+	// password_wo is null in the plan. The create request is a copy so state
+	// never sees the password.
+	apiData := data
+	shared.ApplyWriteOnlyString(&apiData.Password, apiData.PasswordWOVersion, types.Int64Null(), config.PasswordWO, false)
+	if err := r.api.createTenant(ctx, &apiData); err != nil {
 		resp.Diagnostics.AddError("Error creating tenant", err.Error())
 		return
 	}
+	data.Id = apiData.Id
 	// The tenant row exists. Keep its id in the response before power and
 	// read, so a later error still leaves the tenant in state.
 	r.rememberTenant(ctx, resp, &data)
@@ -352,16 +383,19 @@ func (r *TenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 }
 
 func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state TenantResourceModel
+	var plan, state, config TenantResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	desiredPower := plan.PowerState
 	plannedIsolate := plan.Isolate
 	plannedUIAddressID := plan.UIAddressID
-	deferred, err := r.api.updateTenant(ctx, &plan, &state)
+	apiPlan := plan
+	shared.ApplyWriteOnlyString(&apiPlan.Password, apiPlan.PasswordWOVersion, state.PasswordWOVersion, config.PasswordWO, true)
+	deferred, err := r.api.updateTenant(ctx, &apiPlan, &state)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating tenant", err.Error())
 		return
@@ -446,6 +480,11 @@ func tenantForState(data *TenantResourceModel) TenantResourceModel {
 	stored.Name = knownString(data.Name)
 	stored.Description = knownString(data.Description)
 	stored.Password = knownString(data.Password)
+	stored.PasswordWO = types.StringNull()
+	stored.PasswordWOVersion = knownInt64(data.PasswordWOVersion)
+	if shared.WriteOnlyVersionSet(stored.PasswordWOVersion) {
+		stored.Password = types.StringNull()
+	}
 	stored.URL = knownString(data.URL)
 	stored.OIDCApplication = knownInt32(data.OIDCApplication)
 	stored.ExposeCloudSnapshots = knownBool(data.ExposeCloudSnapshots)

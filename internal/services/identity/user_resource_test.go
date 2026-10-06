@@ -77,6 +77,18 @@ func TestUserResource_Schema(t *testing.T) {
 	}
 	assertUserIDKeepsState(t, idAttr.PlanModifiers[0], "6")
 
+	password, ok := resp.Schema.Attributes["password"].(resschema.StringAttribute)
+	if !ok || !password.Sensitive || password.GetDeprecationMessage() == "" {
+		t.Fatal("password should be a deprecated sensitive string")
+	}
+	passwordWO, ok := resp.Schema.Attributes["password_wo"].(resschema.StringAttribute)
+	if !ok || !passwordWO.WriteOnly || !passwordWO.Sensitive || !passwordWO.Optional {
+		t.Fatal("password_wo should be an optional write-only secret")
+	}
+	if version, ok := resp.Schema.Attributes["password_wo_version"].(resschema.Int64Attribute); !ok || !version.Optional {
+		t.Fatal("password_wo_version should be optional")
+	}
+
 	// Check optional enabled attribute
 	if enabledAttr, ok := resp.Schema.Attributes["enabled"]; !ok {
 		t.Error("enabled attribute should exist")

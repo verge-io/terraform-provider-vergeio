@@ -109,6 +109,14 @@ func TestVMConsolePassSentOnlyWhenSetOrChanged(t *testing.T) {
 	}
 	requireAbsent(t, jsonObject(t, vmCreateModel(unset)), "console_pass")
 
+	writeOnly := &VMResourceModel{
+		Name:                 types.StringValue("vm"),
+		ConsolePassEnabled:   types.BoolValue(true),
+		ConsolePassWO:        types.StringValue("console-wo"),
+		ConsolePassWOVersion: types.Int64Value(1),
+	}
+	requireString(t, jsonObject(t, vmCreateModel(writeOnly)), "console_pass", "console-wo")
+
 	same := &VMResourceModel{
 		Id:          types.StringValue("9"),
 		Name:        types.StringValue("vm"),
