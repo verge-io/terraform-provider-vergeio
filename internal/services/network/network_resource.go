@@ -79,7 +79,7 @@ func (r *NetworkResource) Metadata(ctx context.Context, req resource.MetadataReq
 func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		// This description is used by the documentation generator and the language server.
-		MarkdownDescription: "Network or Vnet resource in VergeIO",
+		MarkdownDescription: "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network.",
 		// Version 1 stores powerstate as a bool. Version 0 stored the
 		// strings "true" and "false".
 		Version: 1,
@@ -428,6 +428,16 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
 
 	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// VPN rows are not removed with the network. Refuse before the kill so a
+	// blocked delete does not stop a network that is still in use.
+	if err := r.networkApi.refuseNetworkDelete(ctx, &data); err != nil {
+		resp.Diagnostics.AddError(
+			"Network still has VPN configuration",
+			err.Error(),
+		)
 		return
 	}
 

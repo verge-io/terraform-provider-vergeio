@@ -125,6 +125,10 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		network.NewNetworkResource,
+		network.NewNetworkIPSecResource,
+		network.NewNetworkIPSecConnectionResource,
+		network.NewNetworkWireGuardResource,
+		network.NewNetworkWireGuardPeerResource,
 		network.NewNetworkRuleResource,
 		network.NewNetworkRulesResource,
 		network.NewNetworkRuleAliasResource,

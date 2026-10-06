@@ -13,6 +13,7 @@ import (
 	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/services/network"
 )
 
 // Sweep deletes acceptance-test leftovers whose names start with ResourcePrefix.
@@ -903,6 +904,12 @@ func deleteVM(ctx context.Context, client *vergeos.Client, id int) error {
 }
 
 func deleteNetwork(ctx context.Context, client *vergeos.Client, id int) error {
+	// IPsec rows are not removed with the network, and a phase 1 delete
+	// while a phase 2 row remains fails permanently. Peers go before the
+	// WireGuard interface.
+	if err := network.DeleteNetworkVPNRows(ctx, client, id); err != nil {
+		return err
+	}
 	err := client.Networks.Delete(ctx, id)
 	if err == nil || vergeos.IsNotFoundError(err) {
 		return nil

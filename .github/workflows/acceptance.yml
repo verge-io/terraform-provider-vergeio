@@ -62,7 +62,7 @@ jobs:
           echo "TF_ACC_TERRAFORM_PATH=$bin" >> "$GITHUB_ENV"
       - name: Sweep before
         if: steps.creds.outputs.configured == 'true'
-        run: TF_ACC=1 go test ./internal/acctest -run TestSweep -count=1 -timeout 30m
+        run: TF_ACC=1 TF_ACC_SWEEP=1 go test ./internal/acctest -run TestSweep -count=1 -timeout 30m
         env:
           TF_ACC_VERGEIO_HOST: ${{ secrets.TF_ACC_VERGEIO_HOST }}
           TF_ACC_VERGEIO_USERNAME: ${{ secrets.TF_ACC_VERGEIO_USERNAME }}
@@ -76,7 +76,7 @@ jobs:
           TF_ACC_VERGEIO_PASSWORD: ${{ secrets.TF_ACC_VERGEIO_PASSWORD }}
       - name: Sweep after
         if: always() && steps.creds.outputs.configured == 'true'
-        run: TF_ACC=1 go test ./internal/acctest -run TestSweep -count=1 -timeout 30m
+        run: TF_ACC=1 TF_ACC_SWEEP=1 go test ./internal/acctest -run TestSweep -count=1 -timeout 30m
         env:
           TF_ACC_VERGEIO_HOST: ${{ secrets.TF_ACC_VERGEIO_HOST }}
           TF_ACC_VERGEIO_USERNAME: ${{ secrets.TF_ACC_VERGEIO_USERNAME }}
