@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/verge-io/govergeos"
 )
 
@@ -57,9 +58,12 @@ func deleteWireGuardRows(ctx context.Context, sdk *vergeos.Client, networkID int
 	return errors.Join(errs...)
 }
 
-// deleteWireGuardInterface disables the interface, applies that change on
-// the network, then deletes the interface. VergeOS returns 422 when the
-// interface is still enabled or the disable has not been applied.
+// deleteWireGuardInterface disables the interface, applies that change when
+// the network is running, then deletes the interface. VergeOS returns 422
+// when the interface is still enabled or the disable has not been applied
+// on a running network. A stopped network rejects the apply, so the
+// interface is disabled and deleted without it. Destroy, sweep, and
+// rollback of a failed create all use this path.
 func deleteWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id int) error {
 	row, err := sdk.VNetWireGuards.Get(ctx, id)
 	if err != nil {
@@ -78,8 +82,16 @@ func deleteWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id int) 
 	if networkID <= 0 {
 		return fmt.Errorf("WireGuard interface %d has no network, so it was not deleted", id)
 	}
-	if err := sdk.Networks.ApplyRules(ctx, networkID); err != nil {
-		return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
+	network, err := sdk.Networks.Get(ctx, networkID)
+	if err != nil {
+		return fmt.Errorf("read network %d before deleting WireGuard interface %d: %w", networkID, id, err)
+	}
+	if networkIsRunning(network) {
+		if err := sdk.Networks.ApplyRules(ctx, networkID); err != nil {
+			return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
+		}
+	} else {
+		tflog.Warn(ctx, fmt.Sprintf("Network %d is not running; deleting WireGuard interface %d without applying rules", networkID, id))
 	}
 	if err := sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
 		return fmt.Errorf("delete WireGuard interface %d: %w", id, err)

@@ -12,7 +12,7 @@ description: |-
 
 Creating the interface stages firewall rules named Accept WireGuard and leaves them unapplied. `apply` defaults to true and refreshes a running network so the tunnel is not left half configured. Set `apply` to false to stage the rules and refresh later with [`vergeio_network_apply`](../actions/network_apply.md) or [`vergeio_network_rules`](network_rules.md). A stopped network is not refreshed. It loads the staged rules when it starts.
 
-Destroy disables the interface and applies the network before the delete. VergeOS rejects a delete while the interface is still enabled. Destroy is refused while a [`vergeio_network_wireguard_peer`](network_wireguard_peer.md) remains. The peer reference destroys the peer first.
+Destroy disables the interface and applies a running network before the delete. VergeOS rejects a delete while the interface is still enabled. A stopped network is deleted without that apply. Destroy is refused while a [`vergeio_network_wireguard_peer`](network_wireguard_peer.md) remains. The peer reference destroys the peer first.
 
 ## Example Usage
 

@@ -103,6 +103,8 @@ func TestDeleteNetworkVPNRowsOrdersTeardown(t *testing.T) {
 			writeBody(w, `{}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
 			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan","running":true,"status":"running"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguard_peers":
 			writeBody(w, `[{"$key":9,"wireguard":3,"name":"office"}]`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_wireguard_peers/9":
@@ -541,6 +543,7 @@ func TestCreateIPSecConnectionRemovesRowsWhenReadFails(t *testing.T) {
 
 func TestCreateWireGuardRemovesInterfaceWhenApplyFails(t *testing.T) {
 	var deleted bool
+	networkReads := 0
 	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_wireguards":
@@ -548,7 +551,12 @@ func TestCreateWireGuardRemovesInterfaceWhenApplyFails(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguards/3":
 			writeBody(w, `{"$key":3,"vnet":12,"name":"wg0","enabled":true,"ip":"192.168.255.1/24"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
-			http.Error(w, "network read failed", http.StatusInternalServerError)
+			networkReads++
+			if networkReads == 1 {
+				http.Error(w, "network read failed", http.StatusInternalServerError)
+				return
+			}
+			writeBody(w, `{"$key":12,"name":"lan","running":true,"status":"running"}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnet_wireguards/3":
 			writeBody(w, `{}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
@@ -658,6 +666,148 @@ func TestDeleteWireGuardDisablesAndApplies(t *testing.T) {
 	}
 	if strings.Join(calls, ",") != strings.Join(want, ",") {
 		t.Fatalf("calls = %v, want disable, apply, delete, apply", calls)
+	}
+}
+
+func TestDeleteWireGuardOnStoppedNetworkSkipsApply(t *testing.T) {
+	var calls []string
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			calls = append(calls, r.Method+" "+r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguard_peers":
+			writeBody(w, `[]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{"$key":3,"vnet":12,"name":"wg0","enabled":true}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), `"enabled":false`) {
+				t.Errorf("disable body = %s", body)
+			}
+			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan","running":false,"status":"stopped"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
+			t.Errorf("stopped network was applied")
+			http.Error(w, "network is stopped", http.StatusUnprocessableEntity)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	notice, err := api.deleteWireGuard(t.Context(), &wireGuardModel{
+		ID:        types.StringValue("3"),
+		NetworkID: types.StringValue("12"),
+		Apply:     types.BoolValue(true),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notice == nil || !strings.Contains(notice.Detail, "not running") {
+		t.Fatalf("notice = %#v, want a stopped network warning", notice)
+	}
+	want := []string{
+		"PUT /api/v4/vnet_wireguards/3",
+		"DELETE /api/v4/vnet_wireguards/3",
+	}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want disable then delete", calls)
+	}
+}
+
+func TestDeleteNetworkVPNRowsSkipsApplyWhenStopped(t *testing.T) {
+	var calls []string
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			calls = append(calls, r.Method+" "+r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguards":
+			writeBody(w, `[{"$key":3,"vnet":12,"name":"wg0","enabled":true}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{"$key":3,"vnet":12,"name":"wg0","enabled":true}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguard_peers":
+			writeBody(w, `[]`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan","running":false,"status":"stopped"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs":
+			writeBody(w, `[]`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
+			t.Errorf("stopped network was applied")
+			http.Error(w, "network is stopped", http.StatusUnprocessableEntity)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	if err := DeleteNetworkVPNRows(t.Context(), api.sdk, 12); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"PUT /api/v4/vnet_wireguards/3",
+		"DELETE /api/v4/vnet_wireguards/3",
+	}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want disable then delete", calls)
+	}
+}
+
+func TestCreateWireGuardRemovesStoppedInterfaceWhenReadFails(t *testing.T) {
+	var calls []string
+	reads := 0
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			calls = append(calls, r.Method+" "+r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_wireguards":
+			writeBody(w, `{"$key":3}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			reads++
+			// Create reads the new row, then the provider reads it again.
+			// Fail that second read so rollback runs. The delete reads once more.
+			if reads == 2 {
+				http.Error(w, "read failed", http.StatusInternalServerError)
+				return
+			}
+			writeBody(w, `{"$key":3,"vnet":12,"name":"wg0","enabled":true}`)
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan","running":false,"status":"stopped"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_wireguards/3":
+			writeBody(w, `{}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
+			t.Errorf("stopped network was applied")
+			http.Error(w, "network is stopped", http.StatusUnprocessableEntity)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	_, err := api.createWireGuard(t.Context(), &wireGuardModel{
+		NetworkID: types.StringValue("12"),
+		Name:      types.StringValue("wg0"),
+		IP:        types.StringValue("192.168.255.1/24"),
+		Apply:     types.BoolValue(true),
+	})
+	if err == nil || !strings.Contains(err.Error(), "row was removed") {
+		t.Fatalf("error = %v", err)
+	}
+	want := []string{
+		"POST /api/v4/vnet_wireguards",
+		"PUT /api/v4/vnet_wireguards/3",
+		"DELETE /api/v4/vnet_wireguards/3",
+	}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("calls = %v, want create, disable, delete", calls)
 	}
 }
 

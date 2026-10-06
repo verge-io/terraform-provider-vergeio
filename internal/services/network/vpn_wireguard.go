@@ -74,8 +74,9 @@ func (a *vpnAPI) createWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 }
 
 // dropCreatedWireGuard deletes an interface that create wrote but did not
-// store in state. Delete disables the interface and applies the network
-// first, which is what VergeOS requires.
+// store in state. Delete disables the interface and applies a running
+// network first, which is what VergeOS requires. A stopped network is
+// deleted without that apply.
 func dropCreatedWireGuard(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
 	if err := deleteWireGuardInterface(ctx, sdk, id); err != nil {
 		return fmt.Errorf("WireGuard interface %d was created but not stored in state: %w (%v)", id, cause, err)
@@ -137,9 +138,11 @@ func (a *vpnAPI) updateWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 }
 
 // deleteWireGuard refuses while a peer remains. VergeOS rejects a delete
-// while the interface is enabled, so the interface is disabled and the
-// network is applied first. A later apply clears a removed Accept WireGuard
-// rule that the delete leaves staged.
+// while the interface is enabled, so the interface is disabled and a
+// running network is applied first. A stopped network is deleted without
+// that apply. A later apply clears a removed Accept WireGuard rule that
+// the delete leaves staged on a running network. A stopped network skips
+// that apply too.
 func (a *vpnAPI) deleteWireGuard(ctx context.Context, data *wireGuardModel) (*firewallNotice, error) {
 	id, err := parsePositiveID(stringOrEmpty(data.ID))
 	if err != nil {
