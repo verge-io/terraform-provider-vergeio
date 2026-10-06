@@ -27,3 +27,10 @@ func knownInt64(v types.Int64) types.Int64 {
 	}
 	return v
 }
+
+func knownInt32(v types.Int32) types.Int32 {
+	if v.IsNull() || v.IsUnknown() {
+		return types.Int32Null()
+	}
+	return v
+}

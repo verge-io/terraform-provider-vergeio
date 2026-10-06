@@ -60,6 +60,8 @@ Write-only attributes and this ephemeral resource behave the same on Terraform a
 
 ## Resources
 
+- vergeio_api_key
+- vergeio_auth_source
 - vergeio_group
 - vergeio_member
 - vergeio_network
@@ -85,6 +87,10 @@ Write-only attributes and this ephemeral resource behave the same on Terraform a
 Devices stay nested on `vergeio_vm`.
 
 `vergeio_group` creates a group. `vergeio_permission` grants a user or a group list, read, create, modify, and delete on a table or one object. `vergeio_member` adds a user or another object to a group. `vergeio_users` lists users the same way `vergeio_groups` lists groups.
+
+`vergeio_api_key` manages a long-lived user API key. It sets the name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only when the key is created, and the resource does not store it. The ephemeral `vergeio_api_key` above is the short-lived token for one run. Do not reuse a name across the two.
+
+`vergeio_auth_source` manages an external identity provider. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes. Terraform stores the version, not the secret. An update merges settings into the stored document so a partial change does not wipe the client secret. A key removed from `settings` stays on the auth source. Replace the auth source to drop it. Changing `driver` replaces the auth source.
 
 `vergeio_snapshot_profile` defines when snapshots are taken and how long they are kept. Each `period` block sets the frequency, the time of day, a required retention in seconds, and whether the snapshot is quiesced. Retention has no default. `vergeio_vm.snapshot_profile` is that profile's key: `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`.
 

@@ -72,6 +72,20 @@ func TestIdentityConstructorsReturnClientError(t *testing.T) {
 	if err != nil || users == nil || users.sdk == nil {
 		t.Fatalf("users api=%v err=%v", users, err)
 	}
+
+	apiKey, err := NewAPIKeyApi(bad)
+	assertNoAPI(t, apiKey, err)
+	apiKey, err = NewAPIKeyApi(good)
+	if err != nil || apiKey == nil || apiKey.sdk == nil {
+		t.Fatalf("api key api=%v err=%v", apiKey, err)
+	}
+
+	authSource, err := NewAuthSourceApi(bad)
+	assertNoAPI(t, authSource, err)
+	authSource, err = NewAuthSourceApi(good)
+	if err != nil || authSource == nil || authSource.sdk == nil {
+		t.Fatalf("auth source api=%v err=%v", authSource, err)
+	}
 }
 
 func TestGroupResourceConfigureReportsClientError(t *testing.T) {

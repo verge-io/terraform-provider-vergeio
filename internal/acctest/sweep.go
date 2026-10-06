@@ -156,10 +156,12 @@ func Sweep(ctx context.Context) error {
 		log.Printf("[SWEEP] deleting group %d (%s)", id, name)
 		record(ignoreNotFound(client.Groups.Delete(ctx, id), "group", id))
 	}
+	record(sweepAPIKeys(ctx, client, userIDs))
 	for id, name := range userIDs {
 		log.Printf("[SWEEP] deleting user %d (%s)", id, name)
 		record(ignoreNotFound(client.Users.Delete(ctx, id), "user", id))
 	}
+	record(sweepAuthSources(ctx, client))
 
 	record(sweepTenants(ctx, client))
 	record(sweepTags(ctx, client))
@@ -289,8 +291,87 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 		}
 	}
 
+	keys, err := client.UserAPIKeys.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		keys = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify API keys: %w", err)
+	}
+	for _, key := range keys {
+		if HasPrefix(key.Name) {
+			left = append(left, fmt.Sprintf("API key %s (%d)", key.Name, key.Key.Int()))
+		}
+	}
+
+	sources, err := client.AuthSources.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		sources = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify auth sources: %w", err)
+	}
+	for _, source := range sources {
+		if HasPrefix(source.Name) {
+			left = append(left, fmt.Sprintf("auth source %s (%d)", source.Name, source.Key.Int()))
+		}
+	}
+
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
+	}
+	return nil
+}
+
+func sweepAPIKeys(ctx context.Context, client *vergeos.Client, userIDs map[int]string) error {
+	keys, err := client.UserAPIKeys.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] API keys endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list API keys: %w", err)
+	}
+	var errs []error
+	for _, key := range keys {
+		_, owned := userIDs[key.User.Int()]
+		if !owned && !HasPrefix(key.Name) {
+			continue
+		}
+		log.Printf("[SWEEP] deleting API key %d (%s)", key.Key.Int(), key.Name)
+		if err := ignoreNotFound(client.UserAPIKeys.Delete(ctx, key.Key.Int()), "API key", key.Key.Int()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return errorsJoin(errs)
+	}
+	return nil
+}
+
+func sweepAuthSources(ctx context.Context, client *vergeos.Client) error {
+	sources, err := client.AuthSources.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] auth sources endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list auth sources: %w", err)
+	}
+	var errs []error
+	for _, source := range sources {
+		if !HasPrefix(source.Name) {
+			continue
+		}
+		log.Printf("[SWEEP] deleting auth source %d (%s)", source.Key.Int(), source.Name)
+		if err := ignoreNotFound(client.AuthSources.Delete(ctx, source.Key.Int()), "auth source", source.Key.Int()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return errorsJoin(errs)
 	}
 	return nil
 }

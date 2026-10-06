@@ -19,6 +19,8 @@ BREAKING CHANGES:
 
 FEATURES:
 
+- **New Resource:** `vergeio_api_key`. It manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it and has no token attribute. `ephemeral.vergeio_api_key` remains the short-lived token for one run. Do not reuse a name across the two. Changing `user_id` replaces the key (#70).
+- **New Resource:** `vergeio_auth_source`. It manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret`. A key removed from `settings` stays on the auth source. Replace the auth source to drop it (#70).
 - **New Resource:** `vergeio_vm_drive` and `vergeio_vm_nic`. A drive or NIC added while the VM is already running is hotplugged.
 - **New Resource:** `vergeio_network_rule` (one firewall rule, matched by name), `vergeio_network_rules` (every non-system rule on one network, written together and refreshed once), and `vergeio_network_rule_alias` (a named address or port group referenced as `alias:<id>`).
 - **New Resource:** `vergeio_tenant`, `vergeio_tenant_node`, and `vergeio_tenant_storage`. **New Data Source:** `vergeio_tenants`.
