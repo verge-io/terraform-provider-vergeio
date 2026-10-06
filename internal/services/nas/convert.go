@@ -18,6 +18,14 @@ func missing(err error) bool {
 	return vergeos.IsNotFoundError(err)
 }
 
+func knownPositiveID(v types.String) int {
+	id, err := parsePositiveID(v, "id")
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 func parsePositiveID(v types.String, kind string) (int, error) {
 	text := strings.TrimSpace(stringOrEmpty(v))
 	if text == "" {

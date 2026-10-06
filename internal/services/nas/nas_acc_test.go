@@ -88,7 +88,7 @@ func TestAccNAS_ServiceVolumeShares(t *testing.T) {
 				ResourceName:            "vergeio_nas_service.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"user.0.password_wo_version", "network_id"},
+				ImportStateVerifyIgnore: []string{"user.0.password_wo_version"},
 			},
 			{
 				ResourceName:            "vergeio_nas_volume.test",

@@ -89,7 +89,7 @@ func (r *serviceResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"network_id": schema.StringAttribute{
-				MarkdownDescription: "Network id the NAS virtual machine joins, the same value as vergeio_network.id. Changing it replaces the service. Import does not read this value back.",
+				MarkdownDescription: "Network id the NAS virtual machine joins, the same value as vergeio_network.id. Changing it replaces the service. Terraform reads this value from the virtual machine.",
 				Required:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),

@@ -199,6 +199,9 @@ func TestCreateServiceSendsPasswordOnce(t *testing.T) {
 	if service.VMID.ValueString() == "" || service.VMID.ValueString() == "0" {
 		t.Fatalf("vm id = %#v", service.VMID)
 	}
+	if service.NetworkID.ValueString() != "3" {
+		t.Fatalf("network_id = %#v", service.NetworkID)
+	}
 	deploys := fix.bodies(http.MethodPost, "/api/v4/vm_recipe_instances")
 	if len(deploys) != 1 {
 		t.Fatalf("deploys = %#v", deploys)
@@ -242,6 +245,115 @@ func TestCreateServiceSendsPasswordOnce(t *testing.T) {
 	}
 	if plan.Users[0].DisplayName.ValueString() != "Shared files" {
 		t.Fatalf("display name = %#v", plan.Users[0].DisplayName)
+	}
+}
+
+func TestReadServiceSetsNetworkIDFromNIC(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.put("service", "7", map[string]any{"$key": 7, "vm": 4, "name": "nas"})
+	fix.put("vm", "4", map[string]any{"$key": 4, "machine": 40, "name": "nas"})
+	fix.put("nic", "8", map[string]any{"$key": 8, "machine": 40, "vnet": 9, "orderid": 2, "name": "nic1", "enabled": true})
+	fix.put("nic", "9", map[string]any{"$key": 9, "machine": 40, "vnet": 3, "orderid": 0, "name": "nic0", "enabled": true})
+	api := newNASTestAPI(t, fix)
+	data := &serviceModel{ID: types.StringValue("7")}
+	if err := api.readService(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.NetworkID.ValueString() != "3" {
+		t.Fatalf("network_id = %#v", data.NetworkID)
+	}
+}
+
+func TestCreateServiceCleansUpWhenDeployFails(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.withHTTP = true
+	fix.deployStatus = http.StatusInternalServerError
+	api := newNASTestAPI(t, fix)
+	service := &serviceModel{Name: types.StringValue("filesvc"), NetworkID: types.StringValue("3")}
+	err := api.createService(t.Context(), service, nil)
+	if err == nil {
+		t.Fatal("expected deploy error")
+	}
+	if len(fix.snapshot("vm")) != 0 || len(fix.snapshot("instance")) != 0 || len(fix.snapshot("service")) != 0 {
+		t.Fatalf("vm=%v instance=%v service=%v calls=%v", fix.snapshot("vm"), fix.snapshot("instance"), fix.snapshot("service"), fix.callLog())
+	}
+}
+
+func TestCreateServiceKeepsExistingInstanceWhenDeployFails(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.withHTTP = true
+	fix.deployStatus = http.StatusBadRequest
+	fix.put("vm", "8", map[string]any{"$key": 8, "name": "filesvc", "machine": 8})
+	fix.put("instance", "5", map[string]any{"$key": 5, "name": "filesvc", "vm": 8})
+	api := newNASTestAPI(t, fix)
+	service := &serviceModel{Name: types.StringValue("filesvc"), NetworkID: types.StringValue("3")}
+	if err := api.createService(t.Context(), service, nil); err == nil {
+		t.Fatal("expected deploy error")
+	}
+	if len(fix.snapshot("vm")) != 1 || len(fix.snapshot("instance")) != 1 {
+		t.Fatalf("vm=%v instance=%v", fix.snapshot("vm"), fix.snapshot("instance"))
+	}
+	if fix.countPrefix("DELETE /api/v4/vms/") != 0 || fix.countPrefix("DELETE /api/v4/vm_recipe_instances/") != 0 {
+		t.Fatalf("existing guest was removed: %v", fix.callLog())
+	}
+}
+
+func TestDeleteServiceRemovesGuestWhenRowIsGone(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.withHTTP = true
+	fix.put("vm", "4", map[string]any{"$key": 4, "name": "nas", "machine": 4})
+	fix.put("instance", "11", map[string]any{"$key": 11, "name": "nas", "vm": 4})
+	api := newNASTestAPI(t, fix)
+	data := &serviceModel{
+		ID:   types.StringValue("7"),
+		VMID: types.StringValue("4"),
+		Name: types.StringValue("nas"),
+	}
+	if err := api.deleteService(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if len(fix.snapshot("vm")) != 0 || len(fix.snapshot("instance")) != 0 {
+		t.Fatalf("vm=%v instance=%v calls=%v", fix.snapshot("vm"), fix.snapshot("instance"), fix.callLog())
+	}
+}
+
+func TestDeleteServiceMissingRowWithoutStateLeavesGuest(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.withHTTP = true
+	fix.put("vm", "4", map[string]any{"$key": 4, "name": "nas", "machine": 4})
+	fix.put("instance", "11", map[string]any{"$key": 11, "name": "nas", "vm": 4})
+	api := newNASTestAPI(t, fix)
+	if err := api.DeleteService(t.Context(), 7); err != nil {
+		t.Fatal(err)
+	}
+	if len(fix.snapshot("vm")) != 1 || len(fix.snapshot("instance")) != 1 {
+		t.Fatalf("vm=%v instance=%v", fix.snapshot("vm"), fix.snapshot("instance"))
+	}
+}
+
+func TestWaitForNASServiceRejectsOtherVM(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.put("service", "7", map[string]any{"$key": 7, "vm": 99, "name": "filesvc"})
+	api := newNASTestAPI(t, fix)
+	service, err := api.waitForNASService(t.Context(), "filesvc", 4)
+	if err == nil || service != nil {
+		t.Fatalf("service=%v err=%v", service, err)
+	}
+	if len(fix.snapshot("service")) != 1 {
+		t.Fatalf("other service was removed: %v", fix.snapshot("service"))
+	}
+}
+
+func TestWaitForNASServiceAdoptsNameWhenVMIsUnknown(t *testing.T) {
+	fix := newNASFixture(t)
+	fix.put("service", "7", map[string]any{"$key": 7, "vm": 4, "name": "filesvc"})
+	api := newNASTestAPI(t, fix)
+	service, err := api.waitForNASService(t.Context(), "filesvc", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service == nil || service.Key.Int() != 7 || service.VM.Int() != 4 {
+		t.Fatalf("service = %#v", service)
 	}
 }
 
@@ -539,7 +651,11 @@ func newNASTestAPI(t *testing.T, fix *nasFixture) *API {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &API{sdk: sdk}
+	api := &API{sdk: sdk}
+	if fix.withHTTP {
+		api.http = vergeio.NewClient(server.URL, "user", "pass", true)
+	}
+	return api
 }
 
 type nasFixture struct {
@@ -553,6 +669,7 @@ type nasFixture struct {
 	volumes             map[string]map[string]any
 	cifs                map[string]map[string]any
 	nfs                 map[string]map[string]any
+	nics                map[string]map[string]any
 	calls               []string
 	posted              []nasCall
 	failUserCreates     int
@@ -562,6 +679,8 @@ type nasFixture struct {
 	cifsGets            int
 	suppressDisable     bool
 	deletedWhileEnabled bool
+	withHTTP            bool
+	deployStatus        int
 }
 
 type nasCall struct {
@@ -582,6 +701,7 @@ func newNASFixture(t *testing.T) *nasFixture {
 		volumes:   map[string]map[string]any{},
 		cifs:      map[string]map[string]any{},
 		nfs:       map[string]map[string]any{},
+		nics:      map[string]map[string]any{},
 	}
 }
 
@@ -618,6 +738,8 @@ func (f *nasFixture) table(kind string) map[string]map[string]any {
 		return f.cifs
 	case "nfs":
 		return f.nfs
+	case "nic":
+		return f.nics
 	default:
 		f.t.Fatalf("unknown kind %s", kind)
 		return nil
@@ -685,6 +807,8 @@ func (f *nasFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.item(f.instances, w, r, body, false, false)
 	case strings.HasPrefix(r.URL.Path, "/api/v4/vms/"):
 		f.vmItem(w, r)
+	case r.URL.Path == "/api/v4/machine_nics" && r.Method == http.MethodGet:
+		writeJSON(f.t, w, http.StatusOK, filterRows(f.nics, r.URL.Query().Get("filter")))
 	case r.URL.Path == "/api/v4/vm_services" && r.Method == http.MethodGet:
 		writeJSON(f.t, w, http.StatusOK, filterRows(f.services, r.URL.Query().Get("filter")))
 	case r.URL.Path == "/api/v4/vm_services" && r.Method == http.MethodPost:
@@ -780,6 +904,10 @@ func nasTestRecipeRow() map[string]any {
 }
 
 func (f *nasFixture) deployRecipe(w http.ResponseWriter, body map[string]any) {
+	if f.deployStatus == http.StatusBadRequest {
+		writeJSON(f.t, w, f.deployStatus, map[string]any{"err": "deploy failed"})
+		return
+	}
 	name, _ := body["name"].(string)
 	f.next++
 	vmID := f.next
@@ -787,7 +915,9 @@ func (f *nasFixture) deployRecipe(w http.ResponseWriter, body map[string]any) {
 	instanceID := f.next
 	f.next++
 	serviceID := f.next
-	f.vms[strconv.Itoa(vmID)] = map[string]any{"$key": vmID, "name": name, "powerstate": false}
+	f.next++
+	nicID := f.next
+	f.vms[strconv.Itoa(vmID)] = map[string]any{"$key": vmID, "name": name, "machine": vmID, "powerstate": false}
 	f.instances[strconv.Itoa(instanceID)] = map[string]any{
 		"$key": instanceID, "name": name, "recipe": body["recipe"], "vm": vmID,
 	}
@@ -796,7 +926,30 @@ func (f *nasFixture) deployRecipe(w http.ResponseWriter, body map[string]any) {
 		"max_imports": 4, "max_syncs": 0, "disable_swap": false,
 		"read_ahead_kb_default": "0", "cifs": 1, "nfs": 2, "antivirus": 3,
 	}
+	f.nics[strconv.Itoa(nicID)] = map[string]any{
+		"$key": nicID, "machine": vmID, "vnet": recipeAnswerInt(body, "YB_NIC_1"),
+		"orderid": 0, "name": "nic0", "enabled": true,
+	}
+	if f.deployStatus != 0 {
+		writeJSON(f.t, w, f.deployStatus, map[string]any{"err": "deploy failed"})
+		return
+	}
 	writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": instanceID})
+}
+
+func recipeAnswerInt(body map[string]any, key string) int {
+	answers, _ := body["answers"].(map[string]any)
+	switch n := answers[key].(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case string:
+		v, _ := strconv.Atoi(n)
+		return v
+	default:
+		return 0
+	}
 }
 
 func (f *nasFixture) vmItem(w http.ResponseWriter, r *http.Request) {

@@ -58,12 +58,19 @@ func (a *API) createService(ctx context.Context, data *serviceModel, secrets map
 	if err != nil {
 		return err
 	}
+	priorKey, err := a.recipeInstanceKey(ctx, name)
+	if err != nil {
+		return err
+	}
 	instance, err := a.sdk.VMRecipeInstances.Deploy(ctx, &vergeos.VMRecipeDeployRequest{
 		Recipe:  recipeID,
 		Name:    name,
 		Answers: nasRecipeAnswers(questions, nasHostname(name), networkID),
 	})
 	if err != nil {
+		if cleanErr := a.cleanupNewRecipeInstance(ctx, name, priorKey); cleanErr != nil {
+			return fmt.Errorf("%w (the recipe instance was left in place: %v)", err, cleanErr)
+		}
 		return err
 	}
 	vmID := 0
@@ -121,6 +128,9 @@ func (a *API) readService(ctx context.Context, data *serviceModel) error {
 		return err
 	}
 	applyService(data, service)
+	if err := a.readServiceNetwork(ctx, data, service.VM.Int()); err != nil {
+		return err
+	}
 	data.Users = merged
 	return nil
 }
@@ -154,7 +164,7 @@ func (a *API) deleteService(ctx context.Context, data *serviceModel) error {
 	if err != nil {
 		return err
 	}
-	return a.DeleteService(ctx, id)
+	return a.deleteServiceID(ctx, id, knownPositiveID(data.VMID), stringOrEmpty(data.Name))
 }
 
 // DeleteService removes a NAS service. Users on the service are removed first.
@@ -164,22 +174,35 @@ func (a *API) deleteService(ctx context.Context, data *serviceModel) error {
 // virtual machine and recipe instance created with the service are removed
 // after the service row is gone. A 405 on the service row is the same refusal
 // VergeOS returns for a direct create: the virtual machine delete removes it.
+// A missing row is success for this id only path. Resource delete passes the
+// virtual machine id and name from state so a retry still removes them.
 func (a *API) DeleteService(ctx context.Context, id int) error {
+	return a.deleteServiceID(ctx, id, 0, "")
+}
+
+func (a *API) deleteServiceID(ctx context.Context, id, stateVMID int, stateName string) error {
 	if err := a.requireSDK(); err != nil {
 		return err
 	}
+	stateName = strings.TrimSpace(stateName)
 	if id <= 0 {
-		return nil
+		return a.deleteGuest(ctx, stateVMID, stateName)
 	}
 	service, err := a.sdk.NASServices.Get(ctx, id)
 	if err != nil {
 		if missing(err) {
-			return nil
+			return a.deleteGuest(ctx, stateVMID, stateName)
 		}
 		return err
 	}
 	vmID := service.VM.Int()
-	name := service.Name
+	name := strings.TrimSpace(service.Name)
+	if vmID <= 0 {
+		vmID = stateVMID
+	}
+	if name == "" {
+		name = stateName
+	}
 	if err := a.deleteServiceUsers(ctx, id); err != nil {
 		return err
 	}
@@ -425,12 +448,15 @@ func (a *API) waitForNASService(ctx context.Context, name string, vmID int) (*ve
 		}
 		service, err := a.sdk.NASServices.GetByName(ctx, name)
 		if err == nil {
-			return service, nil
-		}
-		if !missing(err) {
+			if vmID <= 0 || service.VM.Int() == vmID {
+				return service, nil
+			}
+			last = fmt.Errorf("NAS service %q belongs to virtual machine %d", name, service.VM.Int())
+		} else if !missing(err) {
 			return nil, err
+		} else {
+			last = err
 		}
-		last = err
 		if attempt == nasServiceWaitAttempts-1 {
 			break
 		}
@@ -460,6 +486,102 @@ func (a *API) deleteNASVM(ctx context.Context, vmID int) error {
 		return nil
 	}
 	return fmt.Errorf("delete virtual machine %d: %w", vmID, retry)
+}
+
+func (a *API) deleteGuest(ctx context.Context, vmID int, name string) error {
+	name = strings.TrimSpace(name)
+	if vmID <= 0 && name == "" {
+		return nil
+	}
+	if err := a.deleteNASVM(ctx, vmID); err != nil {
+		return err
+	}
+	return a.deleteRecipeInstance(ctx, name)
+}
+
+func (a *API) recipeInstanceKey(ctx context.Context, name string) (int, error) {
+	row, err := a.sdk.VMRecipeInstances.GetByName(ctx, name)
+	if err != nil {
+		if missing(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if row == nil {
+		return 0, nil
+	}
+	return row.Key.Int(), nil
+}
+
+// cleanupNewRecipeInstance removes a VM and recipe instance created by a
+// deploy that returned an error. An instance that already had this name is
+// left in place.
+func (a *API) cleanupNewRecipeInstance(ctx context.Context, name string, priorKey int) error {
+	row, err := a.sdk.VMRecipeInstances.GetByName(ctx, name)
+	if err != nil {
+		if missing(err) {
+			return nil
+		}
+		return err
+	}
+	if row == nil || (priorKey > 0 && row.Key.Int() == priorKey) {
+		return nil
+	}
+	vmID := row.VM.Int()
+	if vmID > 0 {
+		service, serr := a.sdk.NASServices.GetByVM(ctx, vmID)
+		if serr != nil && !missing(serr) {
+			return serr
+		}
+		if serr == nil && service != nil && service.Key.Int() > 0 {
+			return a.DeleteService(ctx, service.Key.Int())
+		}
+	}
+	if err := a.deleteNASVM(ctx, vmID); err != nil {
+		return err
+	}
+	return a.deleteRecipeInstance(ctx, name)
+}
+
+func (a *API) readServiceNetwork(ctx context.Context, data *serviceModel, vmID int) error {
+	if vmID <= 0 {
+		if strings.TrimSpace(stringOrEmpty(data.NetworkID)) == "" {
+			return fmt.Errorf("NAS service %s has no virtual machine, so its network cannot be read", data.ID.ValueString())
+		}
+		return nil
+	}
+	nics, err := a.sdk.VMNICs.List(ctx, vmID)
+	if err != nil {
+		return fmt.Errorf("read network for virtual machine %d: %w", vmID, err)
+	}
+	networkID := nicNetworkID(nics)
+	if networkID <= 0 {
+		if strings.TrimSpace(stringOrEmpty(data.NetworkID)) != "" {
+			return nil
+		}
+		return fmt.Errorf("virtual machine %d has no network", vmID)
+	}
+	data.NetworkID = types.StringValue(strconv.Itoa(networkID))
+	return nil
+}
+
+func nicNetworkID(nics []vergeos.VMNIC) int {
+	found := 0
+	bestOrder := 0
+	bestKey := 0
+	for _, nic := range nics {
+		vnet := nic.VNET.Int()
+		if vnet <= 0 {
+			continue
+		}
+		key := nic.Key.Int()
+		if found == 0 || nic.OrderID < bestOrder || (nic.OrderID == bestOrder && key < bestKey) {
+			found = vnet
+			bestOrder = nic.OrderID
+			bestKey = key
+		}
+	}
+	return found
 }
 
 func (a *API) deleteRecipeInstance(ctx context.Context, name string) error {
