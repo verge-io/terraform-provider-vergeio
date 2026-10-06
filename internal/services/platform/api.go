@@ -10,7 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"terraform-provider-vergeio/internal/client"
@@ -34,6 +36,11 @@ type API struct {
 	http         *vergeio.Client
 	webhookTries int
 	webhookWait  time.Duration
+	// putTries and putBackoff retry one settings PUT. The SDK retries PUT
+	// when the connection is reset. This HTTP client does not, and a
+	// settings write goes through it.
+	putTries   int
+	putBackoff time.Duration
 }
 
 func NewAPI(c *vergeio.Client) (*API, error) {
@@ -49,6 +56,8 @@ func NewAPI(c *vergeio.Client) (*API, error) {
 		http:         c,
 		webhookTries: 20,
 		webhookWait:  500 * time.Millisecond,
+		putTries:     3,
+		putBackoff:   100 * time.Millisecond,
 	}, nil
 }
 
@@ -106,12 +115,57 @@ func (a *API) putJSON(ctx context.Context, endpoint string, payload any) error {
 	if err != nil {
 		return err
 	}
-	resp, err := a.http.Put(ctx, endpoint, bytes.NewBuffer(buf))
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-		_, _ = io.Copy(io.Discard, resp.Body)
+	tries := a.putTries
+	if tries <= 0 {
+		tries = 3
 	}
-	return err
+	var last error
+	for attempt := 1; attempt <= tries; attempt++ {
+		if attempt > 1 {
+			delay := a.putBackoff * time.Duration(attempt-1)
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		resp, err := a.http.Put(ctx, endpoint, bytes.NewBuffer(buf))
+		if resp != nil && resp.Body != nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		if err == nil || !retryablePUT(err) || attempt == tries {
+			return err
+		}
+		last = err
+	}
+	return last
+}
+
+// retryablePUT reports a settings write that is safe to send again.
+// 401 is not retried. A repeated rejected login counts toward lockout.
+func retryablePUT(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr vergeio.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
+			return true
+		default:
+			return false
+		}
+	}
+	if errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	return strings.Contains(err.Error(), "connection reset")
 }
 
 func (a *API) getJSON(ctx context.Context, endpoint string, params *vergeio.Options, dest any) error {

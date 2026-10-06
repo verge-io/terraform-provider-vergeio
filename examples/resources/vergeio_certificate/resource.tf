@@ -1,5 +1,5 @@
 # A certificate VergeOS generates for the UI.
-# Changing type or domain_name replaces the certificate.
+# Changing type replaces the certificate. Changing this domain_name replaces it too.
 
 resource "vergeio_certificate" "example" {
   type        = "self_signed"

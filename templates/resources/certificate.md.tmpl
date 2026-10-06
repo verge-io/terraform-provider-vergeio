@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_certificate (Resource)
 
-`vergeio_certificate` is a TLS certificate for the VergeOS UI and API. `type` is `manual`, `letsencrypt`, or `self_signed`. Changing `type` or `domain_name` replaces the certificate.
+`vergeio_certificate` is a TLS certificate for the VergeOS UI and API. `type` is `manual`, `letsencrypt`, or `self_signed`. Changing `type` replaces the certificate. Changing a configured `domain_name` replaces it too. Leaving `domain_name` out keeps the name already stored.
 
 A manual certificate needs `public_certificate` and `private_key_wo`. `private_key_wo` is sent when the certificate is created and when `private_key_wo_version` changes. Terraform stores the version, not the private key.
 

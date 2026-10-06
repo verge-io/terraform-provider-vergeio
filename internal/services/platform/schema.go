@@ -40,8 +40,11 @@ func replaceString(description string, validators ...validator.String) schema.St
 		Optional:            true,
 		Computed:            true,
 		PlanModifiers: []planmodifier.String{
-			stringplanmodifier.RequiresReplace(),
+			// UseStateForUnknown first. RequiresReplace on an unknown plan
+			// value treats an omitted domain_name as a change and replaces
+			// the certificate on every apply.
 			stringplanmodifier.UseStateForUnknown(),
+			stringplanmodifier.RequiresReplaceIfConfigured(),
 		},
 		Validators: validators,
 	}

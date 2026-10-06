@@ -5,14 +5,22 @@ package platform
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	resschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -38,8 +46,14 @@ func TestPlatformSchema(t *testing.T) {
 		t.Fatal("certificate type must be required and require replace")
 	}
 	domainName, ok := cert.Attributes["domain_name"].(resschema.StringAttribute)
-	if !ok || !requiresReplace(domainName.PlanModifiers) {
-		t.Fatal("domain_name must require replace")
+	if !ok || len(domainName.PlanModifiers) != 2 {
+		t.Fatal("domain_name must copy state before it decides on replace")
+	}
+	if !strings.Contains(domainName.PlanModifiers[0].Description(context.Background()), "will not change") {
+		t.Fatal("UseStateForUnknown must run before RequiresReplace")
+	}
+	if !strings.Contains(domainName.PlanModifiers[1].Description(context.Background()), "configured and changes") {
+		t.Fatal("domain_name must replace only when a configured value changes")
 	}
 	privateKey, ok := cert.Attributes["private_key_wo"].(resschema.StringAttribute)
 	if !ok || !privateKey.WriteOnly || !privateKey.Sensitive {
@@ -240,6 +254,147 @@ func TestCertificateImportReadFillsReplaceFields(t *testing.T) {
 	read.Diagnostics.Append(read.State.Get(ctx, &data)...)
 	if data.Type.ValueString() != vergeos.CertificateTypeSelfSigned || data.DomainName.ValueString() != "tf-acc-import.local" {
 		t.Fatalf("imported type=%s domain_name=%s", data.Type.ValueString(), data.DomainName.ValueString())
+	}
+}
+
+func TestCertificateImportReadFillsDomainNameFromDomainList(t *testing.T) {
+	fake := newPlatformFake()
+	fake.seedCertificate(vergeos.Certificate{
+		DomainList:  "tf-acc-list.local, other.local",
+		Description: "imported",
+		Type:        vergeos.CertificateTypeSelfSigned,
+	})
+	data := importCertificate(t, fake, "1")
+	if data.DomainName.ValueString() != "tf-acc-list.local" {
+		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
+	}
+}
+
+func TestCertificateImportReadFillsDomainNameFromCertificate(t *testing.T) {
+	fake := newPlatformFake()
+	fake.seedCertificate(vergeos.Certificate{
+		Description: "imported",
+		Type:        vergeos.CertificateTypeSelfSigned,
+		Public:      testCertificatePEM(t, "tf-acc-cn.local", ""),
+	})
+	data := importCertificate(t, fake, "1")
+	if data.DomainName.ValueString() != "tf-acc-cn.local" {
+		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
+	}
+
+	dnsOnly := newPlatformFake()
+	dnsOnly.seedCertificate(vergeos.Certificate{
+		Type:   vergeos.CertificateTypeSelfSigned,
+		Public: testCertificatePEM(t, "", "tf-acc-dns.local"),
+	})
+	fromDNS := importCertificate(t, dnsOnly, "1")
+	if fromDNS.DomainName.ValueString() != "tf-acc-dns.local" {
+		t.Fatalf("dns domain_name = %q", fromDNS.DomainName.ValueString())
+	}
+}
+
+func TestDomainNameOmitDoesNotRequireReplace(t *testing.T) {
+	ctx := context.Background()
+	schemaResp := &resource.SchemaResponse{}
+	NewCertificateResource().Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	attr, ok := schemaResp.Schema.Attributes["domain_name"].(resschema.StringAttribute)
+	if !ok {
+		t.Fatal("missing domain_name")
+	}
+
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := state.Set(ctx, &certificateModel{
+		ID:         types.StringValue("1"),
+		Type:       types.StringValue(vergeos.CertificateTypeLetsEncrypt),
+		DomainName: types.StringValue("ui.example.com"),
+		DomainList: types.StringValue("ui.example.com"),
+	}); diags.HasError() {
+		t.Fatal(diags)
+	}
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, &certificateModel{
+		ID:         types.StringValue("1"),
+		Type:       types.StringValue(vergeos.CertificateTypeLetsEncrypt),
+		DomainName: types.StringUnknown(),
+		DomainList: types.StringValue("ui.example.com"),
+	}); diags.HasError() {
+		t.Fatal(diags)
+	}
+	req := planmodifier.StringRequest{
+		ConfigValue: types.StringNull(),
+		Plan:        plan,
+		PlanValue:   types.StringUnknown(),
+		State:       state,
+		StateValue:  types.StringValue("ui.example.com"),
+	}
+	for _, mod := range attr.PlanModifiers {
+		resp := &planmodifier.StringResponse{PlanValue: req.PlanValue}
+		mod.PlanModifyString(ctx, req, resp)
+		if resp.RequiresReplace {
+			t.Fatal("omitted domain_name planned a replace")
+		}
+		req.PlanValue = resp.PlanValue
+	}
+	if req.PlanValue.ValueString() != "ui.example.com" {
+		t.Fatalf("planned domain_name = %#v", req.PlanValue)
+	}
+
+	changed := planmodifier.StringRequest{
+		ConfigValue: types.StringValue("other.example.com"),
+		Plan:        plan,
+		PlanValue:   types.StringValue("other.example.com"),
+		State:       state,
+		StateValue:  types.StringValue("ui.example.com"),
+	}
+	replaced := false
+	for _, mod := range attr.PlanModifiers {
+		resp := &planmodifier.StringResponse{PlanValue: changed.PlanValue}
+		mod.PlanModifyString(ctx, changed, resp)
+		replaced = replaced || resp.RequiresReplace
+		changed.PlanValue = resp.PlanValue
+	}
+	if !replaced || changed.PlanValue.ValueString() != "other.example.com" {
+		t.Fatalf("configured domain_name change replaced=%t plan=%#v", replaced, changed.PlanValue)
+	}
+}
+
+func TestSettingPUTRetriesUnavailable(t *testing.T) {
+	fake := newPlatformFake()
+	fake.failPuts = 1
+	fake.failPutStatus = http.StatusServiceUnavailable
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	current := &settingModel{Key: types.StringValue("max_connections"), Value: types.StringValue("100")}
+	if err := api.createSetting(context.Background(), current, ""); err != nil {
+		t.Fatal(err)
+	}
+	updated := *current
+	updated.Value = types.StringValue("501")
+	if err := api.updateSetting(context.Background(), &updated, current, ""); err != nil {
+		t.Fatal(err)
+	}
+	if fake.putAttempts != 2 || len(fake.puts) != 1 || fake.puts[0].body != `{"value":"501"}` {
+		t.Fatalf("attempts=%d puts=%+v", fake.putAttempts, fake.puts)
+	}
+
+	rejected := newPlatformFake()
+	rejected.failPuts = 1
+	rejected.failPutStatus = http.StatusBadRequest
+	rejectedServer := httptest.NewServer(rejected)
+	t.Cleanup(rejectedServer.Close)
+	rejectedAPI := testAPI(t, rejectedServer.URL)
+	again := updated
+	again.Value = types.StringValue("502")
+	// The rejected server has its own settings still at 100, so this is a real change.
+	base := &settingModel{Key: types.StringValue("max_connections"), Value: types.StringValue("100")}
+	err := rejectedAPI.updateSetting(context.Background(), &again, base, "")
+	if err == nil {
+		t.Fatal("expected the 400 to fail")
+	}
+	if rejected.putAttempts != 1 {
+		t.Fatalf("400 was retried %d times", rejected.putAttempts)
 	}
 }
 
@@ -569,6 +724,53 @@ func importState(ctx context.Context, t *testing.T, schema resschema.Schema, ite
 	return resp
 }
 
+func importCertificate(t *testing.T, fake *platformFake, id string) certificateModel {
+	t.Helper()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	ctx := context.Background()
+	item := configuredCertificate(t, server.URL)
+	schemaResp := &resource.SchemaResponse{}
+	item.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	imported := importState(ctx, t, schemaResp.Schema, item, id)
+	read := &resource.ReadResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	item.Read(ctx, resource.ReadRequest{State: imported.State}, read)
+	if read.Diagnostics.HasError() {
+		t.Fatal(read.Diagnostics)
+	}
+	var data certificateModel
+	read.Diagnostics.Append(read.State.Get(ctx, &data)...)
+	if read.Diagnostics.HasError() {
+		t.Fatal(read.Diagnostics)
+	}
+	return data
+}
+
+func testCertificatePEM(t *testing.T, commonName, dnsName string) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	if commonName != "" {
+		tmpl.Subject = pkix.Name{CommonName: commonName}
+	}
+	if dnsName != "" {
+		tmpl.DNSNames = []string{dnsName}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
 func importResponse(ctx context.Context, schema resschema.Schema) *resource.ImportStateResponse {
 	return &resource.ImportStateResponse{State: tfsdk.State{
 		Schema: schema,
@@ -584,6 +786,8 @@ func testAPI(t *testing.T, host string) *API {
 	}
 	api.webhookTries = 2
 	api.webhookWait = 0
+	api.putTries = 3
+	api.putBackoff = 0
 	return api
 }
 
@@ -610,6 +814,9 @@ type platformFake struct {
 	puts           []recordedPut
 	deletes        []string
 	privateReads   int
+	failPuts       int
+	failPutStatus  int
+	putAttempts    int
 	certCreateBody string
 	certUpdateBody string
 	urlCreateBody  string
@@ -1057,6 +1264,16 @@ func (f *platformFake) putSetting(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimPrefix(r.URL.Path, "/api/v4/settings/")
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.putAttempts++
+	if f.failPuts > 0 {
+		f.failPuts--
+		code := f.failPutStatus
+		if code == 0 {
+			code = http.StatusServiceUnavailable
+		}
+		http.Error(w, `{"err":"temporary"}`, code)
+		return
+	}
 	var matched *settingRecord
 	for _, item := range f.settings {
 		if strconv.Itoa(item.Dollar) == id || item.Key == id {
