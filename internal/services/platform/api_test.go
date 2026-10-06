@@ -296,27 +296,75 @@ func TestCertificateImportReadFillsDomainNameFromCertificate(t *testing.T) {
 func TestCertificateImportReadPrefersStoredDomainName(t *testing.T) {
 	fake := newPlatformFake()
 	id := fake.seedCertificate(vergeos.Certificate{
+		Domain:      "verge-api",
 		Description: "imported",
 		Type:        vergeos.CertificateTypeSelfSigned,
-		Public:      testCertificatePEM(t, "verge-api", ""),
+		Public:      "self",
 	})
 	fake.setDomainName(id, "tf-acc-cert.local")
 	data := importCertificate(t, fake, strconv.Itoa(id))
 	if data.DomainName.ValueString() != "tf-acc-cert.local" {
 		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
 	}
-	if data.Domain.ValueString() != "" {
+	if data.Domain.ValueString() != "verge-api" {
 		t.Fatalf("domain = %q", data.Domain.ValueString())
 	}
-	sawDomainName := false
+	if data.PublicCertificate.ValueString() != "" {
+		t.Fatalf("public = %q", data.PublicCertificate.ValueString())
+	}
+	if !sawCertificateDetail(fake) {
+		t.Fatalf("detail fields were not requested: %#v", fake.fieldQueries())
+	}
+
+	pemCN := newPlatformFake()
+	pemID := pemCN.seedCertificate(vergeos.Certificate{
+		Type:   vergeos.CertificateTypeSelfSigned,
+		Public: testCertificatePEM(t, "verge-api", ""),
+	})
+	pemCN.setDomainName(pemID, "tf-acc-cert.local")
+	fromPEM := importCertificate(t, pemCN, strconv.Itoa(pemID))
+	if fromPEM.DomainName.ValueString() != "tf-acc-cert.local" {
+		t.Fatalf("pem domain_name = %q", fromPEM.DomainName.ValueString())
+	}
+}
+
+func TestCertificateImportReadManualKeepsDomain(t *testing.T) {
+	fake := newPlatformFake()
+	id := fake.seedCertificate(vergeos.Certificate{
+		Domain:      "tf-acc-manual.local",
+		Description: "uploaded",
+		Type:        vergeos.CertificateTypeManual,
+		Public:      testCertificatePEM(t, "verge-api", ""),
+	})
+	fake.setDomainName(id, "other.example")
+	data := importCertificate(t, fake, strconv.Itoa(id))
+	if data.DomainName.ValueString() != "tf-acc-manual.local" {
+		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
+	}
+}
+
+func TestCertificatePublicSelfIsNotADomain(t *testing.T) {
+	if certificatePublic("self") != "" || certificatePublic(" SELF ") != "" {
+		t.Fatal("public sentinel self must be empty")
+	}
+	if chooseCertificateDomainName(vergeos.CertificateTypeSelfSigned, "verge-api", "tf-acc-cert.local", "", "self") != "tf-acc-cert.local" {
+		t.Fatal("domainname lost to domain or the public sentinel")
+	}
+	if chooseCertificateDomainName(vergeos.CertificateTypeSelfSigned, "", "", "", "self") != "" {
+		t.Fatal("public sentinel became a domain name")
+	}
+	if chooseCertificateDomainName(vergeos.CertificateTypeManual, "tf-acc-manual.local", "other.example", "", "self") != "tf-acc-manual.local" {
+		t.Fatal("manual domain was replaced")
+	}
+}
+
+func sawCertificateDetail(fake *platformFake) bool {
 	for _, fields := range fake.fieldQueries() {
-		if fields == "domainname" {
-			sawDomainName = true
+		if fields == certificateDetailFields {
+			return true
 		}
 	}
-	if !sawDomainName {
-		t.Fatalf("domainname was not requested: %#v", fake.fieldQueries())
-	}
+	return false
 }
 
 func TestDomainNameOmitDoesNotRequireReplace(t *testing.T) {

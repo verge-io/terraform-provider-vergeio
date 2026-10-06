@@ -95,7 +95,7 @@ func (r *certificateResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 				Validators: []validator.String{stringvalidator.OneOf(certificateTypes...)},
 			},
-			"domain_name":        replaceString("Primary domain. Required for self_signed. A manual certificate can omit it. A letsencrypt certificate can set domain_list instead. Changing a configured value replaces the certificate. Omitting it leaves the current name in place. After import this is domain when VergeOS reports one, otherwise domainname on that certificate, otherwise the first name in domainlist, otherwise the common name on the certificate."),
+			"domain_name":        replaceString("Primary domain. Required for self_signed. A manual certificate can omit it. A letsencrypt certificate can set domain_list instead. Changing a configured value replaces the certificate. Omitting it leaves the current name in place. After import, a self_signed certificate uses domainname from that certificate row. A manual certificate uses domain when VergeOS reports one."),
 			"domain_list":        optString("Comma separated subject alternative names. Omit to leave the current list unchanged."),
 			"description":        optString("What this certificate is for. Omit to leave the current value unchanged."),
 			"public_certificate": optString("Public certificate in PEM form. Required for type manual. VergeOS returns this text on read."),
@@ -357,6 +357,12 @@ func (a *API) readCertificate(ctx context.Context, data *certificateModel) error
 	if err != nil {
 		return err
 	}
+	if got != nil && int(got.Key) != id {
+		tflog.Debug(ctx, fmt.Sprintf("certificate read requested id %d and VergeOS returned key %d", id, int(got.Key)))
+	}
+	if got != nil && got.Key == 0 {
+		got.Key = vergeos.FlexInt(id)
+	}
 	return a.applyCertificate(ctx, data, got, *data)
 }
 
@@ -403,6 +409,9 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 	if err != nil {
 		return err
 	}
+	if got != nil && got.Key == 0 {
+		got.Key = vergeos.FlexInt(id)
+	}
 	return a.applyCertificate(ctx, plan, got, *plan)
 }
 
@@ -417,26 +426,31 @@ func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert
 	if cert == nil {
 		return fmt.Errorf("certificate response was empty")
 	}
-	public, chain, err := a.certificateMaterial(ctx, int(cert.Key), cert.Type)
+	id := int(cert.Key)
+	row, err := a.readCertificateDetail(ctx, id)
 	if err != nil {
 		return err
 	}
-	data.ID = idString(int(cert.Key))
+	publicRaw := strings.TrimSpace(row.Public)
+	public := certificatePublic(publicRaw)
+	pemName := domainFromPEM(public)
+	chosen := chooseCertificateDomainName(cert.Type, row.Domain, row.DomainName, row.DomainList, public)
+	tflog.Debug(ctx, fmt.Sprintf(
+		"certificate read id=%d type=%s domain=%q domainname=%q public=%q pem=%q chosen=%q",
+		id, cert.Type, row.Domain, row.DomainName, summarizeCertificatePublic(publicRaw), pemName, chosen,
+	))
+	data.ID = idString(id)
 	if cert.Type != "" {
 		data.Type = types.StringValue(cert.Type)
 	} else if knownString(prior.Type) {
 		data.Type = prior.Type
 	}
-	data.Domain = stringFromAPI(cert.Domain, prior.Domain)
-	storedName := ""
-	if !knownString(prior.DomainName) && strings.TrimSpace(cert.Domain) == "" {
-		storedName = a.readCertificateDomainName(ctx, int(cert.Key))
-	}
-	data.DomainName = applyDomainName(prior.DomainName, cert, storedName, public)
-	data.DomainList = stringFromAPI(cert.DomainList, prior.DomainList)
+	data.Domain = stringFromAPI(firstNonEmpty(row.Domain, cert.Domain), prior.Domain)
+	data.DomainName = applyDomainName(prior.DomainName, chosen)
+	data.DomainList = stringFromAPI(firstNonEmpty(row.DomainList, cert.DomainList), prior.DomainList)
 	data.Description = stringFromAPI(cert.Description, prior.Description)
 	data.PublicCertificate = keepPEM(public, prior.PublicCertificate)
-	data.Chain = keepPEM(chain, prior.Chain)
+	data.Chain = keepPEM(row.Chain, prior.Chain)
 	data.ACMEServer = stringFromAPI(cert.ACMEServer, prior.ACMEServer)
 	data.EABKid = keepConfiguredString(cert.EABKid, prior.EABKid)
 	data.KeyType = stringFromAPI(cert.KeyType, prior.KeyType)
@@ -453,81 +467,93 @@ func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert
 	return nil
 }
 
-// certificateMaterial reads the public certificate and chain.
-// Certificates.Get leaves both out. The follow-up request asks only for
-// those two fields so the private key is not pulled into the provider.
-// GetWithKeys is the fallback when that request does not return the public
-// certificate. Its private key is discarded.
-func (a *API) certificateMaterial(ctx context.Context, id int, certType string) (string, string, error) {
-	if id <= 0 {
-		return "", "", nil
-	}
-	var extra struct {
-		Public string `json:"public"`
-		Chain  string `json:"chain"`
-	}
-	err := a.getJSON(ctx, vergeio.ObjectPath(certificateCollection, strconv.Itoa(id)), &vergeio.Options{Fields: "public,chain"}, &extra)
-	if err == nil && (extra.Public != "" || certType == "") {
-		return extra.Public, extra.Chain, nil
-	}
-	full, kerr := a.sdk.Certificates.GetWithKeys(ctx, id)
-	if kerr != nil {
-		if err != nil {
-			return "", "", err
-		}
-		return extra.Public, extra.Chain, nil
-	}
-	return full.Public, full.Chain, nil
+// certificateDetailFields is one read of the certificate row.
+// Certificates.Get does not ask for domainname, and a public value of
+// "self" is not a PEM. domainname is the name stored at create.
+const certificateDetailFields = "domain,domainname,domainlist,public,chain"
+
+type certificateDetail struct {
+	Domain     string `json:"domain"`
+	DomainName string `json:"domainname"`
+	DomainList string `json:"domainlist"`
+	Public     string `json:"public"`
+	Chain      string `json:"chain"`
 }
 
-// readCertificateDomainName reads domainname from the certificate row.
-// Certificates.Get requests domain, and that field stays empty for a
-// self_signed certificate. domainname is the name stored at create.
-// The common name on the public certificate is not that name.
-func (a *API) readCertificateDomainName(ctx context.Context, id int) string {
-	if a == nil || id <= 0 {
+func (a *API) readCertificateDetail(ctx context.Context, id int) (certificateDetail, error) {
+	var row certificateDetail
+	if a == nil || a.http == nil {
+		return row, fmt.Errorf("vergeio client is nil")
+	}
+	if id <= 0 {
+		return row, fmt.Errorf("certificate id is empty")
+	}
+	err := a.getJSON(ctx, vergeio.ObjectPath(certificateCollection, strconv.Itoa(id)), &vergeio.Options{Fields: certificateDetailFields}, &row)
+	return row, err
+}
+
+// certificatePublic drops the sentinel VergeOS uses when a generated
+// certificate has no PEM yet. Parsing that text is not a domain lookup.
+func certificatePublic(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.EqualFold(raw, "self") {
 		return ""
 	}
-	var extra struct {
-		DomainName string `json:"domainname"`
-	}
-	err := a.getJSON(ctx, vergeio.ObjectPath(certificateCollection, strconv.Itoa(id)), &vergeio.Options{Fields: "domainname"}, &extra)
-	if err != nil {
+	return raw
+}
+
+func summarizeCertificatePublic(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return ""
 	}
-	return strings.TrimSpace(extra.DomainName)
+	if strings.Contains(raw, "BEGIN CERTIFICATE") {
+		return "pem"
+	}
+	return raw
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if name := strings.TrimSpace(value); name != "" {
+			return name
+		}
+	}
+	return ""
 }
 
 // applyDomainName keeps a domain_name already in state. Import starts
-// with only the certificate key. The name then comes from domain, then
-// domainname, then the first domainlist entry, then the common name or
-// DNS name on the public certificate.
-func applyDomainName(prior types.String, cert *vergeos.Certificate, storedName, publicPEM string) types.String {
+// with only the certificate key, so chosen is the name from this read.
+func applyDomainName(prior types.String, chosen string) types.String {
 	if knownString(prior) {
 		return prior
 	}
-	reported := reportedCertificateDomain(cert, storedName, publicPEM)
-	if reported == "" {
+	if strings.TrimSpace(chosen) == "" {
 		return types.StringNull()
 	}
-	return types.StringValue(reported)
+	return types.StringValue(strings.TrimSpace(chosen))
 }
 
-func reportedCertificateDomain(cert *vergeos.Certificate, storedName, publicPEM string) string {
-	if cert != nil {
-		if name := strings.TrimSpace(cert.Domain); name != "" {
-			return name
-		}
+// chooseCertificateDomainName picks the import name.
+// A manual certificate keeps domain when VergeOS reports one.
+// Any other type uses domainname when that field is present, and does
+// not use the certificate subject in that case.
+func chooseCertificateDomainName(certType, domain, storedName, domainList, publicPEM string) string {
+	domain = strings.TrimSpace(domain)
+	storedName = strings.TrimSpace(storedName)
+	if certType == vergeos.CertificateTypeManual && domain != "" {
+		return domain
 	}
-	if name := strings.TrimSpace(storedName); name != "" {
+	if storedName != "" {
+		return storedName
+	}
+	if domain != "" {
+		return domain
+	}
+	if name := firstDomain(domainList); name != "" {
 		return name
 	}
-	if cert != nil {
-		if name := firstDomain(cert.DomainList); name != "" {
-			return name
-		}
-	}
-	return domainFromPEM(publicPEM)
+	return domainFromPEM(certificatePublic(publicPEM))
 }
 
 func firstDomain(list string) string {
