@@ -1,0 +1,1 @@
+terraform import vergeio_setting.example max_connections

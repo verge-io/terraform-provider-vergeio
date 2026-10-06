@@ -77,6 +77,7 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 
 - vergeio_api_key
 - vergeio_auth_source
+- vergeio_certificate
 - vergeio_group
 - vergeio_member
 - vergeio_nas_cifs_share
@@ -94,6 +95,7 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_site
 - vergeio_site_sync_incoming
 - vergeio_site_sync_outgoing
+- vergeio_setting
 - vergeio_snapshot_profile
 - vergeio_tag
 - vergeio_tag_category
@@ -109,6 +111,8 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_vm_drive
 - vergeio_vm_nic
 - vergeio_vm_recipe_instance
+- vergeio_webhook
+- vergeio_webhook_url
 
 Devices stay nested on `vergeio_vm`.
 
@@ -127,6 +131,8 @@ Devices stay nested on `vergeio_vm`.
 `vergeio_snapshot_profile` defines when snapshots are taken and how long they are kept. Each `period` block sets the frequency, the time of day, a required retention in seconds, and whether the snapshot is quiesced. Retention has no default. `vergeio_vm.snapshot_profile` is that profile's key: `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`. Cloud snapshots use this same profile. There is no separate cloud snapshot profile.
 
 `vergeio_site` is a remote VergeOS system. `name` and `url` are required. Create does not ask VergeOS to build syncs. `vergeio_site_sync_incoming` and `vergeio_site_sync_outgoing` are the syncs. An outgoing `period` points at a snapshot profile period and sets how long the remote copy is kept. `auth_password_wo` is sent when stated. `registration_code_wo` is required on an outgoing sync. VergeOS rejects a create that omits it. Terraform stores the version, not the secret. `vergeio_site_sync_incoming_status` and `vergeio_site_sync_outgoing_status` read one sync. `max_lag_seconds` fails the plan when replication has not run, or when the last activity is older than that many seconds.
+
+`vergeio_certificate` is a TLS certificate for the UI and API. `type` is `manual`, `letsencrypt`, or `self_signed`. Changing `type` or `domain_name` replaces the certificate. `private_key_wo` and `eab_hmac_key_wo` are sent when the certificate is created and when their version changes. Terraform stores the version, not the secret. `vergeio_webhook_url` is a destination for an event notification. `authorization_value_wo` is the credential and is not stored. `vergeio_webhook` is one message queued to that destination. VergeOS does not edit a delivery, so changing `message` or `webhook_url_id` sends a new message. `vergeio_setting` is one existing system setting, such as `max_connections`. Update writes only that key's value. Destroy sets the key back to `default_value` and leaves every other setting alone. It does not delete the settings row.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 
