@@ -8,9 +8,9 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
@@ -25,6 +25,7 @@ import (
 var (
 	_ resource.Resource                = &GroupResource{}
 	_ resource.ResourceWithImportState = &GroupResource{}
+	_ resource.ResourceWithIdentity    = &GroupResource{}
 )
 
 func NewGroupResource() resource.Resource {
@@ -133,6 +134,7 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, groupForState(&data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -143,6 +145,10 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 	if err := r.api.readGroup(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -150,6 +156,7 @@ func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, groupForState(&data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -169,6 +176,7 @@ func (r *GroupResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, groupForState(&plan))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, plan.Id)
 }
 
 func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -184,15 +192,12 @@ func (r *GroupResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 	tflog.Debug(ctx, "group deleted")
 }
 
+func (r *GroupResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("Group key. Import vergeio_group with this value.")
+}
+
 func (r *GroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Group Import ID",
-			"Import vergeio_group with the group key.",
-		)
-		return
-	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid Group Import ID", "Import vergeio_group with the group key.")
 }
 
 // rememberGroup writes the group id into the create response before the
@@ -204,6 +209,7 @@ func (r *GroupResource) rememberGroup(ctx context.Context, resp *resource.Create
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, groupForState(data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {
 		return
 	}

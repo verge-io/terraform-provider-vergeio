@@ -8,10 +8,10 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
@@ -26,6 +26,7 @@ import (
 var (
 	_ resource.Resource                = &TagResource{}
 	_ resource.ResourceWithImportState = &TagResource{}
+	_ resource.ResourceWithIdentity    = &TagResource{}
 )
 
 func NewTagResource() resource.Resource {
@@ -145,6 +146,7 @@ func (r *TagResource) Create(ctx context.Context, req resource.CreateRequest, re
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, tagForState(&data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *TagResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -155,6 +157,10 @@ func (r *TagResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 	}
 	if err := r.tagsApi.readTag(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -162,6 +168,7 @@ func (r *TagResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, tagForState(&data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *TagResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -181,6 +188,7 @@ func (r *TagResource) Update(ctx context.Context, req resource.UpdateRequest, re
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, tagForState(&plan))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, plan.Id)
 }
 
 func (r *TagResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -200,15 +208,12 @@ func (r *TagResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 	tflog.Debug(ctx, "tag deleted")
 }
 
+func (r *TagResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("Tag key. Import vergeio_tag with this value.")
+}
+
 func (r *TagResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Tag Import ID",
-			"Import vergeio_tag with the tag key.",
-		)
-		return
-	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid Tag Import ID", "Import vergeio_tag with the tag key.")
 }
 
 func (r *TagResource) rememberTag(ctx context.Context, resp *resource.CreateResponse, data *TagResourceModel) {
@@ -216,6 +221,7 @@ func (r *TagResource) rememberTag(ctx context.Context, resp *resource.CreateResp
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, tagForState(data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {
 		return
 	}

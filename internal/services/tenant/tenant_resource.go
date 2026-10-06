@@ -41,6 +41,7 @@ const tenantMarkdown = "VergeOS tenant: a full VergeOS instance carved from the 
 var (
 	_ resource.Resource                = &TenantResource{}
 	_ resource.ResourceWithImportState = &TenantResource{}
+	_ resource.ResourceWithIdentity    = &TenantResource{}
 )
 
 func NewTenantResource() resource.Resource {
@@ -363,6 +364,7 @@ func (r *TenantResource) Create(ctx context.Context, req resource.CreateRequest,
 	}
 	stored := tenantForState(&data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, stored.Id)
 }
 
 func (r *TenantResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -373,6 +375,10 @@ func (r *TenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 	if err := r.api.readTenant(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -380,6 +386,7 @@ func (r *TenantResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -424,6 +431,7 @@ func (r *TenantResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	stored := tenantForState(&plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, stored.Id)
 }
 
 func (r *TenantResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -439,15 +447,12 @@ func (r *TenantResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	tflog.Debug(ctx, "tenant deleted")
 }
 
+func (r *TenantResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("Tenant key. Import vergeio_tenant with this value.")
+}
+
 func (r *TenantResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Tenant Import ID",
-			"Import vergeio_tenant with the tenant key.",
-		)
-		return
-	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid Tenant Import ID", "Import vergeio_tenant with the tenant key.")
 }
 
 // rememberTenant writes the tenant id into the create response before power
@@ -460,6 +465,7 @@ func (r *TenantResource) rememberTenant(ctx context.Context, resp *resource.Crea
 	}
 	stored := tenantForState(data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {
 		return
 	}
