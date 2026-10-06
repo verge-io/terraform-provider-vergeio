@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
-	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
@@ -28,6 +28,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &NetworkResource{}
 var _ resource.ResourceWithImportState = &NetworkResource{}
+var _ resource.ResourceWithIdentity = &NetworkResource{}
 var _ resource.ResourceWithUpgradeState = &NetworkResource{}
 
 func NewNetworkResource() resource.Resource {
@@ -316,6 +317,7 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -335,6 +337,10 @@ func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, re
 		// remove the resource from the state
 		// and return
 		if strings.Contains(readDataError.Error(), "not found") {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -348,6 +354,7 @@ func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, re
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -397,6 +404,7 @@ func (r *NetworkResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, planData.Id)
 }
 
 // restartAfterUpdate restarts a running network when VergeOS staged the
@@ -446,15 +454,12 @@ func (r *NetworkResource) Delete(ctx context.Context, req resource.DeleteRequest
 	tflog.Debug(ctx, "Network was successfully deleted")
 }
 
+func (r *NetworkResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("Network id. Import vergeio_network with this value.")
+}
+
 func (r *NetworkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Network Import ID",
-			"Import vergeio_network with the network id.",
-		)
-		return
-	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid Network Import ID", "Import vergeio_network with the network id.")
 }
 
 // networkResourceModelV0 is version 0 state. powerstate was a string.

@@ -28,6 +28,7 @@ const userPasswordDeprecation = "Deprecated. Terraform stores this value in stat
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &UserResource{}
 var _ resource.ResourceWithImportState = &UserResource{}
+var _ resource.ResourceWithIdentity = &UserResource{}
 
 func NewUserResource() resource.Resource {
 	return &UserResource{}
@@ -215,6 +216,7 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 // Read a user.
@@ -233,6 +235,10 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		// remove the resource from the state
 		// and return
 		if strings.Contains(readDataError.Error(), "not found") {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -248,6 +254,7 @@ func (r *UserResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 // Update a user.
@@ -285,6 +292,7 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &planData)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, planData.Id)
 }
 
 // scrubUserPassword drops a write-only password before state is saved.
@@ -323,13 +331,10 @@ func (r *UserResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	tflog.Debug(ctx, "User was successfully deleted")
 }
 
+func (r *UserResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("User id. Import vergeio_user with this value.")
+}
+
 func (r *UserResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid User Import ID",
-			"Import vergeio_user with the user id.",
-		)
-		return
-	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid User Import ID", "Import vergeio_user with the user id.")
 }

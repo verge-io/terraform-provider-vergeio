@@ -58,6 +58,10 @@ Resource passwords are stored when the attribute is not write-only. `vergeio_use
 
 Write-only attributes and this ephemeral resource behave the same on Terraform and OpenTofu once the CLI is new enough: the write-only value is null in state, and ephemeral results are not in state or in the plan. OpenTofu added both features in 1.11. Terraform added ephemeral resources in 1.10 and write-only attributes in 1.11.
 
+## Query
+
+`terraform query` lists VMs, networks, tenants, users, groups, tags, and snapshot profiles that already exist. Filter with `name_pattern`, `tag`, and, for VMs and networks, `tenant`. The identity `id` is the import id. OpenTofu uses that same id in an `import` block. See [Adopt an existing VergeOS system](docs/guides/adopt-system.md).
+
 ## Resources
 
 - vergeio_api_key

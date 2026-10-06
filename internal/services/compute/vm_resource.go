@@ -36,6 +36,7 @@ import (
 // Ensure provider defined types fully satisfy framework interfaces.
 var _ resource.Resource = &VMResource{}
 var _ resource.ResourceWithImportState = &VMResource{}
+var _ resource.ResourceWithIdentity = &VMResource{}
 var _ resource.ResourceWithModifyPlan = &VMResource{}
 var _ resource.ResourceWithUpgradeState = &VMResource{}
 var _ resource.ResourceWithValidateConfig = &VMResource{}
@@ -1188,6 +1189,7 @@ func (r *VMResource) Create(ctx context.Context, req resource.CreateRequest, res
 
 	// Save data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 // Read VM information.
@@ -1224,6 +1226,10 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 		// remove the resource from the state
 		// and return
 		if strings.Contains(readDataError.Error(), "not found") {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -1261,6 +1267,7 @@ func (r *VMResource) Read(ctx context.Context, req resource.ReadRequest, resp *r
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 // Update a VM.
@@ -1409,6 +1416,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, stateData.Id)
 }
 
 func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -1443,13 +1451,10 @@ func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, res
 	tflog.Debug(ctx, "VM was successfully deleted")
 }
 
+func (r *VMResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("VM id. Import vergeio_vm with this value.")
+}
+
 func (r *VMResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if req.ID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid VM Import ID",
-			"Import vergeio_vm with the VM id.",
-		)
-		return
-	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid VM Import ID", "Import vergeio_vm with the VM id.")
 }

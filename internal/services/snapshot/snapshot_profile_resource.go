@@ -6,8 +6,10 @@ package snapshot
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -27,6 +29,7 @@ import (
 var (
 	_ resource.Resource                = &SnapshotProfileResource{}
 	_ resource.ResourceWithImportState = &SnapshotProfileResource{}
+	_ resource.ResourceWithIdentity    = &SnapshotProfileResource{}
 )
 
 func NewSnapshotProfileResource() resource.Resource {
@@ -234,6 +237,7 @@ func (r *SnapshotProfileResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, profileForState(&data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *SnapshotProfileResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -244,6 +248,10 @@ func (r *SnapshotProfileResource) Read(ctx context.Context, req resource.ReadReq
 	}
 	if err := r.api.readProfile(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -251,6 +259,7 @@ func (r *SnapshotProfileResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, profileForState(&data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *SnapshotProfileResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -270,6 +279,7 @@ func (r *SnapshotProfileResource) Update(ctx context.Context, req resource.Updat
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, profileForState(&plan))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, plan.Id)
 }
 
 func (r *SnapshotProfileResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -285,15 +295,30 @@ func (r *SnapshotProfileResource) Delete(ctx context.Context, req resource.Delet
 	tflog.Debug(ctx, "snapshot profile deleted")
 }
 
+func (r *SnapshotProfileResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = shared.KeyIdentitySchema("Snapshot profile key. Import vergeio_snapshot_profile with this value.")
+}
+
 func (r *SnapshotProfileResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if _, err := parseIDText(req.ID, "snapshot profile"); err != nil {
+	id := strings.TrimSpace(req.ID)
+	if id == "" && req.Identity != nil {
+		var got types.String
+		resp.Diagnostics.Append(req.Identity.GetAttribute(ctx, path.Root("id"), &got)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !got.IsNull() && !got.IsUnknown() {
+			id = strings.TrimSpace(got.ValueString())
+		}
+	}
+	if _, err := parseIDText(id, "snapshot profile"); err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid Snapshot Profile Import ID",
 			"Import vergeio_snapshot_profile with the profile key, a positive integer.",
 		)
 		return
 	}
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	shared.ImportByID(ctx, req, resp, "Invalid Snapshot Profile Import ID", "Import vergeio_snapshot_profile with the profile key, a positive integer.")
 }
 
 // rememberProfile writes the profile id into the create response before the
@@ -305,6 +330,7 @@ func (r *SnapshotProfileResource) rememberProfile(ctx context.Context, resp *res
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, profileForState(data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {
 		return
 	}

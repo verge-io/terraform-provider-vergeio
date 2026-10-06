@@ -239,6 +239,7 @@ func (r *VMResource) rememberVM(ctx context.Context, resp *resource.CreateRespon
 	}
 	partial := partialVMForState(data)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &partial)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {
 		return
 	}
