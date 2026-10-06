@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"terraform-provider-vergeio/internal/client"
@@ -223,6 +224,9 @@ func (a *API) fillRegistrationCode(ctx context.Context, sync *vergeos.SiteSyncIn
 func (a *API) createOutgoing(ctx context.Context, data *outgoingModel, registrationCode string) error {
 	if err := a.requireSDK(); err != nil {
 		return err
+	}
+	if strings.TrimSpace(registrationCode) == "" {
+		return fmt.Errorf("registration_code_wo is required to create an outgoing sync")
 	}
 	if err := validatePeriods(data.Period); err != nil {
 		return err

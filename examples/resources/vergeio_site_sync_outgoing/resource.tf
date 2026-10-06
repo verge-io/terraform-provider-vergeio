@@ -1,6 +1,8 @@
-# Outgoing sync. period.profile_period is a snapshot profile period key.
-# retention is how long the remote copy is kept. It does not change the
-# local profile. registration_code_wo is sent only when the sync is created.
+# Outgoing sync. registration_code_wo is required. It is the registration
+# code from the incoming sync on the remote system. VergeOS rejects a create
+# that omits it. The code is sent only when this sync is created.
+# period.profile_period is a snapshot profile period key. retention is how
+# long the remote copy is kept. It does not change the local profile.
 
 resource "vergeio_snapshot_profile" "cloud" {
   name        = "Cloud Snapshots"

@@ -10,16 +10,18 @@ description: |-
 
 `vergeio_site_sync_outgoing` sends sync data to a [`vergeio_site`](site.html). `site_id` is that site's `id`. Changing `site_id` replaces the sync.
 
-`registration_code_wo` is the incoming registration code, sent when the sync is created. A later version change is stored and does not register the sync again. Replace the sync to register again. Terraform stores the version, not the code.
+`registration_code_wo` is required. It is the registration code from the incoming sync on the remote system. VergeOS rejects a create that omits it. The code is sent only when the sync is created. A later version change is stored and does not register the sync again. Replace the sync to register again. Terraform stores the version, not the code.
 
 Each `period` selects a [`vergeio_snapshot_profile`](snapshot_profile.html) period (`period.key`) and sets how long the remote copy is kept. That retention does not change the local profile. A period left out of the configuration is deleted. Changing `profile_period` replaces that period.
 
 ## Example Usage
 
 ```terraform
-# Outgoing sync. period.profile_period is a snapshot profile period key.
-# retention is how long the remote copy is kept. It does not change the
-# local profile. registration_code_wo is sent only when the sync is created.
+# Outgoing sync. registration_code_wo is required. It is the registration
+# code from the incoming sync on the remote system. VergeOS rejects a create
+# that omits it. The code is sent only when this sync is created.
+# period.profile_period is a snapshot profile period key. retention is how
+# long the remote copy is kept. It does not change the local profile.
 
 resource "vergeio_snapshot_profile" "cloud" {
   name        = "Cloud Snapshots"
@@ -66,12 +68,14 @@ resource "vergeio_site_sync_outgoing" "example" {
 
 ### Required
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
 - `name` (String) Sync name. Must be unique on the site.
+- `registration_code_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Registration code from the incoming sync on the remote system. Required. VergeOS rejects a create that omits it. Sent only when this sync is created. A later change to registration_code_wo_version is stored and does not register the sync again. Replace the sync to register again. Terraform does not store the code. Requires Terraform 1.11 or OpenTofu 1.11.
+- `registration_code_wo_version` (Number) Version of registration_code_wo. Required. Terraform stores this number. Changing it does not send the code again.
 - `site_id` (String) Site key, the same value as vergeio_site.id. Changing it replaces the sync. Terraform reads this value from the sync.
 
 ### Optional
-
-> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
 
 - `compression` (Boolean) Compress data in flight. Omit to leave the current value unchanged.
 - `description` (String) What this sync sends. Omit to leave the current value unchanged.
@@ -85,8 +89,6 @@ resource "vergeio_site_sync_outgoing" "example" {
 - `queue_retry_count` (Number) How many times to retry a queued transfer. Omit to leave the current value unchanged.
 - `queue_retry_interval_multiplier` (Boolean) Grow the retry interval after each attempt. Omit to leave the current value unchanged.
 - `queue_retry_interval_seconds` (Number) Seconds between queue retries. Omit to leave the current value unchanged.
-- `registration_code_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Incoming registration code, sent when the sync is created. A later change to registration_code_wo_version is stored and does not register the sync again. Replace the sync to register again. Terraform does not store the code. Requires Terraform 1.11 or OpenTofu 1.11.
-- `registration_code_wo_version` (Number) Version of registration_code_wo. Terraform stores this number. Changing it does not send the code again.
 - `send_throttle` (Number) Send throttle. 0 disables it. Omit to leave the current value unchanged.
 - `threads` (Number) Data threads, from 1 through 32. Omit to leave the current value unchanged.
 - `url` (String) Remote URL for this sync. Omit to leave the current value unchanged.

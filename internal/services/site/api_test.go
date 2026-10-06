@@ -72,8 +72,12 @@ func TestSiteSchema(t *testing.T) {
 		t.Fatal("period retention must be required and have no default")
 	}
 	reg, ok := outgoing.Schema.Attributes["registration_code_wo"].(resschema.StringAttribute)
-	if !ok || !reg.WriteOnly || !reg.Sensitive {
-		t.Fatal("registration_code_wo must be write-only and sensitive")
+	if !ok || !reg.Required || !reg.WriteOnly || !reg.Sensitive {
+		t.Fatal("registration_code_wo must be required, write-only, and sensitive")
+	}
+	version, ok := outgoing.Schema.Attributes["registration_code_wo_version"].(resschema.Int64Attribute)
+	if !ok || !version.Required {
+		t.Fatal("registration_code_wo_version must be required")
 	}
 	if _, exists := outgoing.Schema.Attributes["registration_code"]; exists {
 		t.Fatal("outgoing registration code is write-only and must not be stored as registration_code")
@@ -375,8 +379,14 @@ func TestOutgoingPeriodsAndRegistrationCode(t *testing.T) {
 			{ProfilePeriod: types.StringValue("9"), Retention: types.Int64Value(60)},
 		},
 	}
-	if err := api.createOutgoing(ctx, dup, ""); err == nil || !strings.Contains(err.Error(), "more than once") {
+	if err := api.createOutgoing(ctx, dup, "reg-code"); err == nil || !strings.Contains(err.Error(), "more than once") {
 		t.Fatalf("duplicate profile_period error = %v", err)
+	}
+	if err := api.createOutgoing(ctx, &outgoingModel{
+		SiteID: types.StringValue("4"),
+		Name:   types.StringValue("nocode"),
+	}, "  "); err == nil || !strings.Contains(err.Error(), "registration_code_wo is required") {
+		t.Fatalf("missing registration code error = %v", err)
 	}
 	if dup.ID.ValueString() != "" {
 		t.Fatal("duplicate periods should be rejected before create")

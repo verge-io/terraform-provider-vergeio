@@ -22,7 +22,7 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-const outgoingDescription = "An outgoing site sync to a vergeio_site. site_id is vergeio_site.id. Changing site_id replaces the sync. registration_code_wo is the incoming registration code, sent when the sync is created. A later version change is stored and does not register the sync again. Replace the sync to register again. Each period selects a vergeio_snapshot_profile period (period.key) and sets how long the remote copy is kept. A period left out of the configuration is deleted. Changing profile_period replaces that period."
+const outgoingDescription = "An outgoing site sync to a vergeio_site. site_id is vergeio_site.id. Changing site_id replaces the sync. registration_code_wo is required. It is the registration code from the incoming sync on the remote system, and VergeOS rejects a create that omits it. The code is sent only when this sync is created. A later version change is stored and does not register the sync again. Replace the sync to register again. Each period selects a vergeio_snapshot_profile period (period.key) and sets how long the remote copy is kept. A period left out of the configuration is deleted. Changing profile_period replaces that period."
 
 var (
 	_ resource.Resource                = &outgoingResource{}
@@ -117,8 +117,8 @@ func (r *outgoingResource) Schema(ctx context.Context, req resource.SchemaReques
 				Default:             booldefault.StaticBool(true),
 			},
 			"registration_code_wo": schema.StringAttribute{
-				MarkdownDescription: "Incoming registration code, sent when the sync is created. A later change to registration_code_wo_version is stored and does not register the sync again. Replace the sync to register again. Terraform does not store the code. Requires Terraform 1.11 or OpenTofu 1.11.",
-				Optional:            true,
+				MarkdownDescription: "Registration code from the incoming sync on the remote system. Required. VergeOS rejects a create that omits it. Sent only when this sync is created. A later change to registration_code_wo_version is stored and does not register the sync again. Replace the sync to register again. Terraform does not store the code. Requires Terraform 1.11 or OpenTofu 1.11.",
+				Required:            true,
 				WriteOnly:           true,
 				Sensitive:           true,
 				Validators: []validator.String{
@@ -127,8 +127,8 @@ func (r *outgoingResource) Schema(ctx context.Context, req resource.SchemaReques
 				},
 			},
 			"registration_code_wo_version": schema.Int64Attribute{
-				MarkdownDescription: "Version of registration_code_wo. Terraform stores this number. Changing it does not send the code again.",
-				Optional:            true,
+				MarkdownDescription: "Version of registration_code_wo. Required. Terraform stores this number. Changing it does not send the code again.",
+				Required:            true,
 				Validators: []validator.Int64{
 					int64validator.AtLeast(1),
 					int64validator.AlsoRequires(path.MatchRelative().AtParent().AtName("registration_code_wo")),
