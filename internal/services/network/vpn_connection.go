@@ -280,7 +280,7 @@ func phase1CreateRequest(data *ipsecConnectionModel) (*vergeos.VNetIPSecPhase1Cr
 	req.Identifier = vergeio.KnownString(data.Identifier)
 	req.PeerIdentifier = vergeio.KnownString(data.PeerIdentifier)
 	req.PSK = vergeio.KnownString(data.PSK)
-	req.IKE = vergeio.KnownString(data.IKE)
+	req.IKE = phase1IKE(data.IKE)
 	req.IKELifetime = optionalInt(data.IKELifetime)
 	req.Auto = vergeio.KnownString(data.Auto)
 	req.MOBIKE = vergeio.KnownBool(data.MOBIKE)
@@ -294,6 +294,24 @@ func phase1CreateRequest(data *ipsecConnectionModel) (*vergeos.VNetIPSecPhase1Cr
 	req.DPDDelay = optionalInt(data.DPDDelay)
 	req.DPDFailures = optionalInt(data.DPDFailures)
 	return req, nil
+}
+
+// ipsecPhase1IKEDefault is the IKE proposal govergeos documents for a new
+// phase 1. VergeOS requires the field on create and rejects a body that
+// omits it, even though the SDK marks the field optional.
+const ipsecPhase1IKEDefault = "aes256-sha256-modp2048"
+
+// phase1IKE returns the configured proposal, or the proposal VergeOS
+// requires when the configuration leaves ike unset.
+func phase1IKE(v types.String) *string {
+	if configured := vergeio.KnownString(v); configured != nil {
+		trimmed := strings.TrimSpace(*configured)
+		if trimmed != "" {
+			return &trimmed
+		}
+	}
+	ike := ipsecPhase1IKEDefault
+	return &ike
 }
 
 func phase1UpdateRequest(data *ipsecConnectionModel) *vergeos.VNetIPSecPhase1UpdateRequest {

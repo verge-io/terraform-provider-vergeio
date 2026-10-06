@@ -31,6 +31,7 @@ func TestAccNetworkIPSec_connection(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_network_ipsec.test", "mode", "normal"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "name", "branch"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "remote_gateway", "203.0.113.10"),
+					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "ike", "aes256-sha256-modp2048"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.name", "lan"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.local", "192.168.0.0/24"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.remote", "198.51.100.0/24"),
@@ -114,6 +115,7 @@ resource "vergeio_network_ipsec_connection" "test" {
   remote_gateway = "203.0.113.10"
   keyexchange    = "ikev2"
   auth           = "psk"
+  ike            = "aes256-sha256-modp2048"
   psk            = "tf-acc-ipsec-preshared-key"
   auto           = "start"
 

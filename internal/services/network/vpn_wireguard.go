@@ -138,11 +138,12 @@ func (a *vpnAPI) updateWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 }
 
 // deleteWireGuard refuses while a peer remains. VergeOS rejects a delete
-// while the interface is enabled, so the interface is disabled and a
-// running network is applied first. A stopped network is deleted without
-// that apply. A later apply clears a removed Accept WireGuard rule that
-// the delete leaves staged on a running network. A stopped network skips
-// that apply too.
+// while the interface is enabled or the disable has not landed on the
+// running router, so the interface is disabled and that same network is
+// applied first. The delete is retried until the apply has landed. A
+// stopped network is deleted without that apply. A later apply clears a
+// removed Accept WireGuard rule that the delete leaves staged on a
+// running network. A stopped network skips that apply too.
 func (a *vpnAPI) deleteWireGuard(ctx context.Context, data *wireGuardModel) (*firewallNotice, error) {
 	id, err := parsePositiveID(stringOrEmpty(data.ID))
 	if err != nil {

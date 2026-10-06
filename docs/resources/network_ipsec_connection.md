@@ -35,6 +35,7 @@ resource "vergeio_network_ipsec_connection" "branch" {
   remote_gateway = "203.0.113.10"
   keyexchange    = "ikev2"
   auth           = "psk"
+  ike            = "aes256-sha256-modp2048"
   psk            = "replace-with-a-long-preshared-key"
   auto           = "start"
 
@@ -67,7 +68,7 @@ resource "vergeio_network_ipsec_connection" "branch" {
 - `enabled` (Boolean) Whether the phase 1 is enabled. Defaults to true.
 - `forceencaps` (Boolean) Force UDP encapsulation. Omit to leave the current value unchanged.
 - `identifier` (String) Local IKE identity. Blank uses the current address. Omit to leave the current value unchanged.
-- `ike` (String) IKE cipher proposal. Omit to leave the current value unchanged.
+- `ike` (String) IKE cipher proposal. VergeOS requires this when the phase 1 is created. Defaults to aes256-sha256-modp2048.
 - `ikelifetime` (Number) IKE SA lifetime in seconds. Omit to leave the current value unchanged.
 - `keyexchange` (String) IKE version: ikev1, ikev2, or ike. ike initiates IKEv2 and accepts either. Omit to leave the current value unchanged.
 - `keyingtries` (Number) Negotiation attempts. 0 never gives up. Omit to leave the current value unchanged.

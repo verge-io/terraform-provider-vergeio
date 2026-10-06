@@ -121,10 +121,10 @@ func (r *NetworkIPSecConnectionResource) Schema(ctx context.Context, req resourc
 				Sensitive:           true,
 			},
 			"ike": schema.StringAttribute{
-				MarkdownDescription: "IKE cipher proposal. Omit to leave the current value unchanged.",
+				MarkdownDescription: "IKE cipher proposal. VergeOS requires this when the phase 1 is created. Defaults to aes256-sha256-modp2048.",
 				Optional:            true,
 				Computed:            true,
-				PlanModifiers:       stringState(),
+				Default:             stringdefault.StaticString(ipsecPhase1IKEDefault),
 			},
 			"ikelifetime": schema.Int64Attribute{
 				MarkdownDescription: "IKE SA lifetime in seconds. Omit to leave the current value unchanged.",

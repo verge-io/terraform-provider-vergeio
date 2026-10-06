@@ -16,6 +16,7 @@ resource "vergeio_network_ipsec_connection" "branch" {
   remote_gateway = "203.0.113.10"
   keyexchange    = "ikev2"
   auth           = "psk"
+  ike            = "aes256-sha256-modp2048"
   psk            = "replace-with-a-long-preshared-key"
   auto           = "start"
 

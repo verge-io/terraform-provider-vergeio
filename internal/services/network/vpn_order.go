@@ -8,9 +8,18 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/verge-io/govergeos"
+)
+
+// WireGuard apply returns before the running router has the disabled
+// interface. Deleting in that window is rejected. These match the wait
+// that has cleared the same rejection on a running network.
+var (
+	wireGuardDeleteAttempts = 16
+	wireGuardDeletePoll     = time.Second
 )
 
 // vpnDeleteOrder is the teardown VergeOS does not do on its own.
@@ -58,12 +67,15 @@ func deleteWireGuardRows(ctx context.Context, sdk *vergeos.Client, networkID int
 	return errors.Join(errs...)
 }
 
-// deleteWireGuardInterface disables the interface, applies that change when
-// the network is running, then deletes the interface. VergeOS returns 422
-// when the interface is still enabled or the disable has not been applied
-// on a running network. A stopped network rejects the apply, so the
-// interface is disabled and deleted without it. Destroy, sweep, and
-// rollback of a failed create all use this path.
+// deleteWireGuardInterface disables the interface, applies that change on
+// the interface's own network when that network is running, and deletes
+// the interface once VergeOS accepts it. The apply returns before the
+// router has the disabled interface, so a delete in that window is
+// rejected and is retried. A row that already reads as disabled is
+// disabled again, because the running configuration can still have it
+// enabled. A stopped network rejects the apply, so the interface is
+// disabled and deleted without it. Destroy, sweep, and rollback of a
+// failed create all use this path.
 func deleteWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id int) error {
 	row, err := sdk.VNetWireGuards.Get(ctx, id)
 	if err != nil {
@@ -72,13 +84,13 @@ func deleteWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id int) 
 		}
 		return fmt.Errorf("read WireGuard interface %d before delete: %w", id, err)
 	}
-	if row.Enabled {
-		disabled := false
-		if _, err := sdk.VNetWireGuards.Update(ctx, id, &vergeos.VNetWireGuardUpdateRequest{Enabled: &disabled}); err != nil && !vergeos.IsNotFoundError(err) {
-			return fmt.Errorf("disable WireGuard interface %d before delete: %w", id, err)
+	networkID, err := disableWireGuardInterface(ctx, sdk, id, row.VNet.Int())
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
 		}
+		return err
 	}
-	networkID := row.VNet.Int()
 	if networkID <= 0 {
 		return fmt.Errorf("WireGuard interface %d has no network, so it was not deleted", id)
 	}
@@ -86,17 +98,87 @@ func deleteWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id int) 
 	if err != nil {
 		return fmt.Errorf("read network %d before deleting WireGuard interface %d: %w", networkID, id, err)
 	}
-	if networkIsRunning(network) {
-		if err := sdk.Networks.ApplyRules(ctx, networkID); err != nil {
-			return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
-		}
-	} else {
+	if !networkIsRunning(network) {
 		tflog.Warn(ctx, fmt.Sprintf("Network %d is not running; deleting WireGuard interface %d without applying rules", networkID, id))
+		return deleteWireGuardOnce(ctx, sdk, id)
 	}
+	tflog.Debug(ctx, fmt.Sprintf("Disabling WireGuard interface %d and applying network %d before delete", id, networkID))
+	return deleteAppliedWireGuard(ctx, sdk, id, networkID)
+}
+
+// disableWireGuardInterface sets enabled to false. networkID is the
+// interface network from the read that preceded this call. The update
+// read replaces it when that read names a network.
+func disableWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id, networkID int) (int, error) {
+	disabled := false
+	updated, err := sdk.VNetWireGuards.Update(ctx, id, &vergeos.VNetWireGuardUpdateRequest{Enabled: &disabled})
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return networkID, err
+		}
+		return 0, fmt.Errorf("disable WireGuard interface %d before delete: %w", id, err)
+	}
+	if updated != nil && updated.VNet.Int() > 0 {
+		networkID = updated.VNet.Int()
+	}
+	return networkID, nil
+}
+
+// deleteAppliedWireGuard applies networkID, then deletes the interface.
+// A 422 that says the interface must be disabled and applied means the
+// refresh has not landed. The interface is disabled again, the same
+// network is applied again, and the delete is retried.
+func deleteAppliedWireGuard(ctx context.Context, sdk *vergeos.Client, id, networkID int) error {
+	if err := sdk.Networks.ApplyRules(ctx, networkID); err != nil {
+		return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
+	}
+	var last error
+	for attempt := 0; attempt < wireGuardDeleteAttempts; attempt++ {
+		if attempt > 0 {
+			if err := sleepContext(ctx, wireGuardDeletePoll); err != nil {
+				return err
+			}
+			if _, err := disableWireGuardInterface(ctx, sdk, id, networkID); err != nil {
+				if vergeos.IsNotFoundError(err) {
+					return nil
+				}
+				return err
+			}
+			if err := sdk.Networks.ApplyRules(ctx, networkID); err != nil {
+				return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
+			}
+		}
+		last = sdk.VNetWireGuards.Delete(ctx, id)
+		if last == nil || vergeos.IsNotFoundError(last) {
+			return nil
+		}
+		if !wireGuardDeletePending(last) {
+			break
+		}
+		tflog.Debug(ctx, fmt.Sprintf("WireGuard interface %d on network %d is not applied yet; retrying delete", id, networkID))
+	}
+	return fmt.Errorf("delete WireGuard interface %d: %w", id, last)
+}
+
+func deleteWireGuardOnce(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if err := sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
 		return fmt.Errorf("delete WireGuard interface %d: %w", id, err)
 	}
 	return nil
+}
+
+// wireGuardDeletePending reports the 422 VergeOS returns when a running
+// network still has the interface enabled or the disable has not been applied.
+func wireGuardDeletePending(err error) bool {
+	var apiErr *vergeos.APIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return false
+	}
+	if apiErr.StatusCode != 422 {
+		return false
+	}
+	msg := strings.ToLower(apiErr.Message)
+	return strings.Contains(msg, "disabled") && strings.Contains(msg, "applied")
 }
 
 func deleteWireGuardPeerRows(ctx context.Context, sdk *vergeos.Client, wireguardID int) error {
