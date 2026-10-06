@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 	"syscall"
 	"time"
@@ -155,7 +154,7 @@ func retryablePUT(err error) bool {
 	var apiErr vergeio.Error
 	if errors.As(err, &apiErr) {
 		switch apiErr.StatusCode {
-		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable:
+		case 429, 502, 503:
 			return true
 		default:
 			return false
