@@ -244,6 +244,46 @@ func TestCertificateCreateKeepsIDWhenGetOmitsKey(t *testing.T) {
 	}
 }
 
+func TestCertificateCreateStoresIDWhenGetFails(t *testing.T) {
+	fake := newPlatformFake()
+	fake.failGets = 1
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	ctx := context.Background()
+	item := configuredCertificate(t, server.URL)
+	schemaResp := &resource.SchemaResponse{}
+	item.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	model := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	configState := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, model); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if diags := configState.Set(ctx, model); diags.HasError() {
+		t.Fatal(diags)
+	}
+	config := tfsdk.Config{Schema: schemaResp.Schema, Raw: configState.Raw}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	item.Create(ctx, resource.CreateRequest{Plan: plan, Config: config}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the certificate read to fail")
+	}
+	var got certificateModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if got.ID.ValueString() != "1" || got.DomainName.ValueString() != "tf-acc-ui.local" {
+		t.Fatalf("id=%q domain_name=%q", got.ID.ValueString(), got.DomainName.ValueString())
+	}
+	if len(fake.certs) != 1 {
+		t.Fatalf("certificates stored = %d", len(fake.certs))
+	}
+}
+
 func TestCertificateImportReadFillsReplaceFields(t *testing.T) {
 	fake := newPlatformFake()
 	fake.seedCertificate(vergeos.Certificate{
@@ -936,6 +976,7 @@ type platformFake struct {
 	certFieldQueries []string
 	omitDetailDomain bool
 	omitGetKey       bool
+	failGets         int
 	failPuts         int
 	failPutStatus    int
 	putAttempts      int
@@ -1138,6 +1179,11 @@ func (f *platformFake) getCertificate(w http.ResponseWriter, r *http.Request) {
 	cert, ok := f.certs[pathID(r.URL.Path)]
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if f.failGets > 0 {
+		f.failGets--
+		http.Error(w, "certificate read failed", http.StatusInternalServerError)
 		return
 	}
 	fields := r.URL.Query().Get("fields")

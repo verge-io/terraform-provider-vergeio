@@ -176,11 +176,25 @@ func (r *certificateResource) Create(ctx context.Context, req resource.CreateReq
 		return
 	}
 	if err := r.api.createCertificate(ctx, &plan, secret(config.PrivateKeyWO), secret(config.EABHMACKeyWO)); err != nil {
+		// The row exists once the create response has a key. Keep that id
+		// in state so the next apply reads it instead of posting again.
+		if knownString(plan.ID) {
+			r.rememberCertificate(ctx, resp, &plan)
+		}
 		resp.Diagnostics.AddError("Error creating certificate", err.Error())
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, certificateForState(&plan))...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, plan.ID)
+}
+
+func (r *certificateResource) rememberCertificate(ctx context.Context, resp *resource.CreateResponse, data *certificateModel) {
+	if resp == nil || data == nil || !knownString(data.ID) {
+		return
+	}
+	stored := nullUnknownCertificate(certificateForState(data))
+	resp.Diagnostics.Append(resp.State.Set(ctx, stored)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
 }
 
 func (r *certificateResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -256,6 +270,74 @@ func certificateForState(data *certificateModel) certificateModel {
 	stored.PrivateKeyWO = types.StringNull()
 	stored.EABHMACKeyWO = types.StringNull()
 	return stored
+}
+
+// nullUnknownCertificate drops unknown plan values. State cannot store them.
+func nullUnknownCertificate(data certificateModel) certificateModel {
+	if !knownString(data.ID) {
+		data.ID = types.StringNull()
+	}
+	if !knownString(data.Type) {
+		data.Type = types.StringNull()
+	}
+	if !knownString(data.DomainName) {
+		data.DomainName = types.StringNull()
+	}
+	if !knownString(data.DomainList) {
+		data.DomainList = types.StringNull()
+	}
+	if !knownString(data.Description) {
+		data.Description = types.StringNull()
+	}
+	if !knownString(data.PublicCertificate) {
+		data.PublicCertificate = types.StringNull()
+	}
+	if !knownString(data.Chain) {
+		data.Chain = types.StringNull()
+	}
+	if !knownString(data.ACMEServer) {
+		data.ACMEServer = types.StringNull()
+	}
+	if !knownString(data.EABKid) {
+		data.EABKid = types.StringNull()
+	}
+	if !knownString(data.KeyType) {
+		data.KeyType = types.StringNull()
+	}
+	if !knownString(data.RSAKeySize) {
+		data.RSAKeySize = types.StringNull()
+	}
+	if !knownInt(data.PrivateKeyWOVersion) {
+		data.PrivateKeyWOVersion = types.Int64Null()
+	}
+	if !knownInt(data.EABHMACKeyWOVersion) {
+		data.EABHMACKeyWOVersion = types.Int64Null()
+	}
+	if !knownInt(data.Contact) {
+		data.Contact = types.Int64Null()
+	}
+	if !knownBool(data.AgreeTOS) {
+		data.AgreeTOS = types.BoolNull()
+	}
+	if !knownString(data.Domain) {
+		data.Domain = types.StringNull()
+	}
+	if !knownBool(data.Valid) {
+		data.Valid = types.BoolNull()
+	}
+	if !knownBool(data.AutoCreated) {
+		data.AutoCreated = types.BoolNull()
+	}
+	if !knownInt(data.Expires) {
+		data.Expires = types.Int64Null()
+	}
+	if !knownInt(data.Created) {
+		data.Created = types.Int64Null()
+	}
+	if !knownInt(data.Modified) {
+		data.Modified = types.Int64Null()
+	}
+	return data
 }
 
 type certificateConfigValidator struct{}
@@ -344,11 +426,15 @@ func (a *API) createCertificate(ctx context.Context, data *certificateModel, pri
 	if err != nil {
 		return err
 	}
+	data.ID = idString(id)
 	got, err := a.sdk.Certificates.Get(ctx, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("certificate %d was created: %w", id, err)
 	}
-	return a.applyCertificate(ctx, data, certificateWithID(got, id), *data)
+	if err := a.applyCertificate(ctx, data, certificateWithID(got, id), *data); err != nil {
+		return fmt.Errorf("certificate %d was created: %w", id, err)
+	}
+	return nil
 }
 
 // createCertificateRow posts the certificate and returns the new key.
