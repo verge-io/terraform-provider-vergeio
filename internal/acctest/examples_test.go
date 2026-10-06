@@ -256,6 +256,8 @@ func TestPublishedNetworkExampleUsesSchemaNames(t *testing.T) {
 
 type schemaNode struct {
 	children map[string]*schemaNode
+	// open is a map whose keys are not declared in the schema.
+	open bool
 }
 
 type exampleSchemas struct {
@@ -484,6 +486,13 @@ func checkExpr(path string, expr hcl.Expression, node *schemaNode) []string {
 	}
 	switch e := expr.(type) {
 	case *hclsyntax.ObjectConsExpr:
+		if node.open {
+			var errs []string
+			for _, item := range e.Items {
+				errs = append(errs, checkExpr(path, item.ValueExpr, &schemaNode{})...)
+			}
+			return errs
+		}
 		if len(node.children) == 0 {
 			return []string{fmt.Sprintf("%s: attribute does not accept nested arguments", path)}
 		}
@@ -598,6 +607,8 @@ func resourceAttrNode(attr rschema.Attribute) *schemaNode {
 		return &schemaNode{children: resourceNodes(a.NestedObject.Attributes, nil)}
 	case rschema.SingleNestedAttribute:
 		return &schemaNode{children: resourceNodes(a.Attributes, nil)}
+	case rschema.MapAttribute:
+		return &schemaNode{open: true}
 	default:
 		return &schemaNode{}
 	}
@@ -637,6 +648,8 @@ func datasourceAttrNode(attr dschema.Attribute) *schemaNode {
 		return &schemaNode{children: datasourceAttrMap(a.NestedObject.Attributes)}
 	case dschema.SingleNestedAttribute:
 		return &schemaNode{children: datasourceAttrMap(a.Attributes)}
+	case dschema.MapAttribute:
+		return &schemaNode{open: true}
 	default:
 		return &schemaNode{}
 	}

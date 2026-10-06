@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
 )
 
 // Sweep deletes acceptance-test leftovers whose names start with ResourcePrefix.
@@ -150,6 +153,7 @@ func Sweep(ctx context.Context) error {
 		log.Printf("[SWEEP] deleting vm %d (%s)", id, name)
 		record(deleteVM(ctx, client, id))
 	}
+	record(sweepVMRecipeInstances(ctx, client))
 	// Profiles are removed after VMs. A VM that still references a profile
 	// can make the profile delete fail.
 	record(sweepSnapshotProfiles(ctx, client))
@@ -187,6 +191,20 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	for _, vm := range vms {
 		if !vm.IsSnapshot && HasPrefix(vm.Name) {
 			left = append(left, fmt.Sprintf("vm %s (%d)", vm.Name, vm.Key.Int()))
+		}
+	}
+
+	instances, err := client.VMRecipeInstances.List(ctx)
+	if listEndpointMissing(err) {
+		instances = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify vm recipe instances: %w", err)
+	}
+	for _, instance := range instances {
+		if HasPrefix(instance.Name) {
+			left = append(left, fmt.Sprintf("vm recipe instance %s (%d)", instance.Name, instance.Key.Int()))
 		}
 	}
 
@@ -833,6 +851,46 @@ func sweepTenantSnapshots(ctx context.Context, client *vergeos.Client, tenants m
 // Empty acceptance VMs have no OS and ignore ACPI, so VMs.PowerOff waits
 // out its timeout and the VM stays running. VMs.Kill stops the machine
 // immediately, then delete is retried.
+func sweepVMRecipeInstances(ctx context.Context, client *vergeos.Client) error {
+	rows, err := client.VMRecipeInstances.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] vm recipe instances endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list vm recipe instances: %w", err)
+	}
+	httpClient, err := acceptanceHTTPClient()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range rows {
+		if !HasPrefix(row.Name) {
+			continue
+		}
+		id := row.Key.Int()
+		log.Printf("[SWEEP] deleting vm recipe instance %d (%s)", id, row.Name)
+		if err := httpClient.DeleteVMRecipeInstance(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete vm recipe instance %d: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep vm recipe instances: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func acceptanceHTTPClient() (*vergeio.Client, error) {
+	host := os.Getenv(envAccHost)
+	username := os.Getenv(envAccUsername)
+	password := os.Getenv(envAccPassword)
+	if host == "" || username == "" || password == "" {
+		return nil, fmt.Errorf("%s, %s, and %s are required", envAccHost, envAccUsername, envAccPassword)
+	}
+	return vergeio.NewClient(host, username, password, true), nil
+}
+
 func deleteVM(ctx context.Context, client *vergeos.Client, id int) error {
 	err := client.VMs.Delete(ctx, id)
 	if err == nil || vergeos.IsNotFoundError(err) {

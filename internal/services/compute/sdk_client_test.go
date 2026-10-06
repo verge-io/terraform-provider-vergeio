@@ -66,6 +66,24 @@ func TestComputeConstructorsReturnClientError(t *testing.T) {
 	if err != nil || files == nil || files.sdk == nil {
 		t.Fatalf("cloudinit api=%v err=%v", files, err)
 	}
+
+	recipe, err := NewVMRecipeInstanceApi(nil)
+	assertNoAPI(t, recipe, err)
+	recipe, err = NewVMRecipeInstanceApi(bad)
+	assertNoAPI(t, recipe, err)
+	recipe, err = NewVMRecipeInstanceApi(good)
+	if err != nil || recipe == nil || recipe.sdk == nil || recipe.vm == nil {
+		t.Fatalf("recipe instance api=%v err=%v", recipe, err)
+	}
+
+	catalogs, err := NewRecipeCatalogApi(nil)
+	assertNoAPI(t, catalogs, err)
+	catalogs, err = NewRecipeCatalogApi(bad)
+	assertNoAPI(t, catalogs, err)
+	catalogs, err = NewRecipeCatalogApi(good)
+	if err != nil || catalogs == nil || catalogs.sdk == nil {
+		t.Fatalf("recipe catalog api=%v err=%v", catalogs, err)
+	}
 }
 
 func TestVMResourceConfigureReportsClientError(t *testing.T) {
