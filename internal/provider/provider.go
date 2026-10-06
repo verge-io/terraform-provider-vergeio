@@ -9,6 +9,7 @@ import (
 	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/services/compute"
 	"terraform-provider-vergeio/internal/services/identity"
+	"terraform-provider-vergeio/internal/services/nas"
 	"terraform-provider-vergeio/internal/services/network"
 	"terraform-provider-vergeio/internal/services/snapshot"
 	"terraform-provider-vergeio/internal/services/storage"
@@ -135,6 +136,10 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		network.NewNetworkDNSViewResource,
 		network.NewNetworkDNSZoneResource,
 		network.NewNetworkDNSRecordResource,
+		nas.NewServiceResource,
+		nas.NewVolumeResource,
+		nas.NewCIFSShareResource,
+		nas.NewNFSShareResource,
 		compute.NewVMResource,
 		compute.NewVMDriveResource,
 		compute.NewVMNICResource,

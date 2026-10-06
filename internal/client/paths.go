@@ -13,6 +13,7 @@ import (
 const (
 	VMEndpoint                       = APIEndpoint + "/vms"
 	VMActionEndpoint                 = APIEndpoint + "/vm_actions"
+	VMRecipeEndpoint                 = APIEndpoint + "/vm_recipes"
 	RecipeInstanceEndpoint           = APIEndpoint + "/vm_recipe_instances"
 	NICEndpoint                      = APIEndpoint + "/machine_nics"
 	IPEndpoint                       = APIEndpoint + "/vnet_addresses"
