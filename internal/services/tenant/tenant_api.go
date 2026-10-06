@@ -30,6 +30,9 @@ func tenantCreateRequest(data *TenantResourceModel) *vergeos.TenantCreateRequest
 		req.URL = *url
 	}
 	req.OIDCApplication = knownInt(data.OIDCApplication)
+	// A null or unknown ui_address_id leaves the platform default: the first
+	// assigned external IP becomes the tenant UI address.
+	req.UIAddress = knownInt(data.UIAddressID)
 	req.ExposeCloudSnapshots = vergeio.KnownBool(data.ExposeCloudSnapshots)
 	req.AllowBranding = vergeio.KnownBool(data.AllowBranding)
 	req.ChangePassword = vergeio.KnownBool(data.ChangePassword)
@@ -46,6 +49,7 @@ func tenantUpdateRequest(plan, state *TenantResourceModel) *vergeos.TenantUpdate
 		Description:          vergeio.ChangedString(plan.Description, state.Description),
 		URL:                  vergeio.ChangedString(plan.URL, state.URL),
 		OIDCApplication:      changedInt(plan.OIDCApplication, state.OIDCApplication),
+		UIAddress:            changedInt(plan.UIAddressID, state.UIAddressID),
 		ExposeCloudSnapshots: vergeio.ChangedBool(plan.ExposeCloudSnapshots, state.ExposeCloudSnapshots),
 		AllowBranding:        vergeio.ChangedBool(plan.AllowBranding, state.AllowBranding),
 		ThemeAccess:          vergeio.ChangedString(plan.ThemeAccess, state.ThemeAccess),
@@ -67,6 +71,7 @@ func tenantUpdateEmpty(req *vergeos.TenantUpdateRequest) bool {
 		req.Description == nil &&
 		req.URL == nil &&
 		req.OIDCApplication == nil &&
+		req.UIAddress == nil &&
 		req.ExposeCloudSnapshots == nil &&
 		req.AllowBranding == nil &&
 		req.ThemeAccess == nil &&

@@ -55,7 +55,7 @@ func (r *TenantExternalIPResource) Metadata(ctx context.Context, req resource.Me
 
 func (r *TenantExternalIPResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "One virtual IP on a parent network, owned by a VergeOS tenant. VergeOS uses the first assigned IP as the tenant UI address. Changing tenant_id, network_id, ip, hostname, or description replaces the address. apply_parent_firewall passes WithApplyParentFirewall on create, update, and delete. parent_firewall_pending is the parent network need_fw_apply flag.",
+		MarkdownDescription: "One virtual IP on a parent network, owned by a VergeOS tenant. VergeOS uses the first assigned IP as the tenant UI address. vergeio_tenant.ui_address_id chooses a different assigned IP. Changing tenant_id, network_id, ip, hostname, or description replaces the address. apply_parent_firewall passes WithApplyParentFirewall on create, update, and delete. parent_firewall_pending is the parent network need_fw_apply flag.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "vnet_addresses key assigned by VergeOS.",

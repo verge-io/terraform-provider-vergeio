@@ -1172,6 +1172,263 @@ func TestAccTenantIsolateToggleAndDrift(t *testing.T) {
 	})
 }
 
+// TestAccTenantUIAddressSetMoveAndDrift covers #214. Two external IPs are
+// assigned, the second is created after the first so the first becomes the
+// UI address, then ui_address_id selects the second, moves back to the
+// first, and is restored after the parent UI points it at the second.
+// The address id is passed with TF_VAR_ui_address_id. The external IP
+// resource takes tenant_id from the tenant, so the tenant cannot also
+// reference that address id in the same configuration.
+func TestAccTenantUIAddressSetMoveAndDrift(t *testing.T) {
+	acctest.PreCheck(t)
+	tenantName := acctest.Name("tenant-ui")
+	networkName := acctest.Name("tenant-ui-net")
+	unset := testAccTenantUIAddressConfig(tenantName, networkName, false)
+	chosen := testAccTenantUIAddressConfig(tenantName, networkName, true)
+
+	var tenantID int
+	var firstID, secondID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckTenantExternalIPDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: unset,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "name", tenantName),
+					resource.TestCheckResourceAttr("vergeio_tenant_external_ip.first", "ip", "203.0.113.50"),
+					resource.TestCheckResourceAttr("vergeio_tenant_external_ip.second", "ip", "203.0.113.51"),
+					testAccCaptureTenantID("vergeio_tenant.test", &tenantID),
+					testAccCaptureResourceID("vergeio_tenant_external_ip.first", &firstID),
+					testAccCaptureResourceID("vergeio_tenant_external_ip.second", &secondID),
+				),
+			},
+			{
+				Config: unset,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+				// The tenant is created before either address, so the first
+				// assigned IP is stored on the next refresh.
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "ui_address", "203.0.113.50"),
+					resource.TestCheckResourceAttrPair("vergeio_tenant.test", "ui_address_id", "vergeio_tenant_external_ip.first", "id"),
+				),
+			},
+			{
+				PreConfig: func() {
+					if secondID == "" {
+						t.Fatal("second address id was not captured")
+					}
+					t.Setenv("TF_VAR_ui_address_id", secondID)
+				},
+				Config: chosen,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "ui_address", "203.0.113.51"),
+					resource.TestCheckResourceAttrPair("vergeio_tenant.test", "ui_address_id", "vergeio_tenant_external_ip.second", "id"),
+					testAccCheckTenantUIAddressID("vergeio_tenant.test", &secondID),
+				),
+			},
+			{
+				Config: chosen,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				PreConfig: func() {
+					if firstID == "" {
+						t.Fatal("first address id was not captured")
+					}
+					t.Setenv("TF_VAR_ui_address_id", firstID)
+				},
+				Config: chosen,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "ui_address", "203.0.113.50"),
+					resource.TestCheckResourceAttrPair("vergeio_tenant.test", "ui_address_id", "vergeio_tenant_external_ip.first", "id"),
+					testAccCheckTenantUIAddressID("vergeio_tenant.test", &firstID),
+				),
+			},
+			{
+				Config: chosen,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				PreConfig: func() {
+					if tenantID <= 0 || secondID == "" {
+						t.Fatal("tenant id or second address id was not captured")
+					}
+					moved, err := strconv.Atoi(secondID)
+					if err != nil || moved <= 0 {
+						t.Fatalf("second address id %q: %v", secondID, err)
+					}
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if _, err := client.Tenants.Update(ctx, tenantID, &vergeos.TenantUpdateRequest{
+						UIAddress: &moved,
+					}); err != nil {
+						t.Fatalf("move ui address outside terraform: %v", err)
+					}
+					got, err := client.Tenants.Get(ctx, tenantID)
+					if err != nil {
+						t.Fatalf("read tenant after ui address move: %v", err)
+					}
+					if got.UIAddress.Int() != moved {
+						t.Fatalf("tenant %d ui_address = %d after outside update, want %d", tenantID, got.UIAddress.Int(), moved)
+					}
+				},
+				Config: chosen,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tenant.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_tenant.test", "ui_address", "203.0.113.50"),
+					resource.TestCheckResourceAttrPair("vergeio_tenant.test", "ui_address_id", "vergeio_tenant_external_ip.first", "id"),
+					testAccCheckTenantUIAddressID("vergeio_tenant.test", &firstID),
+				),
+			},
+			{
+				Config: chosen,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccTenantUIAddressConfig(tenantName, networkName string, choose bool) string {
+	if err := acctest.RequirePrefix(tenantName); err != nil {
+		panic(err)
+	}
+	if err := acctest.RequirePrefix(networkName); err != nil {
+		panic(err)
+	}
+	variable := ""
+	uiAddress := ""
+	if choose {
+		variable = `
+variable "ui_address_id" {
+  type = number
+}
+`
+		uiAddress = "\n  ui_address_id = var.ui_address_id"
+	}
+	return acctest.Config(fmt.Sprintf(`%s
+resource "vergeio_network" "parent" {
+  name           = %q
+  type           = "internal"
+  network        = "203.0.113.0/24"
+  ipaddress      = "203.0.113.1"
+  powerstate     = true
+  interface_vnet = 0
+}
+
+resource "vergeio_tenant" "test" {
+  name        = %q
+  description = "acc ui address"
+  password    = "Tf-acc-tenant-password1"
+  powerstate  = false%s
+}
+
+resource "vergeio_tenant_external_ip" "first" {
+  tenant_id             = vergeio_tenant.test.id
+  network_id            = vergeio_network.parent.id
+  ip                    = "203.0.113.50"
+  hostname              = "%s-a"
+  description           = "first external ip"
+  apply_parent_firewall = false
+}
+
+resource "vergeio_tenant_external_ip" "second" {
+  tenant_id             = vergeio_tenant.test.id
+  network_id            = vergeio_network.parent.id
+  ip                    = "203.0.113.51"
+  hostname              = "%s-b"
+  description           = "second external ip"
+  apply_parent_firewall = false
+
+  depends_on = [vergeio_tenant_external_ip.first]
+}
+`, variable, networkName, tenantName, uiAddress, tenantName, tenantName))
+}
+
+func testAccCaptureResourceID(address string, id *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[address]
+		if !ok {
+			return fmt.Errorf("missing %s", address)
+		}
+		if rs.Primary.ID == "" {
+			return fmt.Errorf("empty id for %s", address)
+		}
+		*id = rs.Primary.ID
+		return nil
+	}
+}
+
+func testAccCheckTenantUIAddressID(address string, wantID *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[address]
+		if !ok {
+			return fmt.Errorf("missing %s", address)
+		}
+		id, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("tenant id %q: %v", rs.Primary.ID, err)
+		}
+		if wantID == nil || *wantID == "" {
+			return fmt.Errorf("ui address id was not captured")
+		}
+		if rs.Primary.Attributes["ui_address_id"] != *wantID {
+			return fmt.Errorf("state ui_address_id = %s, want %s", rs.Primary.Attributes["ui_address_id"], *wantID)
+		}
+		want, err := strconv.Atoi(*wantID)
+		if err != nil || want <= 0 {
+			return fmt.Errorf("ui address id %q: %v", *wantID, err)
+		}
+		client, err := acctest.SDKClient()
+		if err != nil {
+			return err
+		}
+		got, err := client.Tenants.Get(context.Background(), id)
+		if err != nil {
+			return err
+		}
+		if got.UIAddress.Int() != want {
+			return fmt.Errorf("tenant %d ui_address = %d, want %d", id, got.UIAddress.Int(), want)
+		}
+		return nil
+	}
+}
+
 func testAccTenantIsolateConfig(tenantName string, isolate bool) string {
 	if err := acctest.RequirePrefix(tenantName); err != nil {
 		panic(err)

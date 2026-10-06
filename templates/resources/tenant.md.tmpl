@@ -10,13 +10,15 @@ description: |-
 
 Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instance. `powerstate` powers it on or off and waits up to 2 minutes for terminal online or offline status (not merely starting or stopping) and for the tenant network to stop when powering off. Destroy powers a running tenant off and waits for its network to stop before delete. `vergeio_tenant_node` destroy gracefully powers off only that node when it is running (then kills if needed), so sibling nodes stay up. `powerstate = true` defers power on when the tenant has no node yet, including the first apply of a configuration that also declares `vergeio_tenant_node`. Refresh stores the offline power state. The next apply powers the tenant on.
 
-`ui_address` is the IP of the tenant UI, resolved from the `ui_address` row (`ui_address_id`). It stays empty until VergeOS assigns that address. Use it as the `host` of a second Terraform configuration that manages the inside of the tenant. See the [tenants guide](../guides/tenants.html).
+`ui_address` is the IP of the tenant UI, resolved from the `ui_address` row. It stays empty until VergeOS assigns that address. Use it as the `host` of a second Terraform configuration that manages the inside of the tenant. See the [tenants guide](../guides/tenants.html).
+
+`ui_address_id` chooses which assigned external IP is that address, on create and on update. Set it to the id of a `vergeio_tenant_external_ip`. Omit it to leave the current UI address unchanged. The first assigned IP becomes the UI address, and the next plan stores that address once it exists. A change made in the parent UI is drift, and the next apply restores the configured value. The address resource takes `tenant_id` from this tenant, so set `ui_address_id` on a later change, after that address exists.
 
 `password` is the tenant admin user's password. VergeOS does not return it. Terraform keeps the configured value in state. `change_password` is sent only when the tenant is created and is kept the same way, so a later refresh does not replace the tenant when VergeOS clears the first-login flag. `preferred_node` is sent only when `powerstate` changes to true. VergeOS does not return it either.
 
 `isolate` turns tenant network isolation on or off. `true` calls isolate on and `false` calls isolate off. Omit it to leave the current isolation unchanged. A change made in the parent UI is drift, and the next apply restores the configured value.
 
-`vergeio_tenant_external_ip` assigns one parent external IP to this tenant. The first assigned IP becomes `ui_address`. The next plan stores that address once it exists. `vergeio_tenant_network_block` assigns one routed CIDR (`vnet_cidrs`) from a parent network to this tenant. Assigning an address or a block can leave `need_fw_apply` set on the parent external network. Both resources report that flag as `parent_firewall_pending`. Apply that network firewall, with `apply_parent_firewall` or `vergeio_network_rules`, before you treat the assignment as live. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into this tenant (`tenant_layer2_vnets`). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation.
+`vergeio_tenant_external_ip` assigns one parent external IP to this tenant. `vergeio_tenant_network_block` assigns one routed CIDR (`vnet_cidrs`) from a parent network to this tenant. Assigning an address or a block can leave `need_fw_apply` set on the parent external network. Both resources report that flag as `parent_firewall_pending`. Apply that network firewall, with `apply_parent_firewall` or `vergeio_network_rules`, before you treat the assignment as live. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into this tenant (`tenant_layer2_vnets`). Destroy disables the assignment, then deletes it. Networks created inside the tenant remain after that host-side delete and belong to the tenant-side configuration. Leaving those components in place can block a later recreation.
 
 ## Example Usage
 
@@ -43,6 +45,7 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 - `powerstate` (Boolean) Whether the tenant is powered on. Omit to leave the current power unchanged. `true` defers power on when the tenant has no node yet, including the first apply of a configuration that also declares `vergeio_tenant_node`. Refresh stores the offline power state. The next apply powers the tenant on.
 - `preferred_node` (Number) Host node used when `powerstate` changes to true. Changing it while the tenant is already on does not move the tenant.
 - `theme_access` (String) Theme visibility: `specified`, `host_only`, `local_only`, or `both`.
+- `ui_address_id` (Number) Key of the vnet address row that holds the tenant UI address. Set this to one of the tenant's assigned external IPs, the id of a `vergeio_tenant_external_ip`, to choose the UI address on create or update. Omit it to leave the current UI address unchanged. The first assigned IP becomes the UI address when none is chosen. A change made in the parent UI is drift, and the next apply restores the configured value.
 - `url` (String) Optional URL recorded on the tenant.
 
 ### Read-Only
@@ -53,8 +56,7 @@ Creates a tenant on the parent VergeOS system. A tenant is a full VergeOS instan
 - `is_snapshot` (Boolean) Whether this tenant record is a snapshot.
 - `state` (String) Simplified tenant state from tenant status: `online`, `offline`, `warning`, or `error`.
 - `status` (String) Tenant status string, such as `online`, `starting`, `stopping`, or `offline`.
-- `ui_address` (String) IP address of the tenant UI. The first IP from `vergeio_tenant_external_ip` becomes this address. The next plan stores it once VergeOS has assigned it.
-- `ui_address_id` (Number) Key of the vnet address row that holds the tenant UI address.
+- `ui_address` (String) IP address of the tenant UI, resolved from `ui_address_id`. The first IP from `vergeio_tenant_external_ip` becomes this address when `ui_address_id` is omitted. The next plan stores it once VergeOS has assigned it.
 - `uuid` (String) Tenant UUID assigned by VergeOS.
 - `vnet` (Number) Key of the network VergeOS creates for the tenant.
 
