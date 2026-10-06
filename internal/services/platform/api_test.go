@@ -224,6 +224,26 @@ func TestCertificateCreateKeepsPrivateKeyOutOfState(t *testing.T) {
 	}
 }
 
+func TestCertificateCreateKeepsIDWhenGetOmitsKey(t *testing.T) {
+	fake := newPlatformFake()
+	fake.omitGetKey = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	self := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	if err := api.createCertificate(context.Background(), self, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if self.ID.ValueString() != "1" || self.DomainName.ValueString() != "tf-acc-ui.local" {
+		t.Fatalf("id=%s domain_name=%s", self.ID.ValueString(), self.DomainName.ValueString())
+	}
+}
+
 func TestCertificateImportReadFillsReplaceFields(t *testing.T) {
 	fake := newPlatformFake()
 	fake.seedCertificate(vergeos.Certificate{
@@ -340,6 +360,21 @@ func TestCertificateImportReadManualKeepsDomain(t *testing.T) {
 	data := importCertificate(t, fake, strconv.Itoa(id))
 	if data.DomainName.ValueString() != "tf-acc-manual.local" {
 		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
+	}
+
+	// The detail read can omit domain while Certificates.Get still has it.
+	omitted := newPlatformFake()
+	omitted.omitDetailDomain = true
+	omittedID := omitted.seedCertificate(vergeos.Certificate{
+		Domain:      "tf-acc-manual.local",
+		Description: "uploaded",
+		Type:        vergeos.CertificateTypeManual,
+		Public:      testCertificatePEM(t, "verge-api", ""),
+	})
+	omitted.setDomainName(omittedID, "other.example")
+	kept := importCertificate(t, omitted, strconv.Itoa(omittedID))
+	if kept.DomainName.ValueString() != "tf-acc-manual.local" || kept.Domain.ValueString() != "tf-acc-manual.local" {
+		t.Fatalf("domain_name=%q domain=%q", kept.DomainName.ValueString(), kept.Domain.ValueString())
 	}
 }
 
@@ -895,6 +930,8 @@ type platformFake struct {
 	privateReads     int
 	domainNames      map[int]string
 	certFieldQueries []string
+	omitDetailDomain bool
+	omitGetKey       bool
 	failPuts         int
 	failPutStatus    int
 	putAttempts      int
@@ -1106,10 +1143,18 @@ func (f *platformFake) getCertificate(w http.ResponseWriter, r *http.Request) {
 	} else {
 		cert.Private = ""
 	}
-	writeJSON(w, fakeCertBody{
+	body := fakeCertBody{
 		Certificate: cert,
 		DomainName:  f.domainNames[int(cert.Key)],
-	})
+	}
+	if fields == certificateDetailFields && f.omitDetailDomain {
+		body.Domain = ""
+		body.DomainList = ""
+	}
+	if f.omitGetKey {
+		body.Key = 0
+	}
+	writeJSON(w, body)
 }
 
 func (f *platformFake) updateCertificate(w http.ResponseWriter, r *http.Request) {

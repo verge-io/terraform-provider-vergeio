@@ -4,8 +4,10 @@
 package platform
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"strconv"
@@ -338,11 +340,46 @@ func (a *API) createCertificate(ctx context.Context, data *certificateModel, pri
 		Contact:     contact,
 		AgreeTOS:    boolPtr(data.AgreeTOS),
 	}
-	created, err := a.sdk.Certificates.Create(ctx, req)
+	id, err := a.createCertificateRow(ctx, req)
 	if err != nil {
 		return err
 	}
-	return a.applyCertificate(ctx, data, created, *data)
+	got, err := a.sdk.Certificates.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	return a.applyCertificate(ctx, data, certificateWithID(got, id), *data)
+}
+
+// createCertificateRow posts the certificate and returns the new key.
+// The key comes from the create response, so a later Get that omits $key
+// cannot drop the id after VergeOS has already stored the row.
+func (a *API) createCertificateRow(ctx context.Context, req *vergeos.CertificateCreateRequest) (int, error) {
+	if a == nil || a.http == nil {
+		return 0, fmt.Errorf("vergeio client is nil")
+	}
+	buf, err := json.Marshal(req)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := a.http.Post(ctx, certificateCollection, bytes.NewBuffer(buf))
+	if err != nil {
+		return 0, err
+	}
+	if resp == nil || resp.Body == nil {
+		return 0, fmt.Errorf("empty response from certificate create")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var created struct {
+		Key vergeos.FlexInt `json:"$key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return 0, fmt.Errorf("decode certificate create: %w", err)
+	}
+	if created.Key <= 0 {
+		return 0, fmt.Errorf("certificate create did not return a key")
+	}
+	return int(created.Key), nil
 }
 
 func (a *API) readCertificate(ctx context.Context, data *certificateModel) error {
@@ -360,10 +397,7 @@ func (a *API) readCertificate(ctx context.Context, data *certificateModel) error
 	if got != nil && int(got.Key) != id {
 		tflog.Debug(ctx, fmt.Sprintf("certificate read requested id %d and VergeOS returned key %d", id, int(got.Key)))
 	}
-	if got != nil && got.Key == 0 {
-		got.Key = vergeos.FlexInt(id)
-	}
-	return a.applyCertificate(ctx, data, got, *data)
+	return a.applyCertificate(ctx, data, certificateWithID(got, id), *data)
 }
 
 func (a *API) updateCertificate(ctx context.Context, plan, state *certificateModel, privateKey, hmac string) error {
@@ -409,10 +443,7 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 	if err != nil {
 		return err
 	}
-	if got != nil && got.Key == 0 {
-		got.Key = vergeos.FlexInt(id)
-	}
-	return a.applyCertificate(ctx, plan, got, *plan)
+	return a.applyCertificate(ctx, plan, certificateWithID(got, id), *plan)
 }
 
 func (a *API) deleteCertificate(ctx context.Context, id int) error {
@@ -434,10 +465,12 @@ func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert
 	publicRaw := strings.TrimSpace(row.Public)
 	public := certificatePublic(publicRaw)
 	pemName := domainFromPEM(public)
-	chosen := chooseCertificateDomainName(cert.Type, row.Domain, row.DomainName, row.DomainList, public)
+	domain := firstNonEmpty(row.Domain, cert.Domain)
+	domainList := firstNonEmpty(row.DomainList, cert.DomainList)
+	chosen := chooseCertificateDomainName(cert.Type, domain, row.DomainName, domainList, public)
 	tflog.Debug(ctx, fmt.Sprintf(
 		"certificate read id=%d type=%s domain=%q domainname=%q public=%q pem=%q chosen=%q",
-		id, cert.Type, row.Domain, row.DomainName, summarizeCertificatePublic(publicRaw), pemName, chosen,
+		id, cert.Type, domain, row.DomainName, summarizeCertificatePublic(publicRaw), pemName, chosen,
 	))
 	data.ID = idString(id)
 	if cert.Type != "" {
@@ -445,9 +478,9 @@ func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert
 	} else if knownString(prior.Type) {
 		data.Type = prior.Type
 	}
-	data.Domain = stringFromAPI(firstNonEmpty(row.Domain, cert.Domain), prior.Domain)
+	data.Domain = stringFromAPI(domain, prior.Domain)
 	data.DomainName = applyDomainName(prior.DomainName, chosen)
-	data.DomainList = stringFromAPI(firstNonEmpty(row.DomainList, cert.DomainList), prior.DomainList)
+	data.DomainList = stringFromAPI(domainList, prior.DomainList)
 	data.Description = stringFromAPI(cert.Description, prior.Description)
 	data.PublicCertificate = keepPEM(public, prior.PublicCertificate)
 	data.Chain = keepPEM(row.Chain, prior.Chain)
@@ -511,6 +544,19 @@ func summarizeCertificatePublic(raw string) string {
 		return "pem"
 	}
 	return raw
+}
+
+func certificateWithID(cert *vergeos.Certificate, id int) *vergeos.Certificate {
+	if cert == nil {
+		if id <= 0 {
+			return nil
+		}
+		cert = &vergeos.Certificate{}
+	}
+	if int(cert.Key) <= 0 && id > 0 {
+		cert.Key = vergeos.FlexInt(id)
+	}
+	return cert
 }
 
 func firstNonEmpty(values ...string) string {
