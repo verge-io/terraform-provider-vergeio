@@ -51,7 +51,7 @@ func (a *NetworkApplyAction) Metadata(ctx context.Context, req action.MetadataRe
 
 func (a *NetworkApplyAction) Schema(ctx context.Context, req action.SchemaRequest, resp *action.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Apply staged firewall rules or DNS changes on a running VergeOS network. Use it when vergeio_network_rule resources set apply to false. rules refreshes the network so staged firewall rules take effect. dns refreshes DNS only. all does rules, then dns. The action does not wait for need_fw_apply to clear. A stopped network returns an error and is not refreshed. It loads staged rules when it starts. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.",
+		MarkdownDescription: "Apply staged firewall rules or DNS changes on a running VergeOS network. Use it when vergeio_network_rule or a DNS resource sets apply to false. rules refreshes the network so staged firewall rules take effect. dns refreshes DNS only. all does rules, then dns. The action does not wait for need_fw_apply to clear. A stopped network returns an error and is not refreshed. It loads staged rules and staged DNS when it starts. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.",
 		Attributes: map[string]schema.Attribute{
 			"network_id": schema.StringAttribute{
 				MarkdownDescription: "Network id, the same value as vergeio_network.id.",

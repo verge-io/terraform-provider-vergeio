@@ -276,6 +276,13 @@ func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceMo
 		return fmt.Errorf("invalid network ID format: %v", err)
 	}
 
+	// DNS views are removed first. VergeOS deletes zones and records with the
+	// view. A refused view delete is retried after those rows are gone, so a
+	// partial create cannot leave a row that blocks this delete.
+	if err := DeleteNetworkDNSRows(ctx, nc.sdk, networkIDInt); err != nil {
+		return err
+	}
+
 	// Call SDK API
 	err = nc.sdk.Networks.Delete(ctx, networkIDInt)
 	if err != nil {
