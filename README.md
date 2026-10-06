@@ -67,7 +67,7 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_vm_power
 - vergeio_tenant_snapshot
 
-`vergeio_vm_snapshot` takes an instant VM snapshot. `name` and `retention_seconds` are optional. `quiesce` asks the guest agent to freeze filesystems. `vergeio_tenant_snapshot` snapshots a whole tenant. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. Use it when `vergeio_network_rule` sets `apply` to false. A stopped network is left unchanged and the action returns an error. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. A later plan of that VM restores a declared powerstate. `timeout_seconds` and `force` apply only to `shutdown`.
+`vergeio_vm_snapshot` takes an instant VM snapshot. `name` and `retention_seconds` are optional. `quiesce` asks the guest agent to freeze filesystems. `vergeio_tenant_snapshot` snapshots a whole tenant. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. Use it when `vergeio_network_rule` sets `apply` to false. A stopped network is left unchanged and the action returns an error. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. `power_on` posts poweron when the machine is not running, including when the VM `powerstate` column is already true. A later plan of that VM restores a declared powerstate. `timeout_seconds` and `force` apply only to `shutdown`.
 
 ## Query
 

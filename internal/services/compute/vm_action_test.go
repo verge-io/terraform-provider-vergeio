@@ -285,6 +285,44 @@ func TestVMPowerActionInvoke(t *testing.T) {
 	}
 }
 
+func TestVMPowerActionPowerOnIgnoresStalePowerState(t *testing.T) {
+	var posts []string
+	running := false
+	server := actionTestServer(t, func(w http.ResponseWriter, r *http.Request) bool {
+		body, _ := io.ReadAll(r.Body)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			flag := "false"
+			if running {
+				flag = "true"
+			}
+			_, _ = w.Write([]byte(`{"$key":7,"powerstate":true,"running":` + flag + `}`))
+			return true
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			posts = append(posts, string(body))
+			running = true
+			_, _ = w.Write([]byte(`{}`))
+			return true
+		default:
+			return false
+		}
+	})
+	item := configuredPowerAction(t, server.URL)
+	resp := &action.InvokeResponse{}
+	item.Invoke(context.Background(), action.InvokeRequest{Config: actionModelConfig(t, item, &vmPowerActionModel{
+		VMID:           types.StringValue("7"),
+		Operation:      types.StringValue(vmPowerOn),
+		TimeoutSeconds: types.Int64Null(),
+		Force:          types.BoolNull(),
+	})}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if len(posts) != 1 || !strings.Contains(posts[0], `"action":"poweron"`) {
+		t.Fatalf("posts = %#v, want one poweron", posts)
+	}
+}
+
 func TestVMPowerActionConfigureRejectsBadClient(t *testing.T) {
 	item := &VMPowerAction{}
 	resp := &action.ConfigureResponse{}

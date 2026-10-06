@@ -3,12 +3,12 @@
 page_title: "vergeio_vm_power Action - vergeio"
 subcategory: ""
 description: |-
-  Shut down, reset, or power on a VergeOS VM without changing vergeio_vm.powerstate. shutdown sends one ACPI poweroff and waits until the guest stops. reset is the reset button. power_on waits until the VM is running. A later plan of vergeio_vm restores a declared powerstate. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+  Shut down, reset, or power on a VergeOS VM without changing vergeio_vm.powerstate. shutdown sends one ACPI poweroff and waits until the guest stops. reset is the reset button. power_on posts poweron when the machine is not running and waits until it is running. The VM powerstate column is not used for that decision. A later plan of vergeio_vm restores a declared powerstate. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 ---
 
 # vergeio_vm_power (Action)
 
-Shut down, reset, or power on a VergeOS VM without changing vergeio_vm.powerstate. shutdown sends one ACPI poweroff and waits until the guest stops. reset is the reset button. power_on waits until the VM is running. A later plan of vergeio_vm restores a declared powerstate. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+Shut down, reset, or power on a VergeOS VM without changing vergeio_vm.powerstate. shutdown sends one ACPI poweroff and waits until the guest stops. reset is the reset button. power_on posts poweron when the machine is not running and waits until it is running. The VM powerstate column is not used for that decision. A later plan of vergeio_vm restores a declared powerstate. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 
 ## Example Usage
 

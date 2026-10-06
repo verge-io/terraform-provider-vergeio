@@ -5,9 +5,12 @@ package compute
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
+	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -40,6 +43,7 @@ func NewVMPowerAction() action.Action {
 // A later plan of that resource restores the declared power state when it is set.
 type VMPowerAction struct {
 	sdk *vergeos.Client
+	api *VMApi
 }
 
 type vmPowerActionModel struct {
@@ -55,7 +59,7 @@ func (a *VMPowerAction) Metadata(ctx context.Context, req action.MetadataRequest
 
 func (a *VMPowerAction) Schema(ctx context.Context, req action.SchemaRequest, resp *action.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Shut down, reset, or power on a VergeOS VM without changing vergeio_vm.powerstate. shutdown sends one ACPI poweroff and waits until the guest stops. reset is the reset button. power_on waits until the VM is running. A later plan of vergeio_vm restores a declared powerstate. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.",
+		MarkdownDescription: "Shut down, reset, or power on a VergeOS VM without changing vergeio_vm.powerstate. shutdown sends one ACPI poweroff and waits until the guest stops. reset is the reset button. power_on posts poweron when the machine is not running and waits until it is running. The VM powerstate column is not used for that decision. A later plan of vergeio_vm restores a declared powerstate. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.",
 		Attributes: map[string]schema.Attribute{
 			"vm_id": schema.StringAttribute{
 				MarkdownDescription: "VM id, the same value as vergeio_vm.id.",
@@ -90,6 +94,19 @@ func (a *VMPowerAction) Configure(ctx context.Context, req action.ConfigureReque
 		return
 	}
 	a.sdk = sdk
+	if sdk == nil {
+		return
+	}
+	client, ok := req.ProviderData.(*vergeio.Client)
+	if !ok {
+		return
+	}
+	api, err := NewVMApi(client)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create VergeOS API Client", err.Error())
+		return
+	}
+	a.api = api
 }
 
 func (a *VMPowerAction) ValidateConfig(ctx context.Context, req action.ValidateConfigRequest, resp *action.ValidateConfigResponse) {
@@ -150,13 +167,33 @@ func (a *VMPowerAction) Invoke(ctx context.Context, req action.InvokeRequest, re
 	case vmPowerReset:
 		err = a.sdk.VMs.Reset(ctx, vmID)
 	case vmPowerOn:
-		err = a.sdk.VMs.PowerOn(ctx, vmID)
+		err = a.powerOn(ctx, vmID)
 	default:
 		err = fmt.Errorf("operation %q is not shutdown, reset, or power_on", operation)
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error Changing VM Power", err.Error())
 	}
+}
+
+// powerOn posts poweron when the machine is stopped. VMService.PowerOn
+// returns without posting when the powerstate column is already true.
+func (a *VMPowerAction) powerOn(ctx context.Context, vmID int) error {
+	if a.api == nil {
+		return errors.New("missing API client")
+	}
+	id := strconv.Itoa(vmID)
+	running, _, err := a.api.readVMPowerStatus(ctx, id)
+	if err != nil {
+		return err
+	}
+	if running {
+		return nil
+	}
+	if err := a.api.postVMAction(ctx, id, vmActionPowerOn); err != nil {
+		return err
+	}
+	return a.api.waitForVMPower(ctx, id, true, vmPowerWaitTimeout, powerOnInterval)
 }
 
 func powerOffOptions(data vmPowerActionModel) *vergeos.VMPowerOffOptions {
