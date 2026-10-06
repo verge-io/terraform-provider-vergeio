@@ -1,0 +1,1 @@
+terraform import vergeio_network_ipsec_connection.example <phase1_id>
