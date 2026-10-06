@@ -80,6 +80,9 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_group
 - vergeio_member
 - vergeio_network
+- vergeio_network_dns_record
+- vergeio_network_dns_view
+- vergeio_network_dns_zone
 - vergeio_network_rule
 - vergeio_network_rule_alias
 - vergeio_network_rules
@@ -101,6 +104,8 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_vm_recipe_instance
 
 Devices stay nested on `vergeio_vm`.
+
+`vergeio_network_dns_view`, `vergeio_network_dns_zone`, and `vergeio_network_dns_record` manage DNS on a network. A record can take `value` from `vergeio_vm_nic.ipaddress`, or set `vm_nic_id` so Terraform reads that NIC address. A change sets `need_dns_apply`. `apply` defaults to true and refreshes DNS on a running network, the same way `vergeio_network_rule` refreshes firewall rules. Set `apply` to false to stage several DNS resources, then leave it true on the last one. A stopped network loads staged DNS when it starts.
 
 `vergeio_vm_recipe_instance` deploys a VM from a catalog recipe. `vergeio_catalogs` and `vergeio_vm_recipes` look the recipe up by name. `answers` is a map of strings. A disk size is bytes, so 50 GB is `53687091200`. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. The resource deploys the VM. It has no simulate argument.
 

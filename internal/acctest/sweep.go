@@ -907,6 +907,9 @@ func deleteNetwork(ctx context.Context, client *vergeos.Client, id int) error {
 	// IPsec rows are not removed with the network, and a phase 1 delete
 	// while a phase 2 row remains fails permanently. Peers go before the
 	// WireGuard interface.
+	if err := network.DeleteNetworkDNSRows(ctx, client, id); err != nil {
+		return err
+	}
 	if err := network.DeleteNetworkVPNRows(ctx, client, id); err != nil {
 		return err
 	}

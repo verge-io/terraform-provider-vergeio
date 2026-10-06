@@ -1127,7 +1127,7 @@ func TestNetworkDeleteRefusesWhileVPNRemains(t *testing.T) {
 }
 
 func TestNetworkDeleteProceedsWhenVPNIsGone(t *testing.T) {
-	var deleted bool
+	var deleted, listedDNS bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
@@ -1140,6 +1140,9 @@ func TestNetworkDeleteProceedsWhenVPNIsGone(t *testing.T) {
 			writeBody(w, `[]`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets":
 			writeBody(w, `[{"$key":12,"name":"lan","running":false}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_dns_views":
+			listedDNS = true
+			writeBody(w, `[]`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnets/12":
 			deleted = true
 			writeBody(w, `{}`)
@@ -1166,6 +1169,9 @@ func TestNetworkDeleteProceedsWhenVPNIsGone(t *testing.T) {
 	}
 	if !deleted {
 		t.Fatal("network was not deleted")
+	}
+	if !listedDNS {
+		t.Fatal("network delete did not look for DNS views")
 	}
 }
 

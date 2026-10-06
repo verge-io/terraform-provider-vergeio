@@ -84,11 +84,12 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 * #32. `vergeio_vm_recipe_instance` deploys a VM from a catalog recipe. `answers` is a map of strings. Disk size answers are bytes. A bool answer VergeOS would store as false is rejected before the request is sent. There is no simulate argument. `vergeio_catalogs` and `vergeio_vm_recipes` look a recipe up by name. Managing recipes and catalogs as code is still later work.
 
+* #74 is closed. `vergeio_network_dns_view`, `vergeio_network_dns_zone`, and `vergeio_network_dns_record` manage DNS views, zones, and records. A record `value` can be a `vergeio_vm_nic` address, or `vm_nic_id` so the provider reads that NIC. A change sets `need_dns_apply`. `apply` defaults to true and calls the same DNS refresh as `vergeio_network_apply` with target dns. Set `apply` to false to stage a batch, then leave it true on the last resource. A stopped network is not refreshed. It loads staged DNS when it starts. VergeOS deletes records with a zone and zones with a view. A refused delete removes the child rows first so they cannot block network delete.
+
 The remaining issues in this section are open.
 
 * #70. `vergeio_api_key` manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it. `ephemeral.vergeio_api_key` remains the short-lived token for one run, and Open still deletes an existing key of that name. Do not reuse a managed key's name there. `vergeio_auth_source` manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret` or other omitted keys. A key removed from `settings` stays on the auth source. Replace the auth source to drop it.
 * #73. IPsec and WireGuard, including teardown order.
-* #74. DNS zones, records, and views.
 * #75. NAS services, volumes, and CIFS and NFS shares.
 * #76. DR building blocks: sites, site sync, and cloud snapshots as resources.
 * #77. A published modules repository (tenant, network segment, VM).

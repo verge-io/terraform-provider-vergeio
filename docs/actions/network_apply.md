@@ -3,12 +3,12 @@
 page_title: "vergeio_network_apply Action - vergeio"
 subcategory: ""
 description: |-
-  Apply staged firewall rules or DNS changes on a running VergeOS network. Use it when vergeio_network_rule resources set apply to false. rules refreshes the network so staged firewall rules take effect. dns refreshes DNS only. all does rules, then dns. The action does not wait for need_fw_apply to clear. A stopped network returns an error and is not refreshed. It loads staged rules when it starts. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+  Apply staged firewall rules or DNS changes on a running VergeOS network. Use it when vergeio_network_rule or a DNS resource sets apply to false. rules refreshes the network so staged firewall rules take effect. dns refreshes DNS only. all does rules, then dns. The action does not wait for need_fw_apply to clear. A stopped network returns an error and is not refreshed. It loads staged rules and staged DNS when it starts. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 ---
 
 # vergeio_network_apply (Action)
 
-Apply staged firewall rules or DNS changes on a running VergeOS network. Use it when vergeio_network_rule resources set apply to false. rules refreshes the network so staged firewall rules take effect. dns refreshes DNS only. all does rules, then dns. The action does not wait for need_fw_apply to clear. A stopped network returns an error and is not refreshed. It loads staged rules when it starts. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+Apply staged firewall rules or DNS changes on a running VergeOS network. Use it when vergeio_network_rule or a DNS resource sets apply to false. rules refreshes the network so staged firewall rules take effect. dns refreshes DNS only. all does rules, then dns. The action does not wait for need_fw_apply to clear. A stopped network returns an error and is not refreshed. It loads staged rules and staged DNS when it starts. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 
 ## Example Usage
 
