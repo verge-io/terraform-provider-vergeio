@@ -81,13 +81,20 @@ func (a *vpnAPI) createIPSecConnection(ctx context.Context, data *ipsecConnectio
 		}
 		return fmt.Errorf("create IPsec phase 2: %w", err)
 	}
-	data.ID = typesStringID(phase1.Key.Int())
+	phase1ID := phase1.Key.Int()
+	data.ID = typesStringID(phase1ID)
 	if data.Phase2 == nil {
 		data.Phase2 = &ipsecPhase2Model{}
 	}
 	data.Phase2.ID = typesStringID(phase2.Key.Int())
 	tflog.Debug(ctx, fmt.Sprintf("Created IPsec phase 1 %s and phase 2 %s", data.ID.ValueString(), data.Phase2.ID.ValueString()))
-	return a.readIPSecConnection(ctx, data)
+	if err := a.readIPSecConnection(ctx, data); err != nil {
+		if cleanupErr := deletePhase1AfterPhase2(ctx, a.sdk, phase1ID); cleanupErr != nil {
+			return fmt.Errorf("IPsec phase 1 %d was created but not stored in state: %w (%v)", phase1ID, err, cleanupErr)
+		}
+		return fmt.Errorf("IPsec phase 1 %d was created but not stored in state, and the phase 2 and phase 1 rows were removed: %w", phase1ID, err)
+	}
+	return nil
 }
 
 func (a *vpnAPI) readIPSecConnection(ctx context.Context, data *ipsecConnectionModel) error {

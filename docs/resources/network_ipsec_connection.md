@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_network_ipsec_connection (Resource)
 
-`vergeio_network_ipsec_connection` is one tunnel: a phase 1 (IKE) and one phase 2 (IPsec SA). Set `ipsec_id` to `vergeio_network_ipsec.id`.
+`vergeio_network_ipsec_connection` is one tunnel: a phase 1 (IKE) and one phase 2 (IPsec SA). Set `ipsec_id` to `vergeio_network_ipsec.id`. Configure the phase 2 in the `phase2` block. That block is required.
 
 Destroy deletes every phase 2 under that phase 1, then the phase 1. Phase 2 is first because a phase 1 delete while a phase 2 row remains fails and then keeps failing. That includes a phase 2 row this resource does not list. Live security-association rows from `vnet_ipsec_connections` are read and not stored.
 
@@ -54,7 +54,6 @@ resource "vergeio_network_ipsec_connection" "branch" {
 
 - `ipsec_id` (String) IPsec configuration id, the same value as vergeio_network_ipsec.id. Changing it replaces this resource.
 - `name` (String) Phase 1 name.
-- `phase2` (Attributes) Phase 2 selector for this tunnel. Destroy removes every phase 2 under the phase 1, including a row this resource does not list, and then removes the phase 1. (see [below for nested schema](#nestedatt--phase2))
 - `remote_gateway` (String) Remote peer address or hostname.
 
 ### Optional
@@ -76,6 +75,7 @@ resource "vergeio_network_ipsec_connection" "branch" {
 - `mobike` (Boolean) Enable IKEv2 MOBIKE. Omit to leave the current value unchanged.
 - `negotiation` (String) IKEv1 negotiation mode: main or aggressive. Omit to leave the current value unchanged.
 - `peer_identifier` (String) Remote IKE identity. Blank uses remote_gateway. Omit to leave the current value unchanged.
+- `phase2` (Block, Optional) Phase 2 selector for this tunnel. Required. Destroy removes every phase 2 under the phase 1, including a row this resource does not list, and then removes the phase 1. (see [below for nested schema](#nestedblock--phase2))
 - `psk` (String, Sensitive) Pre-shared key. The API read used here does not return it, so Terraform keeps the configured value. Required by VergeOS when auth is psk.
 - `reauth` (Boolean) Reauthenticate during IKEv2 rekey. Omit to leave the current value unchanged.
 - `rekey` (Boolean) Renegotiate before the IKE SA expires. Omit to leave the current value unchanged.
@@ -85,7 +85,7 @@ resource "vergeio_network_ipsec_connection" "branch" {
 
 - `id` (String) Phase 1 id. Import vergeio_network_ipsec_connection with this value.
 
-<a id="nestedatt--phase2"></a>
+<a id="nestedblock--phase2"></a>
 ### Nested Schema for `phase2`
 
 Required:

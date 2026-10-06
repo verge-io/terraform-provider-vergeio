@@ -60,16 +60,27 @@ func (a *vpnAPI) createWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 	if err != nil {
 		return nil, err
 	}
-	data.ID = typesStringID(created.Key.Int())
+	id := created.Key.Int()
+	data.ID = typesStringID(id)
 	tflog.Debug(ctx, fmt.Sprintf("Created WireGuard interface %s on network %d", data.ID.ValueString(), req.VNet))
 	if err := a.readWireGuard(ctx, data); err != nil {
-		return nil, err
+		return nil, dropCreatedWireGuard(ctx, a.sdk, id, err)
 	}
 	notice, err := a.applyStagedFirewall(ctx, req.VNet, applyEnabled(data.Apply))
 	if err != nil {
-		return nil, fmt.Errorf("WireGuard interface %d was created but firewall rules were not applied: %w", created.Key.Int(), err)
+		return nil, dropCreatedWireGuard(ctx, a.sdk, id, fmt.Errorf("firewall rules were not applied: %w", err))
 	}
 	return notice, nil
+}
+
+// dropCreatedWireGuard deletes an interface that create wrote but did not
+// store in state. Delete disables the interface and applies the network
+// first, which is what VergeOS requires.
+func dropCreatedWireGuard(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
+	if err := deleteWireGuardInterface(ctx, sdk, id); err != nil {
+		return fmt.Errorf("WireGuard interface %d was created but not stored in state: %w (%v)", id, cause, err)
+	}
+	return fmt.Errorf("WireGuard interface %d was created but not stored in state, and the row was removed: %w", id, cause)
 }
 
 func (a *vpnAPI) readWireGuard(ctx context.Context, data *wireGuardModel) error {
@@ -125,8 +136,10 @@ func (a *vpnAPI) updateWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 	return a.applyStagedFirewall(ctx, networkID, applyEnabled(data.Apply))
 }
 
-// deleteWireGuard refuses while a peer remains, then applies the firewall
-// so a removed Accept WireGuard rule is not left staged.
+// deleteWireGuard refuses while a peer remains. VergeOS rejects a delete
+// while the interface is enabled, so the interface is disabled and the
+// network is applied first. A later apply clears a removed Accept WireGuard
+// rule that the delete leaves staged.
 func (a *vpnAPI) deleteWireGuard(ctx context.Context, data *wireGuardModel) (*firewallNotice, error) {
 	id, err := parsePositiveID(stringOrEmpty(data.ID))
 	if err != nil {
@@ -153,12 +166,16 @@ func (a *vpnAPI) deleteWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 		}
 		return nil, err
 	}
-	if err := a.sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	if err := deleteWireGuardInterface(ctx, a.sdk, id); err != nil {
 		return nil, err
 	}
 	networkID := row.VNet.Int()
 	if networkID <= 0 {
-		networkID, _ = parsePositiveID(stringOrEmpty(data.NetworkID))
+		parsed, parseErr := parsePositiveID(stringOrEmpty(data.NetworkID))
+		if parseErr != nil {
+			return nil, fmt.Errorf("network_id: %w", parseErr)
+		}
+		networkID = parsed
 	}
 	return a.applyStagedFirewall(ctx, networkID, applyEnabled(data.Apply))
 }
@@ -166,7 +183,7 @@ func (a *vpnAPI) deleteWireGuard(ctx context.Context, data *wireGuardModel) (*fi
 func (a *vpnAPI) applyWireGuardNetwork(ctx context.Context, data *wireGuardModel) (*firewallNotice, error) {
 	networkID, err := parsePositiveID(stringOrEmpty(data.NetworkID))
 	if err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("network_id: %w", err)
 	}
 	return a.applyStagedFirewall(ctx, networkID, applyEnabled(data.Apply))
 }
@@ -210,6 +227,9 @@ func wireGuardCreateRequest(data *wireGuardModel) (*vergeos.VNetWireGuardCreateR
 }
 
 func wireGuardUpdateRequest(data *wireGuardModel) *vergeos.VNetWireGuardUpdateRequest {
+	// configure_firewall and external_ip exist on the create request only.
+	// VNetWireGuardUpdateRequest has no fields for them. A change replaces
+	// the interface instead of sending an update the API would ignore.
 	req := &vergeos.VNetWireGuardUpdateRequest{
 		Name:        vergeio.KnownString(data.Name),
 		Description: vergeio.KnownString(data.Description),
@@ -232,16 +252,24 @@ func (a *vpnAPI) createWireGuardPeer(ctx context.Context, data *wireGuardPeerMod
 	if err != nil {
 		return nil, err
 	}
-	data.ID = typesStringID(created.Key.Int())
+	id := created.Key.Int()
+	data.ID = typesStringID(id)
 	tflog.Debug(ctx, fmt.Sprintf("Created WireGuard peer %s on interface %d", data.ID.ValueString(), req.WireGuard))
 	if err := a.readWireGuardPeer(ctx, data); err != nil {
-		return nil, err
+		return nil, dropCreatedWireGuardPeer(ctx, a.sdk, id, err)
 	}
 	notice, err := a.applyPeerFirewall(ctx, req.WireGuard, applyEnabled(data.Apply))
 	if err != nil {
-		return nil, fmt.Errorf("WireGuard peer %d was created but firewall rules were not applied: %w", created.Key.Int(), err)
+		return nil, dropCreatedWireGuardPeer(ctx, a.sdk, id, fmt.Errorf("firewall rules were not applied: %w", err))
 	}
 	return notice, nil
+}
+
+func dropCreatedWireGuardPeer(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
+	if err := sdk.VNetWireGuardPeers.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		return fmt.Errorf("WireGuard peer %d was created but not stored in state: %w (delete failed: %v)", id, cause, err)
+	}
+	return fmt.Errorf("WireGuard peer %d was created but not stored in state, and the row was removed: %w", id, cause)
 }
 
 func (a *vpnAPI) readWireGuardPeer(ctx context.Context, data *wireGuardPeerModel) error {
@@ -310,7 +338,10 @@ func (a *vpnAPI) deleteWireGuardPeer(ctx context.Context, data *wireGuardPeerMod
 	if err != nil {
 		return nil, fmt.Errorf("wireguard peer id: %w", err)
 	}
-	wireguardID, _, _ := optionalPositiveID(data.WireGuardID)
+	wireguardID, _, err := optionalPositiveID(data.WireGuardID)
+	if err != nil {
+		return nil, fmt.Errorf("wireguard_id: %w", err)
+	}
 	row, err := a.sdk.VNetWireGuardPeers.Get(ctx, id)
 	if err != nil {
 		if vergeos.IsNotFoundError(err) {

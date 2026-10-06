@@ -52,15 +52,29 @@ func (a *vpnAPI) createIPSec(ctx context.Context, data *ipsecModel) error {
 	if err != nil {
 		return err
 	}
-	data.ID = typesStringID(created.Key.Int())
+	id := created.Key.Int()
+	data.ID = typesStringID(id)
 	tflog.Debug(ctx, fmt.Sprintf("Created IPsec configuration %s on network %d", data.ID.ValueString(), networkID))
 
 	if ipsecCharonConfigured(data) {
-		if _, err := a.sdk.VNetIPSecs.Update(ctx, created.Key.Int(), ipsecUpdateRequest(data)); err != nil {
-			return fmt.Errorf("IPsec configuration %d was created but advanced settings were not saved: %w", created.Key.Int(), err)
+		if _, err := a.sdk.VNetIPSecs.Update(ctx, id, ipsecUpdateRequest(data)); err != nil {
+			return dropCreatedIPSec(ctx, a.sdk, id, fmt.Errorf("advanced settings were not saved: %w", err))
 		}
 	}
-	return a.readIPSec(ctx, data)
+	if err := a.readIPSec(ctx, data); err != nil {
+		return dropCreatedIPSec(ctx, a.sdk, id, err)
+	}
+	return nil
+}
+
+// dropCreatedIPSec deletes an IPsec row that create wrote but did not store
+// in state. The next apply would create another row, and network destroy
+// stays blocked while this one remains.
+func dropCreatedIPSec(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
+	if err := sdk.VNetIPSecs.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		return fmt.Errorf("IPsec configuration %d was created but not stored in state: %w (delete failed: %v)", id, cause, err)
+	}
+	return fmt.Errorf("IPsec configuration %d was created but not stored in state, and the row was removed: %w", id, cause)
 }
 
 func (a *vpnAPI) readIPSec(ctx context.Context, data *ipsecModel) error {

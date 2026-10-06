@@ -50,11 +50,41 @@ func deleteWireGuardRows(ctx context.Context, sdk *vergeos.Client, networkID int
 			errs = append(errs, err)
 			continue
 		}
-		if err := sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-			errs = append(errs, fmt.Errorf("delete WireGuard interface %d: %w", id, err))
+		if err := deleteWireGuardInterface(ctx, sdk, id); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// deleteWireGuardInterface disables the interface, applies that change on
+// the network, then deletes the interface. VergeOS returns 422 when the
+// interface is still enabled or the disable has not been applied.
+func deleteWireGuardInterface(ctx context.Context, sdk *vergeos.Client, id int) error {
+	row, err := sdk.VNetWireGuards.Get(ctx, id)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return fmt.Errorf("read WireGuard interface %d before delete: %w", id, err)
+	}
+	if row.Enabled {
+		disabled := false
+		if _, err := sdk.VNetWireGuards.Update(ctx, id, &vergeos.VNetWireGuardUpdateRequest{Enabled: &disabled}); err != nil && !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("disable WireGuard interface %d before delete: %w", id, err)
+		}
+	}
+	networkID := row.VNet.Int()
+	if networkID <= 0 {
+		return fmt.Errorf("WireGuard interface %d has no network, so it was not deleted", id)
+	}
+	if err := sdk.Networks.ApplyRules(ctx, networkID); err != nil {
+		return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
+	}
+	if err := sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		return fmt.Errorf("delete WireGuard interface %d: %w", id, err)
+	}
+	return nil
 }
 
 func deleteWireGuardPeerRows(ctx context.Context, sdk *vergeos.Client, wireguardID int) error {

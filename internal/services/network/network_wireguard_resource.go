@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/verge-io/govergeos"
@@ -38,7 +39,7 @@ func (r *NetworkWireGuardResource) Metadata(ctx context.Context, req resource.Me
 
 func (r *NetworkWireGuardResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "A WireGuard interface on a VergeOS network. Creating the interface stages firewall rules named Accept WireGuard and leaves them unapplied. apply defaults to true and refreshes a running network so the tunnel is not left half configured. Set apply to false to stage the rules and refresh later with vergeio_network_apply or vergeio_network_rules. A stopped network is not refreshed. It loads staged rules when it starts. Set network_id to vergeio_network.id. Destroy is refused while a peer still exists. " + vpnDeleteOrder,
+		MarkdownDescription: "A WireGuard interface on a VergeOS network. Creating the interface stages firewall rules named Accept WireGuard and leaves them unapplied. apply defaults to true and refreshes a running network so the tunnel is not left half configured. Set apply to false to stage the rules and refresh later with vergeio_network_apply or vergeio_network_rules. A stopped network is not refreshed. It loads staged rules when it starts. Set network_id to vergeio_network.id. Destroy disables the interface and applies the network before the delete, because VergeOS rejects a delete while the interface is still enabled. Destroy is refused while a peer still exists. " + vpnDeleteOrder,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "WireGuard interface id.",
@@ -96,12 +97,18 @@ func (r *NetworkWireGuardResource) Schema(ctx context.Context, req resource.Sche
 				PlanModifiers:       stringState(),
 			},
 			"configure_firewall": schema.BoolAttribute{
-				MarkdownDescription: "Create a PAT rule on the external network for this interface. Accept WireGuard rules on this network are staged either way and are applied when apply is true.",
+				MarkdownDescription: "Create a PAT rule on the external network when this interface is created. VergeOS does not accept a later change, so changing it replaces the interface. Accept WireGuard rules on this network are staged either way and are applied when apply is true.",
 				Optional:            true,
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.RequiresReplace(),
+				},
 			},
 			"external_ip": schema.StringAttribute{
-				MarkdownDescription: "External IP address id used when configure_firewall creates the PAT rule.",
+				MarkdownDescription: "External IP address id used when configure_firewall creates the PAT rule. VergeOS does not accept a later change, so changing it replaces the interface.",
 				Optional:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
 			},
 			"apply": schema.BoolAttribute{
 				MarkdownDescription: "Refresh the network after a change so staged Accept WireGuard rules take effect. Defaults to true. Set to false to leave the rules staged.",

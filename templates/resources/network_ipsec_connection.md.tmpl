@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_network_ipsec_connection (Resource)
 
-`vergeio_network_ipsec_connection` is one tunnel: a phase 1 (IKE) and one phase 2 (IPsec SA). Set `ipsec_id` to `vergeio_network_ipsec.id`.
+`vergeio_network_ipsec_connection` is one tunnel: a phase 1 (IKE) and one phase 2 (IPsec SA). Set `ipsec_id` to `vergeio_network_ipsec.id`. Configure the phase 2 in the `phase2` block. That block is required.
 
 Destroy deletes every phase 2 under that phase 1, then the phase 1. Phase 2 is first because a phase 1 delete while a phase 2 row remains fails and then keeps failing. That includes a phase 2 row this resource does not list. Live security-association rows from `vnet_ipsec_connections` are read and not stored.
 

@@ -8,6 +8,7 @@ import (
 
 	"terraform-provider-vergeio/internal/shared"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -203,9 +204,16 @@ func (r *NetworkIPSecConnectionResource) Schema(ctx context.Context, req resourc
 				Computed:            true,
 				PlanModifiers:       intState(),
 			},
-			"phase2": schema.SingleNestedAttribute{
-				MarkdownDescription: "Phase 2 selector for this tunnel. Destroy removes every phase 2 under the phase 1, including a row this resource does not list, and then removes the phase 1.",
-				Required:            true,
+		},
+		// phase 2 is its own vnet_ipsec_phase2s row, not a field on the phase 1
+		// payload. A block matches that child row. An attribute would reject
+		// the phase2 { } configuration this resource documents.
+		Blocks: map[string]schema.Block{
+			"phase2": schema.SingleNestedBlock{
+				MarkdownDescription: "Phase 2 selector for this tunnel. Required. Destroy removes every phase 2 under the phase 1, including a row this resource does not list, and then removes the phase 1.",
+				Validators: []validator.Object{
+					objectvalidator.IsRequired(),
+				},
 				Attributes: map[string]schema.Attribute{
 					"id": schema.StringAttribute{
 						MarkdownDescription: "Phase 2 id.",

@@ -77,11 +77,13 @@ func TestSnapshotBelongsToSweep(t *testing.T) {
 	}
 }
 
-// TestSweep removes prefixed leftovers. It is skipped unless TF_ACC and lab
-// credentials are set, so unit CI never contacts a VergeOS system.
+// TestSweep removes prefixed leftovers. It stays out of a normal acceptance
+// run, including one that sets TF_ACC and tests packages in parallel.
+// Run it alone with TF_ACC=1 and TF_ACC_SWEEP=1. Unit CI never contacts a
+// VergeOS system.
 func TestSweep(t *testing.T) {
-	if os.Getenv("TF_ACC") == "" {
-		t.Skip("acceptance sweep skipped unless TF_ACC=1")
+	if os.Getenv("TF_ACC") == "" || os.Getenv("TF_ACC_SWEEP") == "" {
+		t.Skip("acceptance sweep skipped unless TF_ACC=1 and TF_ACC_SWEEP=1")
 	}
 	PreCheck(t)
 	if err := Sweep(context.Background()); err != nil {

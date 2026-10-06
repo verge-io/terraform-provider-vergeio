@@ -12,7 +12,7 @@ description: |-
 
 Creating the interface stages firewall rules named Accept WireGuard and leaves them unapplied. `apply` defaults to true and refreshes a running network so the tunnel is not left half configured. Set `apply` to false to stage the rules and refresh later with [`vergeio_network_apply`](../actions/network_apply.md) or [`vergeio_network_rules`](network_rules.md). A stopped network is not refreshed. It loads the staged rules when it starts.
 
-Destroy is refused while a [`vergeio_network_wireguard_peer`](network_wireguard_peer.md) remains. The peer reference destroys the peer first.
+Destroy disables the interface and applies the network before the delete. VergeOS rejects a delete while the interface is still enabled. Destroy is refused while a [`vergeio_network_wireguard_peer`](network_wireguard_peer.md) remains. The peer reference destroys the peer first.
 
 ## Example Usage
 
@@ -46,11 +46,11 @@ resource "vergeio_network_wireguard" "wg0" {
 ### Optional
 
 - `apply` (Boolean) Refresh the network after a change so staged Accept WireGuard rules take effect. Defaults to true. Set to false to leave the rules staged.
-- `configure_firewall` (Boolean) Create a PAT rule on the external network for this interface. Accept WireGuard rules on this network are staged either way and are applied when apply is true.
+- `configure_firewall` (Boolean) Create a PAT rule on the external network when this interface is created. VergeOS does not accept a later change, so changing it replaces the interface. Accept WireGuard rules on this network are staged either way and are applied when apply is true.
 - `description` (String) Interface description. Omit to leave the current description unchanged.
 - `enabled` (Boolean) Whether the interface is enabled. Defaults to true.
 - `endpoint_ip` (String) Address peers use to reach this interface. Omit to leave the current value unchanged.
-- `external_ip` (String) External IP address id used when configure_firewall creates the PAT rule.
+- `external_ip` (String) External IP address id used when configure_firewall creates the PAT rule. VergeOS does not accept a later change, so changing it replaces the interface.
 - `listen_port` (Number) UDP listen port. Omit to leave the current port unchanged. VergeOS defaults a new interface to 51820.
 - `mtu` (Number) Interface MTU. 0 lets VergeOS choose. Omit to leave the current MTU unchanged.
 - `private_key` (String, Sensitive) Interface private key. Leave unset and VergeOS generates one. The API read used here does not return it, so Terraform keeps the configured value.

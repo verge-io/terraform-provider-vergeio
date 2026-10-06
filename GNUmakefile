@@ -26,7 +26,7 @@ testacc:
 	TF_ACC=1 go test $(TEST) -v $(TESTARGS) -timeout 120m -parallel=4
 
 sweep:
-	TF_ACC=1 go test ./internal/acctest -run TestSweep -count=1 -v -timeout 30m
+	TF_ACC=1 TF_ACC_SWEEP=1 go test ./internal/acctest -run TestSweep -count=1 -v -timeout 30m
 
 testunit:
 	go test $(TEST) -v $(TESTARGS) -timeout=30s -run='Test[^Acc]'
