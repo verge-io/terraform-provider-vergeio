@@ -80,10 +80,11 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 * #71 is closed. `terraform query` lists `vergeio_vm`, `vergeio_network`, `vergeio_tenant`, `vergeio_user`, `vergeio_group`, `vergeio_tag`, and `vergeio_snapshot_profile`. `name_pattern`, `tag`, and, on VMs and networks, `tenant` narrow the list. Snapshot VMs and snapshot tenants are omitted. The identity `id` is the existing import id, so an OpenTofu `import` block uses the same string. The adopt guide is the path from a query to a plan that only imports, then an empty plan.
 
+* #72 is closed. `vergeio_vm_snapshot`, `vergeio_network_apply`, `vergeio_vm_power`, and `vergeio_tenant_snapshot` are Terraform 1.14 actions. Invoke them with `terraform apply -invoke` or a resource `lifecycle` `action_trigger`. They are not stored in state. OpenTofu does not implement actions, and no resource behavior depends on them. `vergeio_vm_snapshot` takes an instant VM snapshot. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. `vergeio_tenant_snapshot` snapshots a whole tenant.
+
 The remaining issues in this section are open.
 
 * #70. `vergeio_api_key` manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it. `ephemeral.vergeio_api_key` remains the short-lived token for one run, and Open still deletes an existing key of that name. Do not reuse a managed key's name there. `vergeio_auth_source` manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret` or other omitted keys. A key removed from `settings` stays on the auth source. Replace the auth source to drop it.
-* #72. Actions for operations that are not resources, including a snapshot before a change.
 * #32. VMs from catalog recipes. Labelled `blocked`.
 * #73. IPsec and WireGuard, including teardown order.
 * #74. DNS zones, records, and views.

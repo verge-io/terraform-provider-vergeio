@@ -61,6 +61,22 @@ func TestReferencesSweptObject(t *testing.T) {
 	}
 }
 
+func TestSnapshotBelongsToSweep(t *testing.T) {
+	parents := map[int]string{70: ResourcePrefix + "vm"}
+	if !snapshotBelongsToSweep(ResourcePrefix+"snap", 0, parents) {
+		t.Fatal("prefixed snapshot name should match")
+	}
+	if !snapshotBelongsToSweep("snapshot-20060102-150405", 70, parents) {
+		t.Fatal("snapshot of a swept parent should match")
+	}
+	if snapshotBelongsToSweep("nightly", 3, parents) {
+		t.Fatal("unrelated snapshot must not match")
+	}
+	if snapshotBelongsToSweep("nightly", 0, parents) {
+		t.Fatal("snapshot with no parent must not match")
+	}
+}
+
 // TestSweep removes prefixed leftovers. It is skipped unless TF_ACC and lab
 // credentials are set, so unit CI never contacts a VergeOS system.
 func TestSweep(t *testing.T) {

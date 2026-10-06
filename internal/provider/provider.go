@@ -16,6 +16,7 @@ import (
 	"terraform-provider-vergeio/internal/services/tags"
 	"terraform-provider-vergeio/internal/services/tenant"
 
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
 	"github.com/hashicorp/terraform-plugin-framework/function"
@@ -31,6 +32,7 @@ var _ provider.Provider = &vergeioProvider{}
 var _ provider.ProviderWithFunctions = &vergeioProvider{}
 var _ provider.ProviderWithEphemeralResources = &vergeioProvider{}
 var _ provider.ProviderWithListResources = &vergeioProvider{}
+var _ provider.ProviderWithActions = &vergeioProvider{}
 
 // VergeioProvider defines the provider implementation.
 type vergeioProvider struct {
@@ -117,6 +119,7 @@ func (p *vergeioProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.ResourceData = client
 	resp.EphemeralResourceData = client
 	resp.ListResourceData = client
+	resp.ActionData = client
 }
 
 func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resource {
@@ -179,6 +182,15 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		system.NewResourceGroupsDataSource,
 		tags.NewTagsDataSource,
 		tenant.NewTenantsDataSource,
+	}
+}
+
+func (p *vergeioProvider) Actions(ctx context.Context) []func() action.Action {
+	return []func() action.Action{
+		compute.NewVMSnapshotAction,
+		network.NewNetworkApplyAction,
+		compute.NewVMPowerAction,
+		tenant.NewTenantSnapshotAction,
 	}
 }
 

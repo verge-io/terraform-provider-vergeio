@@ -58,11 +58,15 @@ func Sweep(ctx context.Context) error {
 	}
 
 	vmIDs := map[int]string{}
+	vmMachines := map[int]string{}
 	for _, vm := range vms {
 		if vm.IsSnapshot || !HasPrefix(vm.Name) {
 			continue
 		}
 		vmIDs[vm.Key.Int()] = vm.Name
+		if vm.Machine > 0 {
+			vmMachines[vm.Machine] = vm.Name
+		}
 	}
 	networkIDs := map[int]string{}
 	for _, network := range networks {
@@ -141,6 +145,7 @@ func Sweep(ctx context.Context) error {
 		record(ignoreNotFound(client.CloudInitFiles.Delete(ctx, id), "cloud-init file", id))
 	}
 
+	record(sweepVMSnapshots(ctx, client, vmMachines))
 	for id, name := range vmIDs {
 		log.Printf("[SWEEP] deleting vm %d (%s)", id, name)
 		record(deleteVM(ctx, client, id))
@@ -260,6 +265,34 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	for _, profile := range profiles {
 		if HasPrefix(profile.Name) {
 			left = append(left, fmt.Sprintf("snapshot profile %s (%d)", profile.Name, profile.Key.Int()))
+		}
+	}
+
+	vmSnaps, err := client.VMSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		vmSnaps = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify vm snapshots: %w", err)
+	}
+	for _, snap := range vmSnaps {
+		if HasPrefix(snap.Name) {
+			left = append(left, fmt.Sprintf("vm snapshot %s (%d)", snap.Name, snap.Key.Int()))
+		}
+	}
+
+	tenantSnaps, err := client.TenantSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		tenantSnaps = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tenant snapshots: %w", err)
+	}
+	for _, snap := range tenantSnaps {
+		if HasPrefix(snap.Name) {
+			left = append(left, fmt.Sprintf("tenant snapshot %s (%d)", snap.Name, snap.Key.Int()))
 		}
 	}
 
@@ -527,6 +560,9 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 	if err := sweepTenantLayer2Networks(ctx, client, ids); err != nil {
 		return err
 	}
+	if err := sweepTenantSnapshots(ctx, client, ids); err != nil {
+		return err
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -725,6 +761,72 @@ func deleteTenantNode(ctx context.Context, client *vergeos.Client, id int) error
 		time.Sleep(time.Second)
 	}
 	return ignoreNotFound(client.TenantNodes.Delete(ctx, id), "tenant node", id)
+}
+
+// snapshotBelongsToSweep reports whether a snapshot was created by an
+// acceptance test. The name prefix is enough on its own. A snapshot of a
+// swept parent is removed even when the name was generated.
+func snapshotBelongsToSweep(name string, parent int, parents map[int]string) bool {
+	if HasPrefix(name) {
+		return true
+	}
+	if parent <= 0 {
+		return false
+	}
+	_, ok := parents[parent]
+	return ok
+}
+
+func sweepVMSnapshots(ctx context.Context, client *vergeos.Client, machines map[int]string) error {
+	snaps, err := client.VMSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] vm snapshots endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list vm snapshots: %w", err)
+	}
+	var errs []error
+	for _, snap := range snaps {
+		if !snapshotBelongsToSweep(snap.Name, snap.Machine.Int(), machines) {
+			continue
+		}
+		id := snap.Key.Int()
+		log.Printf("[SWEEP] deleting vm snapshot %d (%s)", id, snap.Name)
+		if err := ignoreNotFound(client.VMSnapshots.Delete(ctx, id), "vm snapshot", id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep vm snapshots: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantSnapshots(ctx context.Context, client *vergeos.Client, tenants map[int]string) error {
+	snaps, err := client.TenantSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] tenant snapshots endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant snapshots: %w", err)
+	}
+	var errs []error
+	for _, snap := range snaps {
+		if !snapshotBelongsToSweep(snap.Name, snap.Tenant.Int(), tenants) {
+			continue
+		}
+		id := snap.Key.Int()
+		log.Printf("[SWEEP] deleting tenant snapshot %d (%s)", id, snap.Name)
+		if err := ignoreNotFound(client.TenantSnapshots.Delete(ctx, id), "tenant snapshot", id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant snapshots: %w", errorsJoin(errs))
+	}
+	return nil
 }
 
 // deleteVM removes a test VM. Delete is refused while the VM is running.

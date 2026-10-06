@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,6 +67,40 @@ func CredentialsConfigured() bool {
 	return os.Getenv(envAccHost) != "" &&
 		os.Getenv(envAccUsername) != "" &&
 		os.Getenv(envAccPassword) != ""
+}
+
+// RequireActions skips unless acceptance credentials are set and the CLI is
+// Terraform 1.14 or later. OpenTofu does not implement actions.
+func RequireActions(t *testing.T) {
+	t.Helper()
+	PreCheck(t)
+	bin := strings.TrimSpace(os.Getenv("TF_ACC_TERRAFORM_PATH"))
+	if bin == "" {
+		bin = "terraform"
+	}
+	out, err := exec.Command(bin, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s version: %v\n%s", bin, err, out)
+	}
+	text := string(out)
+	if strings.Contains(text, "OpenTofu") {
+		t.Skip("Terraform actions need Terraform 1.14 or later. OpenTofu does not implement actions.")
+	}
+	match := regexp.MustCompile(`v(\d+)\.(\d+)`).FindStringSubmatch(text)
+	if match == nil {
+		t.Fatalf("could not parse a version from %s: %s", bin, text)
+	}
+	major, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("parse major version %q: %v", match[1], err)
+	}
+	minor, err := strconv.Atoi(match[2])
+	if err != nil {
+		t.Fatalf("parse minor version %q: %v", match[2], err)
+	}
+	if major < 1 || (major == 1 && minor < 14) {
+		t.Skipf("Terraform actions need 1.14 or later. This CLI is %s.%s", match[1], match[2])
+	}
 }
 
 // PreCheck skips the test unless TF_ACC is set and lab credentials are present.

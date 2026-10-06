@@ -58,6 +58,17 @@ Resource passwords are stored when the attribute is not write-only. `vergeio_use
 
 Write-only attributes and this ephemeral resource behave the same on Terraform and OpenTofu once the CLI is new enough: the write-only value is null in state, and ephemeral results are not in state or in the plan. OpenTofu added both features in 1.11. Terraform added ephemeral resources in 1.10 and write-only attributes in 1.11.
 
+## Actions
+
+Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a resource does depends on an action. Invoke one with `terraform apply -invoke=action.TYPE.LABEL`, or from a resource `lifecycle` `action_trigger`. An action is not stored in state.
+
+- vergeio_vm_snapshot
+- vergeio_network_apply
+- vergeio_vm_power
+- vergeio_tenant_snapshot
+
+`vergeio_vm_snapshot` takes an instant VM snapshot. `name` and `retention_seconds` are optional. `quiesce` asks the guest agent to freeze filesystems. `vergeio_tenant_snapshot` snapshots a whole tenant. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. Use it when `vergeio_network_rule` sets `apply` to false. A stopped network is left unchanged and the action returns an error. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. `power_on` posts poweron when the machine is not running, including when the VM `powerstate` column is already true. A later plan of that VM restores a declared powerstate. `timeout_seconds` and `force` apply only to `shutdown`.
+
 ## Query
 
 `terraform query` lists VMs, networks, tenants, users, groups, tags, and snapshot profiles that already exist. Filter with `name_pattern`, `tag`, and, for VMs and networks, `tenant`. The identity `id` is the import id. OpenTofu uses that same id in an `import` block. See [Adopt an existing VergeOS system](docs/guides/adopt-system.md).
@@ -123,7 +134,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 
 **Prerequisites:**
 
-- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.10, or OpenTofu >= 1.11 for the same features. Ephemeral `vergeio_api_key` needs Terraform 1.10 or OpenTofu 1.11. Write-only attributes need Terraform 1.11 or OpenTofu 1.11. OpenTofu 1.10 and earlier reject both.
+- [Terraform](https://developer.hashicorp.com/terraform/downloads) >= 1.10, or OpenTofu >= 1.11 for the same features. Ephemeral `vergeio_api_key` needs Terraform 1.10 or OpenTofu 1.11. Write-only attributes need Terraform 1.11 or OpenTofu 1.11. OpenTofu 1.10 and earlier reject both. Actions need Terraform 1.14. OpenTofu does not implement actions.
 - [Go](https://golang.org/doc/install) >= 1.27
 
 ```

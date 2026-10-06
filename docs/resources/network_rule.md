@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_network_rule (Resource)
 
-`vergeio_network_rule` is one firewall rule, matched by name on the network. Use it when rules are split across modules. `apply` defaults to true and refreshes the network after a change to this rule. Set `apply` to false on every rule except the last, and make that last rule `depends_on` the staged ones, so the network reloads once.
+`vergeio_network_rule` is one firewall rule, matched by name on the network. Use it when rules are split across modules. `apply` defaults to true and refreshes the network after a change to this rule. Set `apply` to false on every rule except the last, and make that last rule `depends_on` the staged ones, so the network reloads once. When every rule sets `apply` to false, [`vergeio_network_apply`](../actions/network_apply.html) refreshes the running network.
 
 Each refresh reloads the whole network. Prefer [`vergeio_network_rules`](network_rules.md) when one configuration owns every rule. Do not use both resources on the same network. `vergeio_network_rules` deletes non-system rules it does not list, including rules created here.
 

@@ -385,6 +385,9 @@ func configureProvider(t *testing.T, values map[string]tftypes.Value) (*vergeio.
 	if resp.ListResourceData != nil && resp.ListResourceData != client {
 		t.Fatal("list resources were given a different client")
 	}
+	if client != nil && resp.ActionData != client {
+		t.Fatal("actions were given a different client")
+	}
 	return client, resp.Diagnostics
 }
 
