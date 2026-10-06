@@ -25,5 +25,6 @@ resource "vergeio_network_ipsec_connection" "branch" {
     local    = "192.168.0.0/24"
     remote   = "198.51.100.0/24"
     protocol = "esp"
+    ciphers  = "aes128-sha256-modp2048,aes128gcm128-sha256-modp2048"
   }
 }

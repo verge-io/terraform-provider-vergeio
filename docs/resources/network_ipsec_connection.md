@@ -44,6 +44,7 @@ resource "vergeio_network_ipsec_connection" "branch" {
     local    = "192.168.0.0/24"
     remote   = "198.51.100.0/24"
     protocol = "esp"
+    ciphers  = "aes128-sha256-modp2048,aes128gcm128-sha256-modp2048"
   }
 }
 ```
@@ -96,10 +97,10 @@ Required:
 
 Optional:
 
-- `ciphers` (String) Phase 2 cipher proposal. Omit to leave the current value unchanged.
+- `ciphers` (String) Phase 2 cipher proposal. VergeOS requires this when the phase 2 is created. Defaults to aes128-sha256-modp2048,aes128gcm128-sha256-modp2048.
 - `description` (String) Phase 2 description. Omit to leave the current description unchanged.
 - `enabled` (Boolean) Whether the phase 2 is enabled. Defaults to true.
-- `lifetime` (Number) IPsec SA lifetime in seconds. Omit to leave the current value unchanged.
+- `lifetime` (Number) IPsec SA lifetime in seconds. Defaults to 3600.
 - `mode` (String) tunnel or transport. Defaults to tunnel.
 - `protocol` (String) esp or ah. Defaults to esp.
 - `remote` (String) Remote network or address. Omit to leave the current value unchanged.

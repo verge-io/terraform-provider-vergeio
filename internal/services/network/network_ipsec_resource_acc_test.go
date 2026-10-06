@@ -35,6 +35,8 @@ func TestAccNetworkIPSec_connection(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.name", "lan"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.local", "192.168.0.0/24"),
 					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.remote", "198.51.100.0/24"),
+					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.ciphers", "aes128-sha256-modp2048,aes128gcm128-sha256-modp2048"),
+					resource.TestCheckResourceAttr("vergeio_network_ipsec_connection.test", "phase2.lifetime", "3600"),
 					resource.TestCheckResourceAttrSet("vergeio_network_ipsec_connection.test", "id"),
 					resource.TestCheckResourceAttrSet("vergeio_network_ipsec_connection.test", "phase2.id"),
 				),
@@ -124,6 +126,8 @@ resource "vergeio_network_ipsec_connection" "test" {
     local    = "192.168.0.0/24"
     remote   = %q
     protocol = "esp"
+    ciphers  = "aes128-sha256-modp2048,aes128gcm128-sha256-modp2048"
+    lifetime = 3600
   }
 }
 `, networkName, remote))

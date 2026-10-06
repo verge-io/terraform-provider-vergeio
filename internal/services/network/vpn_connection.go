@@ -365,10 +365,44 @@ func phase2CreateRequest(phase1ID int, data *ipsecPhase2Model) (*vergeos.VNetIPS
 	}
 	req.Enabled = vergeio.KnownBool(data.Enabled)
 	req.Mode = vergeio.KnownString(data.Mode)
-	req.Lifetime = optionalInt(data.Lifetime)
+	req.Lifetime = phase2Lifetime(data.Lifetime)
 	req.Protocol = vergeio.KnownString(data.Protocol)
-	req.Ciphers = vergeio.KnownString(data.Ciphers)
+	req.Ciphers = phase2Ciphers(data.Ciphers)
 	return req, nil
+}
+
+// ipsecPhase2CiphersDefault is the phase 2 proposal govergeos documents for
+// a new phase 2. VergeOS requires the field on create and rejects a body
+// that omits it, even though the SDK marks the field optional.
+const ipsecPhase2CiphersDefault = "aes128-sha256-modp2048,aes128gcm128-sha256-modp2048"
+
+// ipsecPhase2LifetimeDefault is the IPsec SA lifetime govergeos documents
+// for a new phase 2. The SDK marks the field optional, so an unset value
+// would be left out of the create body. Create sends this instead.
+const ipsecPhase2LifetimeDefault int64 = 3600
+
+// phase2Ciphers returns the configured proposal, or the proposal VergeOS
+// requires when the configuration leaves ciphers unset.
+func phase2Ciphers(v types.String) *string {
+	if configured := vergeio.KnownString(v); configured != nil {
+		trimmed := strings.TrimSpace(*configured)
+		if trimmed != "" {
+			return &trimmed
+		}
+	}
+	ciphers := ipsecPhase2CiphersDefault
+	return &ciphers
+}
+
+// phase2Lifetime returns the configured lifetime, or the lifetime VergeOS
+// documents when the configuration leaves lifetime unset. Zero is kept,
+// because that is an explicit value.
+func phase2Lifetime(v types.Int64) *int {
+	if configured := optionalInt(v); configured != nil {
+		return configured
+	}
+	n := int(ipsecPhase2LifetimeDefault)
+	return &n
 }
 
 func phase2UpdateRequest(data *ipsecPhase2Model) *vergeos.VNetIPSecPhase2UpdateRequest {

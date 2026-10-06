@@ -340,6 +340,43 @@ func TestPhase1CreateRequestSendsIKE(t *testing.T) {
 	}
 }
 
+func TestPhase2CreateRequestSendsCiphers(t *testing.T) {
+	unset, err := phase2CreateRequest(7, &ipsecPhase2Model{
+		Name:  types.StringValue("lan"),
+		Local: types.StringValue("192.168.0.0/24"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(unset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"ciphers":"aes128-sha256-modp2048,aes128gcm128-sha256-modp2048"`) {
+		t.Fatalf("create body = %s, want the required ciphers proposal", body)
+	}
+	if !strings.Contains(string(body), `"lifetime":3600`) {
+		t.Fatalf("create body = %s, want the documented lifetime", body)
+	}
+
+	custom := "aes256-sha256-modp2048"
+	set, err := phase2CreateRequest(7, &ipsecPhase2Model{
+		Name:     types.StringValue("lan"),
+		Local:    types.StringValue("192.168.0.0/24"),
+		Ciphers:  types.StringValue(custom),
+		Lifetime: types.Int64Value(7200),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Ciphers == nil || *set.Ciphers != custom {
+		t.Fatalf("ciphers = %#v, want %s", set.Ciphers, custom)
+	}
+	if set.Lifetime == nil || *set.Lifetime != 7200 {
+		t.Fatalf("lifetime = %#v, want 7200", set.Lifetime)
+	}
+}
+
 func TestCreateWireGuardAppliesFirewall(t *testing.T) {
 	var calls []string
 	var createBody string

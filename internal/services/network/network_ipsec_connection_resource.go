@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -256,10 +257,10 @@ func (r *NetworkIPSecConnectionResource) Schema(ctx context.Context, req resourc
 						PlanModifiers:       stringState(),
 					},
 					"lifetime": schema.Int64Attribute{
-						MarkdownDescription: "IPsec SA lifetime in seconds. Omit to leave the current value unchanged.",
+						MarkdownDescription: "IPsec SA lifetime in seconds. Defaults to 3600.",
 						Optional:            true,
 						Computed:            true,
-						PlanModifiers:       intState(),
+						Default:             int64default.StaticInt64(ipsecPhase2LifetimeDefault),
 					},
 					"protocol": schema.StringAttribute{
 						MarkdownDescription: "esp or ah. Defaults to esp.",
@@ -271,10 +272,10 @@ func (r *NetworkIPSecConnectionResource) Schema(ctx context.Context, req resourc
 						},
 					},
 					"ciphers": schema.StringAttribute{
-						MarkdownDescription: "Phase 2 cipher proposal. Omit to leave the current value unchanged.",
+						MarkdownDescription: "Phase 2 cipher proposal. VergeOS requires this when the phase 2 is created. Defaults to aes128-sha256-modp2048,aes128gcm128-sha256-modp2048.",
 						Optional:            true,
 						Computed:            true,
-						PlanModifiers:       stringState(),
+						Default:             stringdefault.StaticString(ipsecPhase2CiphersDefault),
 					},
 				},
 			},
