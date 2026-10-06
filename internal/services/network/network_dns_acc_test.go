@@ -123,8 +123,8 @@ func TestAccNetworkDNS_VMAddress(t *testing.T) {
 			{
 				Config: byValue,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "ipaddress", "10.90.0.40"),
-					resource.TestCheckResourceAttr("vergeio_network_dns_record.test", "value", "10.90.0.40"),
+					resource.TestCheckResourceAttr("vergeio_vm_nic.test", "ipaddress", "10.50.74.40"),
+					resource.TestCheckResourceAttr("vergeio_network_dns_record.test", "value", "10.50.74.40"),
 					resource.TestCheckResourceAttr("vergeio_network_dns_record.test", "type", "A"),
 				),
 			},
@@ -150,7 +150,7 @@ func TestAccNetworkDNS_VMAddress(t *testing.T) {
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("vergeio_network_dns_record.test", "vm_nic_id"),
-					resource.TestCheckResourceAttr("vergeio_network_dns_record.test", "value", "10.90.0.40"),
+					resource.TestCheckResourceAttr("vergeio_network_dns_record.test", "value", "10.50.74.40"),
 				),
 			},
 			{
@@ -258,7 +258,7 @@ resource "vergeio_network_dns_zone" "test" {
   domain     = "example.com"
   type       = "master"
   nameserver = "ns1.example.com"
-  email      = "hostmaster.example.com"
+  email      = "hostmaster@example.com"
 }
 
 resource "vergeio_network_dns_record" "test" {
@@ -326,7 +326,8 @@ resource "vergeio_network" "test" {
   type       = "internal"
   enabled    = true
   powerstate = false
-  network    = "10.90.0.0/24"
+  network    = "10.50.74.0/24"
+  ipaddress  = "10.50.74.1"
 }
 
 resource "vergeio_vm" "test" {
@@ -348,7 +349,7 @@ resource "vergeio_vm_nic" "test" {
   interface        = "virtio"
   vnet             = tonumber(vergeio_network.test.id)
   assign_ipaddress = true
-  ipaddress        = "10.90.0.40"
+  ipaddress        = "10.50.74.40"
 }
 
 resource "vergeio_network_dns_view" "test" {

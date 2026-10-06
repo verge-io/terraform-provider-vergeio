@@ -13,5 +13,5 @@ resource "vergeio_network_dns_zone" "example" {
   view_id = vergeio_network_dns_view.internal.id
   domain  = "example.com"
   type    = "master"
-  email   = "hostmaster.example.com"
+  email   = "hostmaster@example.com"
 }

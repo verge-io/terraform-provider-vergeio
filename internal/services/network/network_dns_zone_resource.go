@@ -5,6 +5,7 @@ package network
 
 import (
 	"context"
+	"regexp"
 
 	"terraform-provider-vergeio/internal/shared"
 
@@ -118,10 +119,16 @@ func (r *NetworkDNSZoneResource) Schema(ctx context.Context, req resource.Schema
 				PlanModifiers:       stringState(),
 			},
 			"email": schema.StringAttribute{
-				MarkdownDescription: "Admin email written in the SOA record. Omit to leave the current email unchanged.",
+				MarkdownDescription: "Admin address for the SOA record. Use an email address such as hostmaster@example.com. VergeOS rejects a dotted name such as hostmaster.example.com. Omit to leave the current address unchanged.",
 				Optional:            true,
 				Computed:            true,
 				PlanModifiers:       stringState(),
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(
+						regexp.MustCompile(`^[^@\s]+@[^@\s]+$`),
+						"Use an email address such as hostmaster@example.com. VergeOS rejects a dotted name such as hostmaster.example.com.",
+					),
+				},
 			},
 			"notify": schema.StringAttribute{
 				MarkdownDescription: "Notify messages: yes, no, or explicit. Omit to leave the current value unchanged.",

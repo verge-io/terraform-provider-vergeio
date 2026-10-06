@@ -12,6 +12,8 @@ description: |-
 
 VergeOS deletes the records in this zone when the zone is deleted. If that delete is refused, Terraform removes the records first so they cannot block a later network delete.
 
+`email` is an address such as `hostmaster@example.com`. VergeOS rejects a dotted name such as `hostmaster.example.com`.
+
 `apply` defaults to true and refreshes DNS on the view network after a change. A stopped network is not refreshed. It loads staged DNS when it starts. With `apply` set to false, Terraform leaves `need_dns_apply` set and warns.
 
 ## Example Usage
@@ -32,7 +34,7 @@ resource "vergeio_network_dns_zone" "example" {
   view_id = vergeio_network_dns_view.internal.id
   domain  = "example.com"
   type    = "master"
-  email   = "hostmaster.example.com"
+  email   = "hostmaster@example.com"
 }
 ```
 
@@ -51,7 +53,7 @@ resource "vergeio_network_dns_zone" "example" {
 - `also_notify` (String) Extra servers that receive notify messages, in the form VergeOS stores. Omit to leave the current list unchanged.
 - `apply` (Boolean) Refresh DNS on this network after the change. Defaults to true. Set false to stage several DNS resources, then leave it true on the last one, which depends_on the others. Each refresh reloads DNS for the whole network. A stopped network is not refreshed. It loads staged DNS when it starts. With apply set to false, Terraform leaves need_dns_apply set and warns. VergeOS may act on a stale pending flag on its own.
 - `default_ttl` (String) Default record time to live, for example 1h or 30m. Omit to leave the current value unchanged.
-- `email` (String) Admin email written in the SOA record. Omit to leave the current email unchanged.
+- `email` (String) Admin address for the SOA record. Use an email address such as hostmaster@example.com. VergeOS rejects a dotted name such as hostmaster.example.com. Omit to leave the current address unchanged.
 - `expiry_period` (String) SOA expiry period, for example 1w. Omit to leave the current value unchanged.
 - `forwarders` (String) Forwarder addresses, in the form VergeOS stores, for example 8.8.8.8;8.8.4.4;. Omit to leave the current list unchanged.
 - `masters` (String) Master servers for a slave zone, in the form VergeOS stores. Omit to leave the current list unchanged.
