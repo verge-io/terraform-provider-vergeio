@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -873,8 +871,8 @@ func sweepVMRecipeInstances(ctx context.Context, client *vergeos.Client) error {
 		}
 		id := row.Key.Int()
 		log.Printf("[SWEEP] deleting vm recipe instance %d (%s)", id, row.Name)
-		if err := deleteRecipeInstanceHTTP(ctx, httpClient, id); err != nil {
-			errs = append(errs, err)
+		if err := httpClient.DeleteVMRecipeInstance(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete vm recipe instance %d: %w", id, err))
 		}
 	}
 	if len(errs) > 0 {
@@ -891,24 +889,6 @@ func acceptanceHTTPClient() (*vergeio.Client, error) {
 		return nil, fmt.Errorf("%s, %s, and %s are required", envAccHost, envAccUsername, envAccPassword)
 	}
 	return vergeio.NewClient(host, username, password, true), nil
-}
-
-// deleteRecipeInstanceHTTP removes the instance row. govergeos
-// VMRecipeInstances has no Delete method.
-func deleteRecipeInstanceHTTP(ctx context.Context, c *vergeio.Client, id int) error {
-	resp, err := c.Delete(ctx, vergeio.ObjectPath(vergeio.RecipeInstanceEndpoint, strconv.Itoa(id)))
-	if err != nil {
-		var apiErr vergeio.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			return nil
-		}
-		return fmt.Errorf("delete vm recipe instance %d: %w", id, err)
-	}
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-		_, _ = io.Copy(io.Discard, resp.Body)
-	}
-	return nil
 }
 
 func deleteVM(ctx context.Context, client *vergeos.Client, id int) error {

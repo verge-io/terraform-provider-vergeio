@@ -349,6 +349,138 @@ func TestVMRecipeInstanceSendsNewInternalNetwork(t *testing.T) {
 	}
 }
 
+func TestVMRecipeInstanceDeleteMissingVMStillRemovesRow(t *testing.T) {
+	fake := newRecipeFake()
+	fake.vmMissing = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: recipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.instanceDeletes != 1 {
+		t.Fatalf("instance deletes = %d", fake.instanceDeletes)
+	}
+	if len(fake.actions) != 0 {
+		t.Fatalf("actions = %#v, a missing VM is already stopped", fake.actions)
+	}
+}
+
+func TestVMRecipeInstanceDeleteMissingRowStopsStateVM(t *testing.T) {
+	fake := newRecipeFake()
+	fake.instanceMissing = true
+	fake.running = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	orig := gracefulShutdownInterval
+	gracefulShutdownInterval = 0
+	t.Cleanup(func() { gracefulShutdownInterval = orig })
+
+	ctx := t.Context()
+	resource := configuredRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: recipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.vmDeletes != 1 || fake.instanceDeletes != 1 {
+		t.Fatalf("vm deletes = %d instance deletes = %d", fake.vmDeletes, fake.instanceDeletes)
+	}
+	if len(fake.actions) != 1 || !strings.Contains(fake.actions[0], `"action":"poweroff"`) {
+		t.Fatalf("actions = %#v, want one poweroff", fake.actions)
+	}
+	if !fake.vmDeletedBeforeInstance {
+		t.Fatal("instance row was deleted before the VM")
+	}
+}
+
+func TestVMRecipeInstanceDeletePoweroffNotFoundStillRemovesRow(t *testing.T) {
+	fake := newRecipeFake()
+	fake.running = true
+	fake.poweroffNotFound = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: recipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.vmDeletes != 1 || fake.instanceDeletes != 1 {
+		t.Fatalf("vm deletes = %d instance deletes = %d", fake.vmDeletes, fake.instanceDeletes)
+	}
+}
+
+func TestVMRecipeInstanceDeleteKillNotFoundStillRemovesRow(t *testing.T) {
+	fake := newRecipeFake()
+	fake.running = true
+	fake.holdRunning = true
+	fake.killNotFound = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	orig := gracefulShutdownInterval
+	gracefulShutdownInterval = 0
+	t.Cleanup(func() { gracefulShutdownInterval = orig })
+
+	ctx := t.Context()
+	resource := configuredRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	state := recipeInstanceState(t, schemaResp.Schema, 44)
+	var data VMRecipeInstanceResourceModel
+	if diags := state.Get(ctx, &data); diags.HasError() {
+		t.Fatal(diags)
+	}
+	data.Timeouts = &recipeTimeoutsModel{Delete: types.StringValue("0s")}
+	diags := state.Set(ctx, &data)
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: state}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.vmDeletes != 1 || fake.instanceDeletes != 1 {
+		t.Fatalf("vm deletes = %d instance deletes = %d", fake.vmDeletes, fake.instanceDeletes)
+	}
+	if len(fake.actions) != 2 {
+		t.Fatalf("actions = %#v, want poweroff then kill", fake.actions)
+	}
+}
+
+func TestVMRecipeInstanceDeletePowerStatusErrorKeepsRow(t *testing.T) {
+	fake := newRecipeFake()
+	fake.powerStatusFailure = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: recipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if !deleted.Diagnostics.HasError() {
+		t.Fatal("expected a power status error to fail destroy")
+	}
+	if fake.instanceDeletes != 0 || fake.vmDeletes != 0 {
+		t.Fatalf("vm deletes = %d instance deletes = %d", fake.vmDeletes, fake.instanceDeletes)
+	}
+}
+
 func TestVMRecipeInstanceReadDropsMissingVM(t *testing.T) {
 	fake := newRecipeFake()
 	fake.vmMissing = true
@@ -421,6 +553,22 @@ func configuredRecipeInstance(t *testing.T, host string) *VMRecipeInstanceResour
 	return resource
 }
 
+func recipeInstanceState(t *testing.T, schema resschema.Schema, vmID int64) tfsdk.State {
+	t.Helper()
+	state := tfsdk.State{Schema: schema}
+	diags := state.Set(t.Context(), &VMRecipeInstanceResourceModel{
+		Id:       types.StringValue("9"),
+		Name:     types.StringValue("web-01"),
+		RecipeID: types.StringValue(testRecipeKey),
+		Answers:  types.MapNull(types.StringType),
+		VMID:     types.Int64Value(vmID),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	return state
+}
+
 func recipeStringMap(t *testing.T, values map[string]string) types.Map {
 	t.Helper()
 	elems := make(map[string]attr.Value, len(values))
@@ -438,6 +586,11 @@ type recipeFake struct {
 	mu                      sync.Mutex
 	running                 bool
 	vmMissing               bool
+	instanceMissing         bool
+	powerStatusFailure      bool
+	poweroffNotFound        bool
+	killNotFound            bool
+	holdRunning             bool
 	deployCount             int
 	networkLists            int
 	vmDeletes               int
@@ -488,11 +641,21 @@ func (f *recipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.deploy = string(body)
 		_, _ = w.Write([]byte(`{"$key":9}`))
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_recipe_instances/9":
+		if f.instanceMissing {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"$key":9,"recipe":"` + testRecipeKey + `","recipe_name":"Windows Server","name":"web-01","vm":44,"version":"2022","build":3,"auto_update":true}`))
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/44":
 		if f.vmMissing {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return
+		}
+		if f.powerStatusFailure {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"err":"status unavailable"}`))
 			return
 		}
 		running := f.running
@@ -503,17 +666,37 @@ func (f *recipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"$key":44,"name":"web-01","powerstate":` + boolJSON(running) + `,"running":` + boolJSON(running) + `,"status":"` + status + `"}`))
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
 		f.actions = append(f.actions, string(body))
-		if strings.Contains(string(body), `"action":"poweroff"`) || strings.Contains(string(body), `"action":"kill"`) {
+		if f.poweroffNotFound && strings.Contains(string(body), `"action":"poweroff"`) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return
+		}
+		if f.killNotFound && strings.Contains(string(body), `"action":"kill"`) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return
+		}
+		if !f.holdRunning && (strings.Contains(string(body), `"action":"poweroff"`) || strings.Contains(string(body), `"action":"kill"`)) {
 			f.running = false
 		}
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{}`))
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vms/44":
 		f.vmDeletes++
+		if f.vmMissing {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{}`))
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vm_recipe_instances/9":
 		f.instanceDeletes++
-		f.vmDeletedBeforeInstance = f.vmDeletes == 1
+		f.vmDeletedBeforeInstance = f.vmDeletes >= 1
+		if f.instanceMissing {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{}`))
 	default:
 		w.WriteHeader(http.StatusNotFound)

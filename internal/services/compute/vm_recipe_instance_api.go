@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -113,39 +111,76 @@ func (api *VMRecipeInstanceApi) delete(ctx context.Context, data *VMRecipeInstan
 		return err
 	}
 	instance, err := api.sdk.VMRecipeInstances.Get(ctx, id)
+	rowMissing := false
 	if err != nil {
-		if vergeos.IsNotFoundError(err) {
-			return nil
+		if !vergeos.IsNotFoundError(err) {
+			return err
 		}
-		return err
+		rowMissing = true
+		instance = nil
 	}
 	vmID := 0
-	name := data.Name.ValueString()
+	name := ""
+	if data != nil {
+		name = data.Name.ValueString()
+	}
 	if instance != nil {
 		vmID = instance.VM.Int()
 		if instance.Name != "" {
 			name = instance.Name
 		}
 	}
+	if vmID <= 0 && rowMissing {
+		vmID = recipeStateVMID(data)
+	}
 	if vmID > 0 {
-		timeout, err := recipeDeleteTimeout(data)
-		if err != nil {
-			return err
-		}
-		vmKey := strconv.Itoa(vmID)
-		if err := api.vm.gracefulPowerOff(ctx, vmKey, name, timeout, true); err != nil {
-			return err
-		}
-		if err := api.sdk.VMs.Delete(ctx, vmID); err != nil && !vergeos.IsNotFoundError(err) {
+		if err := api.deleteRecipeVM(ctx, data, vmID, name); err != nil {
 			return err
 		}
 		tflog.Debug(ctx, fmt.Sprintf("deleted VM %d for recipe instance %d", vmID, id))
 	}
-	if err := deleteRecipeInstanceRow(ctx, api.client, id); err != nil {
+	if err := api.client.DeleteVMRecipeInstance(ctx, id); err != nil {
 		return err
 	}
 	tflog.Debug(ctx, fmt.Sprintf("deleted recipe instance %d", id))
 	return nil
+}
+
+func (api *VMRecipeInstanceApi) deleteRecipeVM(ctx context.Context, data *VMRecipeInstanceResourceModel, vmID int, name string) error {
+	timeout, err := recipeDeleteTimeout(data)
+	if err != nil {
+		return err
+	}
+	if err := api.vm.gracefulPowerOff(ctx, strconv.Itoa(vmID), name, timeout, true); err != nil && !vmAlreadyGone(err) {
+		return err
+	}
+	if err := api.sdk.VMs.Delete(ctx, vmID); err != nil && !vmAlreadyGone(err) {
+		return err
+	}
+	return nil
+}
+
+func recipeStateVMID(data *VMRecipeInstanceResourceModel) int {
+	if data == nil {
+		return 0
+	}
+	id := vergeio.KnownInt64(data.VMID)
+	if id == nil || *id <= 0 {
+		return 0
+	}
+	return int(*id)
+}
+
+func vmAlreadyGone(err error) bool {
+	if vergeos.IsNotFoundError(err) {
+		return true
+	}
+	var sdkErr *vergeos.APIError
+	if errors.As(err, &sdkErr) && sdkErr.StatusCode == 404 {
+		return true
+	}
+	var httpErr vergeio.Error
+	return errors.As(err, &httpErr) && httpErr.StatusCode == 404
 }
 
 func recipeDeployRequest(ctx context.Context, data *VMRecipeInstanceResourceModel) (*vergeos.VMRecipeDeployRequest, error) {
@@ -234,25 +269,4 @@ func parseRecipeInstanceIDText(id string) (int, error) {
 		return 0, fmt.Errorf("recipe instance id %q is not a positive integer", id)
 	}
 	return n, nil
-}
-
-// deleteRecipeInstanceRow removes the instance row. govergeos
-// VMRecipeInstances has no Delete method.
-func deleteRecipeInstanceRow(ctx context.Context, c *vergeio.Client, id int) error {
-	if c == nil {
-		return fmt.Errorf("vergeio client is nil")
-	}
-	resp, err := c.Delete(ctx, vergeio.ObjectPath(vergeio.RecipeInstanceEndpoint, strconv.Itoa(id)))
-	if err != nil {
-		var apiErr vergeio.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			return nil
-		}
-		return err
-	}
-	if resp != nil && resp.Body != nil {
-		defer func() { _ = resp.Body.Close() }()
-		_, _ = io.Copy(io.Discard, resp.Body)
-	}
-	return nil
 }

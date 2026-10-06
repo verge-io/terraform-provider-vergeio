@@ -3,7 +3,7 @@
 page_title: "vergeio_vm_recipe_instance Resource - vergeio"
 subcategory: ""
 description: |-
-  Deploys a VM from a catalog recipe. Look the recipe up with vergeio_vm_recipes. answers is a map of question name to string. A bool question accepts true, false, yes, no, on, off, 1, or 0. Any other value is rejected before the request is sent, because VergeOS would store it as false. A disksize answer is bytes. 50 GB is 53687091200. Zero keeps the recipe default. A value above zero and under 1 MB is rejected, because VergeOS would keep the image disk and still report success. A network answer is a network name, a vnet key, or __new_internal__. Changing name, recipe_id, answers, or auto_update replaces the VM. Destroy sends one ACPI poweroff, waits timeouts.delete (default 2 minutes), kills the guest if it is still running, deletes the VM, then deletes the recipe instance. This resource always deploys. It has no simulate argument.
+  Deploys a VM from a catalog recipe. Look the recipe up with vergeio_vm_recipes. answers is a map of question name to string. A bool question accepts true, false, yes, no, on, off, 1, or 0. Any other value is rejected before the request is sent, because VergeOS would store it as false. A disksize answer is bytes. 50 GB is 53687091200. Zero keeps the recipe default. A value above zero and under 1 MB is rejected, because VergeOS would keep the image disk and still report success. A network answer is a network name, a vnet key, or __new_internal__. Changing name, recipe_id, answers, or auto_update replaces the VM. Destroy sends one ACPI poweroff, waits timeouts.delete (default 2 minutes), kills the guest if it is still running, deletes the VM, then deletes the recipe instance. A missing guest does not block that delete. A missing recipe instance still stops and deletes the VM stored in vm_id. This resource always deploys. It has no simulate argument.
 ---
 
 # vergeio_vm_recipe_instance (Resource)
@@ -20,7 +20,7 @@ A `network` answer is a network name, a vnet key, or `__new_internal__`. `__new_
 
 The map is stored. It may contain a guest password. VergeOS does not return every answer, and the values it returns are coerced, so refresh does not overwrite `answers`.
 
-Changing `name`, `recipe_id`, `answers`, or `auto_update` replaces the VM. Destroy sends one ACPI poweroff, waits `timeouts.delete` (default 2 minutes), kills the guest if it is still running, deletes the VM, then deletes the recipe instance.
+Changing `name`, `recipe_id`, `answers`, or `auto_update` replaces the VM. Destroy sends one ACPI poweroff, waits `timeouts.delete` (default 2 minutes), kills the guest if it is still running, deletes the VM, then deletes the recipe instance. A missing guest does not block that delete. A missing recipe instance still stops and deletes the VM stored in `vm_id`.
 
 This resource always deploys. It has no simulate argument.
 
