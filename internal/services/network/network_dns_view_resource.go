@@ -131,10 +131,12 @@ func (r *NetworkDNSViewResource) Schema(ctx context.Context, req resource.Schema
 				Computed:            true,
 				PlanModifiers:       intState(),
 			},
+			// modified changes on every write. UseStateForUnknown would keep the
+			// prior time in the plan, and the refreshed value would fail apply
+			// as an inconsistent result. Leave it unknown so the read can store it.
 			"modified": schema.Int64Attribute{
 				MarkdownDescription: "Last modification time, as seconds since the epoch.",
 				Computed:            true,
-				PlanModifiers:       intState(),
 			},
 			"apply": dnsApplyAttribute(),
 		},

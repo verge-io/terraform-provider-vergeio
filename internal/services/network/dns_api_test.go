@@ -15,6 +15,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/verge-io/govergeos"
 
@@ -47,6 +48,28 @@ func TestDNSResourceNames(t *testing.T) {
 				t.Fatal("schema has no attributes")
 			}
 		})
+	}
+}
+
+func TestDNSModifiedIsNotKeptFromState(t *testing.T) {
+	keepPrior := int64planmodifier.UseStateForUnknown().Description(t.Context())
+	resources := []resource.Resource{
+		NewNetworkDNSViewResource(),
+		NewNetworkDNSZoneResource(),
+		NewNetworkDNSRecordResource(),
+	}
+	for _, item := range resources {
+		resp := &resource.SchemaResponse{}
+		item.Schema(t.Context(), resource.SchemaRequest{}, resp)
+		attr, ok := resp.Schema.Attributes["modified"].(schema.Int64Attribute)
+		if !ok || !attr.Computed || attr.Optional || attr.Required {
+			t.Fatal("modified should be computed only")
+		}
+		for _, mod := range attr.PlanModifiers {
+			if mod.Description(t.Context()) == keepPrior {
+				t.Fatal("modified must not keep the prior timestamp across an update")
+			}
+		}
 	}
 }
 
