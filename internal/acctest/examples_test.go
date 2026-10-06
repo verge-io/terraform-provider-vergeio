@@ -12,6 +12,8 @@ import (
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/hashicorp/terraform-plugin-framework/action"
+	aschema "github.com/hashicorp/terraform-plugin-framework/action/schema"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	dschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
@@ -56,6 +58,16 @@ func TestExamplesCoverRegisteredObjects(t *testing.T) {
 		resp := &ephemeral.MetadataResponse{}
 		e.Metadata(ctx, ephemeral.MetadataRequest{ProviderTypeName: "vergeio"}, resp)
 		requireFile(t, filepath.Join(root, "examples", "ephemeral-resources", resp.TypeName, "ephemeral-resource.tf"))
+	}
+	withActions, ok := p.(provider.ProviderWithActions)
+	if !ok {
+		t.Fatal("provider does not register actions")
+	}
+	for _, factory := range withActions.Actions(ctx) {
+		item := factory()
+		resp := &action.MetadataResponse{}
+		item.Metadata(ctx, action.MetadataRequest{ProviderTypeName: "vergeio"}, resp)
+		requireFile(t, filepath.Join(root, "examples", "actions", resp.TypeName, "action.tf"))
 	}
 }
 
@@ -133,6 +145,39 @@ resource "vergeio_network" "example" {
 	}
 }
 
+func TestExampleSchemaRejectsUnknownActionArgument(t *testing.T) {
+	src := []byte(`
+action "vergeio_vm_snapshot" "before" {
+  vm_id = "1"
+  config {
+    vm_id = "1"
+    nope  = true
+  }
+}
+`)
+	errs := exampleSchemaErrors("action.tf", src, providerExampleSchemas())
+	joined := strings.Join(errs, "\n")
+	for _, name := range []string{"vm_id", "nope"} {
+		if !strings.Contains(joined, name) {
+			t.Errorf("missing unsupported-argument error for %s\n%s", name, joined)
+		}
+	}
+}
+
+func TestExampleSchemaRejectsUnregisteredAction(t *testing.T) {
+	src := []byte(`
+action "vergeio_not_an_action" "example" {
+  config {
+    id = "1"
+  }
+}
+`)
+	errs := exampleSchemaErrors("action.tf", src, providerExampleSchemas())
+	if len(errs) == 0 || !strings.Contains(strings.Join(errs, "\n"), "vergeio_not_an_action") {
+		t.Fatalf("unregistered action was accepted: %v", errs)
+	}
+}
+
 func TestExampleSchemaRejectsUnregisteredCloudinitType(t *testing.T) {
 	src := []byte(`
 data "vergeio_cloudinitfiles" "all" {
@@ -180,7 +225,7 @@ func TestDocTemplatesUseExampleFiles(t *testing.T) {
 			}
 			return nil
 		}
-		if strings.Contains(text, `resource "vergeio_`) || strings.Contains(text, `data "vergeio_`) {
+		if strings.Contains(text, `resource "vergeio_`) || strings.Contains(text, `data "vergeio_`) || strings.Contains(text, `action "vergeio_`) {
 			t.Errorf("%s embeds a vergeio configuration; render it with tffile from examples/", rel)
 		}
 		return nil
@@ -218,6 +263,7 @@ type exampleSchemas struct {
 	resources  map[string]*schemaNode
 	dataSource map[string]*schemaNode
 	ephemeral  map[string]*schemaNode
+	actions    map[string]*schemaNode
 }
 
 func providerExampleSchemas() exampleSchemas {
@@ -227,6 +273,7 @@ func providerExampleSchemas() exampleSchemas {
 		resources:  map[string]*schemaNode{},
 		dataSource: map[string]*schemaNode{},
 		ephemeral:  map[string]*schemaNode{},
+		actions:    map[string]*schemaNode{},
 	}
 
 	presp := &provider.SchemaResponse{}
@@ -259,7 +306,25 @@ func providerExampleSchemas() exampleSchemas {
 			out.ephemeral[meta.TypeName] = ephemeralSchemaNode(sresp.Schema)
 		}
 	}
+	if withActions, ok := p.(provider.ProviderWithActions); ok {
+		for _, factory := range withActions.Actions(ctx) {
+			item := factory()
+			meta := &action.MetadataResponse{}
+			item.Metadata(ctx, action.MetadataRequest{ProviderTypeName: "vergeio"}, meta)
+			sresp := &action.SchemaResponse{}
+			item.Schema(ctx, action.SchemaRequest{}, sresp)
+			out.actions[meta.TypeName] = actionSchemaNode(sresp.Schema)
+		}
+	}
 	return out
+}
+
+func actionSchemaNode(s aschema.Schema) *schemaNode {
+	children := map[string]*schemaNode{}
+	for name := range s.Attributes {
+		children[name] = &schemaNode{}
+	}
+	return &schemaNode{children: children}
 }
 
 func ephemeralSchemaNode(s eschema.Schema) *schemaNode {
@@ -302,9 +367,64 @@ func exampleSchemaErrors(filename string, src []byte, schemas exampleSchemas) []
 				continue
 			}
 			errs = append(errs, checkLabeledBlock(block, schemas.ephemeral, "ephemeral resource")...)
+		case "action":
+			if len(block.Labels) < 1 {
+				continue
+			}
+			errs = append(errs, checkActionBlock(block, schemas.actions)...)
 		}
 	}
 	return errs
+}
+
+func checkActionBlock(block *hclsyntax.Block, schemas map[string]*schemaNode) []string {
+	typeName := block.Labels[0]
+	if !strings.HasPrefix(typeName, "vergeio_") {
+		return nil
+	}
+	node, ok := schemas[typeName]
+	if !ok {
+		return []string{fmt.Sprintf("unsupported action %q", typeName)}
+	}
+	label := typeName
+	if len(block.Labels) > 1 {
+		label = typeName + "." + block.Labels[1]
+	}
+	var errs []string
+	names := make([]string, 0, len(block.Body.Attributes))
+	for name := range block.Body.Attributes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if actionMetaArgument(name) {
+			continue
+		}
+		errs = append(errs, fmt.Sprintf("%s: unsupported argument %q", label, name))
+	}
+	sawConfig := false
+	for _, nested := range block.Body.Blocks {
+		if nested.Type != "config" {
+			errs = append(errs, fmt.Sprintf("%s: unsupported block %q", label, nested.Type))
+			continue
+		}
+		if sawConfig {
+			errs = append(errs, fmt.Sprintf("%s: repeated block %q", label, nested.Type))
+			continue
+		}
+		sawConfig = true
+		errs = append(errs, checkBody(label+".config", nested.Body, node)...)
+	}
+	return errs
+}
+
+func actionMetaArgument(name string) bool {
+	switch name {
+	case "count", "for_each", "depends_on", "provider":
+		return true
+	default:
+		return false
+	}
 }
 
 func checkLabeledBlock(block *hclsyntax.Block, schemas map[string]*schemaNode, kind string) []string {

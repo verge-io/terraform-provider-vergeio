@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/ephemeral"
 	fwprovider "github.com/hashicorp/terraform-plugin-framework/provider"
 )
@@ -12,6 +13,35 @@ func TestProvider(t *testing.T) {
 	provider := New("dev")()
 	if provider == nil {
 		t.Fatal("provider should not be nil")
+	}
+}
+
+func TestProviderRegistersActions(t *testing.T) {
+	p := New("dev")()
+	withActions, ok := p.(fwprovider.ProviderWithActions)
+	if !ok {
+		t.Fatal("provider does not register actions")
+	}
+	factories := withActions.Actions(context.Background())
+	got := map[string]bool{}
+	for _, factory := range factories {
+		item := factory()
+		resp := &action.MetadataResponse{}
+		item.Metadata(context.Background(), action.MetadataRequest{ProviderTypeName: "vergeio"}, resp)
+		got[resp.TypeName] = true
+	}
+	for _, name := range []string{
+		"vergeio_vm_snapshot",
+		"vergeio_network_apply",
+		"vergeio_vm_power",
+		"vergeio_tenant_snapshot",
+	} {
+		if !got[name] {
+			t.Errorf("missing action %s", name)
+		}
+	}
+	if len(got) != 4 {
+		t.Fatalf("actions = %#v", got)
 	}
 }
 
