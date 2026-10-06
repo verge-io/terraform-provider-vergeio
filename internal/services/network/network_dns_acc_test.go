@@ -81,7 +81,7 @@ func TestAccNetworkDNS_ViewZoneRecord(t *testing.T) {
 				ResourceName:            "vergeio_network_dns_zone.test",
 				ImportState:             true,
 				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"modified"},
+				ImportStateVerifyIgnore: []string{"modified", "serial_number"},
 			},
 			{
 				ResourceName:            "vergeio_network_dns_record.test",

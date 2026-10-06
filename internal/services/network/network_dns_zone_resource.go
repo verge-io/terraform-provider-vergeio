@@ -163,10 +163,12 @@ func (r *NetworkDNSZoneResource) Schema(ctx context.Context, req resource.Schema
 				Computed:            true,
 				PlanModifiers:       stringState(),
 			},
+			// serial_number increments on every zone write. UseStateForUnknown
+			// would keep the prior value in the plan, and the refreshed value
+			// would fail apply as an inconsistent result.
 			"serial_number": schema.Int64Attribute{
 				MarkdownDescription: "SOA serial number. VergeOS increments it. Terraform does not set it.",
 				Computed:            true,
-				PlanModifiers:       intState(),
 			},
 			"default_ttl": schema.StringAttribute{
 				MarkdownDescription: "Default record time to live, for example 1h or 30m. Omit to leave the current value unchanged.",

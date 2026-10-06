@@ -71,6 +71,17 @@ func TestDNSModifiedIsNotKeptFromState(t *testing.T) {
 			}
 		}
 	}
+	zoneResp := &resource.SchemaResponse{}
+	NewNetworkDNSZoneResource().Schema(t.Context(), resource.SchemaRequest{}, zoneResp)
+	serial, ok := zoneResp.Schema.Attributes["serial_number"].(schema.Int64Attribute)
+	if !ok || !serial.Computed || serial.Optional || serial.Required {
+		t.Fatal("serial_number should be computed only")
+	}
+	for _, mod := range serial.PlanModifiers {
+		if mod.Description(t.Context()) == keepPrior {
+			t.Fatal("serial_number must not keep the prior value across an update")
+		}
+	}
 }
 
 func TestDNSSchemaProseHasNoHyphen(t *testing.T) {
