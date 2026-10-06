@@ -73,7 +73,7 @@ func (r *SnapshotProfileResource) Metadata(ctx context.Context, req resource.Met
 
 func (r *SnapshotProfileResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "VergeOS snapshot profile. Each period block sets the frequency, the time of day, how long the snapshot is kept, and whether the guest is quiesced. Retention is required on every period and has no default. vergeio_vm.snapshot_profile is tonumber of this resource's id. A period left out of the configuration is deleted. Changing a period name replaces that period.",
+		MarkdownDescription: "VergeOS snapshot profile. Each period block sets the frequency, the time of day, how long the snapshot is kept, and whether the guest is quiesced. Retention is required on every period and has no default. vergeio_vm.snapshot_profile is tonumber of this resource's id. A period left out of the configuration is deleted. Changing a period name replaces that period. Cloud snapshots use this same profile. There is no separate cloud snapshot profile. vergeio_site_sync_outgoing.period.profile_period is the period key.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Snapshot profile key assigned by VergeOS. vergeio_vm.snapshot_profile uses this key as a number: tonumber(vergeio_snapshot_profile.example.id).",

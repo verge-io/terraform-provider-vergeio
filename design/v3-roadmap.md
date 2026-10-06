@@ -88,11 +88,12 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 * #75 is closed. `vergeio_nas_service` deploys the Services recipe, which creates the virtual machine and the NAS service together. `name` and `network_id` are required, and its `user` blocks are the accounts on that service. `vergeio_nas_volume` is a volume on that service. `vergeio_nas_cifs_share` and `vergeio_nas_nfs_share` are shares on a volume. Destroy disables a volume and waits until VergeOS allows the delete. If shares still block that delete, Terraform removes them and tries again. Removing the service removes the virtual machine. Volume snapshots and volume sync stay out of this change.
 
+* #76 is closed. `vergeio_site` is a remote VergeOS system. Create does not ask VergeOS to build syncs. `vergeio_site_sync_incoming` and `vergeio_site_sync_outgoing` declare the syncs, including the snapshot profile periods to send and the remote retention. Cloud snapshots use `vergeio_snapshot_profile`. There is no separate cloud snapshot profile. `vergeio_site_sync_incoming_status` and `vergeio_site_sync_outgoing_status` fail the plan when `max_lag_seconds` says replication has fallen behind. Test failover and runbooks stay in #81.
+
 The remaining issues in this section are open.
 
 * #70. `vergeio_api_key` manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it. `ephemeral.vergeio_api_key` remains the short-lived token for one run, and Open still deletes an existing key of that name. Do not reuse a managed key's name there. `vergeio_auth_source` manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret` or other omitted keys. A key removed from `settings` stays on the auth source. Replace the auth source to drop it.
 * #73. IPsec and WireGuard, including teardown order.
-* #76. DR building blocks: sites, site sync, and cloud snapshots as resources.
 * #77. A published modules repository (tenant, network segment, VM).
 * #78. Certificates, webhooks, and system settings.
 * #79. A Terraform and Ansible handoff guide.

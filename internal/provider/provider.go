@@ -11,6 +11,7 @@ import (
 	"terraform-provider-vergeio/internal/services/identity"
 	"terraform-provider-vergeio/internal/services/nas"
 	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/site"
 	"terraform-provider-vergeio/internal/services/snapshot"
 	"terraform-provider-vergeio/internal/services/storage"
 	"terraform-provider-vergeio/internal/services/system"
@@ -151,6 +152,9 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		identity.NewAPIKeyResource,
 		identity.NewAuthSourceResource,
 		snapshot.NewSnapshotProfileResource,
+		site.NewSiteResource,
+		site.NewSyncIncomingResource,
+		site.NewSyncOutgoingResource,
 		tags.NewTagCategoryResource,
 		tags.NewTagResource,
 		tags.NewTagMemberResource,
@@ -196,6 +200,8 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		compute.NewCloudinitFileDataSource,
 		system.NewResourceGroupsDataSource,
 		tags.NewTagsDataSource,
+		site.NewSyncIncomingStatusDataSource,
+		site.NewSyncOutgoingStatusDataSource,
 		tenant.NewTenantsDataSource,
 	}
 }
