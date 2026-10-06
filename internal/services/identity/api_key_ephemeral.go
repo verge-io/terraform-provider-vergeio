@@ -74,7 +74,7 @@ func (r *APIKeyEphemeralResource) Metadata(ctx context.Context, req ephemeral.Me
 
 func (r *APIKeyEphemeralResource) Schema(ctx context.Context, req ephemeral.SchemaRequest, resp *ephemeral.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Mints a short-lived VergeOS user API key for this run. The token is not stored in Terraform state. Close deletes the key, and the key expires on its own if Close does not run. Use the token as the api_key of a second provider configuration. Requires Terraform 1.10 or OpenTofu 1.11. The name is exclusive to this ephemeral resource: Open deletes an existing key with the same name for that user before creating a new one.",
+		MarkdownDescription: "Mints a short-lived VergeOS user API key for this run. The token is not stored in Terraform state. Close deletes the key, and the key expires on its own if Close does not run. Use the token as the api_key of a second provider configuration. Requires Terraform 1.10 or OpenTofu 1.11. The name is exclusive to this ephemeral resource: Open deletes an existing key with the same name for that user before creating a new one. A long-lived key is the managed vergeio_api_key resource, which does not store the bearer token.",
 		Attributes: map[string]schema.Attribute{
 			"user_id": schema.Int32Attribute{
 				MarkdownDescription: "Key of the user that owns the API key. A vergeio_users id can be used directly.",

@@ -80,7 +80,7 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 The remaining issues in this section are open.
 
-* #70. Resources for API keys and auth sources.
+* #70. `vergeio_api_key` manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it. `ephemeral.vergeio_api_key` remains the short-lived token for one run, and Open still deletes an existing key of that name. Do not reuse a managed key's name there. `vergeio_auth_source` manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret` or other omitted keys. A key removed from `settings` stays on the auth source. Replace the auth source to drop it.
 * #71. `terraform query`, so an existing system can be discovered and imported in bulk.
 * #72. Actions for operations that are not resources, including a snapshot before a change.
 * #32. VMs from catalog recipes. Labelled `blocked`.

@@ -3,7 +3,7 @@
 page_title: "vergeio_api_key Ephemeral Resource - vergeio"
 subcategory: ""
 description: |-
-  Mints a short-lived VergeOS user API key for this run. The token is not stored in Terraform state. Close deletes the key, and the key expires on its own if Close does not run. Use the token as the api_key of a second provider configuration. Requires Terraform 1.10 or OpenTofu 1.11. The name is exclusive to this ephemeral resource: Open deletes an existing key with the same name for that user before creating a new one.
+  Mints a short-lived VergeOS user API key for this run. The token is not stored in Terraform state. Close deletes the key, and the key expires on its own if Close does not run. Use the token as the api_key of a second provider configuration. Requires Terraform 1.10 or OpenTofu 1.11. The name is exclusive to this ephemeral resource: Open deletes an existing key with the same name for that user before creating a new one. A long-lived key is the managed vergeio_api_key resource, which does not store the bearer token.
 ---
 
 # vergeio_api_key (Ephemeral Resource)
@@ -13,6 +13,8 @@ Mints a short-lived VergeOS user API key for this run. The token is not stored i
 `name` is exclusive. Open deletes an existing key with the same name for `user_id` before creating a new one. Do not reuse a name that belongs to a long-lived key.
 
 Pass `token` to a provider `api_key` argument. Provider arguments cannot be write-only, so a password or API key written in the provider block is stored. The [tenants guide](../guides/tenants.html) uses this resource for the configuration that manages the inside of a tenant. Requires Terraform 1.10 or OpenTofu 1.11. OpenTofu 1.10 and earlier reject ephemeral resources.
+
+A long-lived key is the managed [`vergeio_api_key`](../resources/api_key.html) resource. That resource sets expiry and IP allow and deny lists and does not store the bearer token. Do not reuse its name here. Open deletes an existing key of the same name for that user.
 
 ## Example Usage
 

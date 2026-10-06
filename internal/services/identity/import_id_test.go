@@ -46,6 +46,18 @@ func TestIdentityImportStateEmptyID(t *testing.T) {
 			summary:  "Invalid Permission Import ID",
 			detail:   "Import vergeio_permission with the permission key.",
 		},
+		{
+			name:     "api key",
+			resource: NewAPIKeyResource(),
+			summary:  "Invalid API Key Import ID",
+			detail:   "Import vergeio_api_key with the API key id.",
+		},
+		{
+			name:     "auth source",
+			resource: NewAuthSourceResource(),
+			summary:  "Invalid Auth Source Import ID",
+			detail:   "Import vergeio_auth_source with the auth source key.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,6 +73,8 @@ func TestIdentityImportStateKeepsNonEmptyID(t *testing.T) {
 		NewGroupResource(),
 		NewMemberResource(),
 		NewPermissionResource(),
+		NewAPIKeyResource(),
+		NewAuthSourceResource(),
 	} {
 		resp := importResourceState(t, r, "abc")
 		assertImportIDPassthrough(t, resp, "abc")
