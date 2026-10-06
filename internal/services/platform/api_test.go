@@ -293,6 +293,32 @@ func TestCertificateImportReadFillsDomainNameFromCertificate(t *testing.T) {
 	}
 }
 
+func TestCertificateImportReadPrefersStoredDomainName(t *testing.T) {
+	fake := newPlatformFake()
+	id := fake.seedCertificate(vergeos.Certificate{
+		Description: "imported",
+		Type:        vergeos.CertificateTypeSelfSigned,
+		Public:      testCertificatePEM(t, "verge-api", ""),
+	})
+	fake.setDomainName(id, "tf-acc-cert.local")
+	data := importCertificate(t, fake, strconv.Itoa(id))
+	if data.DomainName.ValueString() != "tf-acc-cert.local" {
+		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
+	}
+	if data.Domain.ValueString() != "" {
+		t.Fatalf("domain = %q", data.Domain.ValueString())
+	}
+	sawDomainName := false
+	for _, fields := range fake.fieldQueries() {
+		if fields == "domainname" {
+			sawDomainName = true
+		}
+	}
+	if !sawDomainName {
+		t.Fatalf("domainname was not requested: %#v", fake.fieldQueries())
+	}
+}
+
 func TestDomainNameOmitDoesNotRequireReplace(t *testing.T) {
 	ctx := context.Background()
 	schemaResp := &resource.SchemaResponse{}
@@ -804,23 +830,30 @@ type recordedPut struct {
 	body string
 }
 
+type fakeCertBody struct {
+	vergeos.Certificate
+	DomainName string `json:"domainname,omitempty"`
+}
+
 type platformFake struct {
-	mu             sync.Mutex
-	next           int
-	certs          map[int]vergeos.Certificate
-	urls           map[int]vergeos.WebhookURL
-	hooks          map[int]*vergeos.Webhook
-	settings       map[string]*settingRecord
-	puts           []recordedPut
-	deletes        []string
-	privateReads   int
-	failPuts       int
-	failPutStatus  int
-	putAttempts    int
-	certCreateBody string
-	certUpdateBody string
-	urlCreateBody  string
-	urlUpdateBody  string
+	mu               sync.Mutex
+	next             int
+	certs            map[int]vergeos.Certificate
+	urls             map[int]vergeos.WebhookURL
+	hooks            map[int]*vergeos.Webhook
+	settings         map[string]*settingRecord
+	puts             []recordedPut
+	deletes          []string
+	privateReads     int
+	domainNames      map[int]string
+	certFieldQueries []string
+	failPuts         int
+	failPutStatus    int
+	putAttempts      int
+	certCreateBody   string
+	certUpdateBody   string
+	urlCreateBody    string
+	urlUpdateBody    string
 }
 
 func newPlatformFake() *platformFake {
@@ -836,7 +869,7 @@ func newPlatformFake() *platformFake {
 	}
 }
 
-func (f *platformFake) seedCertificate(cert vergeos.Certificate) {
+func (f *platformFake) seedCertificate(cert vergeos.Certificate) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	id := f.next
@@ -846,6 +879,22 @@ func (f *platformFake) seedCertificate(cert vergeos.Certificate) {
 		cert.Public = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
 	}
 	f.certs[id] = cert
+	return id
+}
+
+func (f *platformFake) setDomainName(id int, name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.domainNames == nil {
+		f.domainNames = map[int]string{}
+	}
+	f.domainNames[id] = name
+}
+
+func (f *platformFake) fieldQueries() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.certFieldQueries...)
 }
 
 func (f *platformFake) seedURL(name, rawURL string) {
@@ -1003,12 +1052,16 @@ func (f *platformFake) getCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := r.URL.Query().Get("fields")
+	f.certFieldQueries = append(f.certFieldQueries, fields)
 	if strings.Contains(fields, "private") {
 		f.privateReads++
 	} else {
 		cert.Private = ""
 	}
-	writeJSON(w, cert)
+	writeJSON(w, fakeCertBody{
+		Certificate: cert,
+		DomainName:  f.domainNames[int(cert.Key)],
+	})
 }
 
 func (f *platformFake) updateCertificate(w http.ResponseWriter, r *http.Request) {

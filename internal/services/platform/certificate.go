@@ -95,7 +95,7 @@ func (r *certificateResource) Schema(ctx context.Context, req resource.SchemaReq
 				},
 				Validators: []validator.String{stringvalidator.OneOf(certificateTypes...)},
 			},
-			"domain_name":        replaceString("Primary domain. Required for self_signed. A manual certificate can omit it. A letsencrypt certificate can set domain_list instead. Changing a configured value replaces the certificate. Omitting it leaves the current name in place. After import this is domain when VergeOS reports one, otherwise the first name in domainlist, otherwise the common name on the certificate."),
+			"domain_name":        replaceString("Primary domain. Required for self_signed. A manual certificate can omit it. A letsencrypt certificate can set domain_list instead. Changing a configured value replaces the certificate. Omitting it leaves the current name in place. After import this is domain when VergeOS reports one, otherwise domainname on that certificate, otherwise the first name in domainlist, otherwise the common name on the certificate."),
 			"domain_list":        optString("Comma separated subject alternative names. Omit to leave the current list unchanged."),
 			"description":        optString("What this certificate is for. Omit to leave the current value unchanged."),
 			"public_certificate": optString("Public certificate in PEM form. Required for type manual. VergeOS returns this text on read."),
@@ -428,7 +428,11 @@ func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert
 		data.Type = prior.Type
 	}
 	data.Domain = stringFromAPI(cert.Domain, prior.Domain)
-	data.DomainName = applyDomainName(prior.DomainName, cert, public)
+	storedName := ""
+	if !knownString(prior.DomainName) && strings.TrimSpace(cert.Domain) == "" {
+		storedName = a.readCertificateDomainName(ctx, int(cert.Key))
+	}
+	data.DomainName = applyDomainName(prior.DomainName, cert, storedName, public)
 	data.DomainList = stringFromAPI(cert.DomainList, prior.DomainList)
 	data.Description = stringFromAPI(cert.Description, prior.Description)
 	data.PublicCertificate = keepPEM(public, prior.PublicCertificate)
@@ -476,26 +480,49 @@ func (a *API) certificateMaterial(ctx context.Context, id int, certType string) 
 	return full.Public, full.Chain, nil
 }
 
+// readCertificateDomainName reads domainname from the certificate row.
+// Certificates.Get requests domain, and that field stays empty for a
+// self_signed certificate. domainname is the name stored at create.
+// The common name on the public certificate is not that name.
+func (a *API) readCertificateDomainName(ctx context.Context, id int) string {
+	if a == nil || id <= 0 {
+		return ""
+	}
+	var extra struct {
+		DomainName string `json:"domainname"`
+	}
+	err := a.getJSON(ctx, vergeio.ObjectPath(certificateCollection, strconv.Itoa(id)), &vergeio.Options{Fields: "domainname"}, &extra)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(extra.DomainName)
+}
+
 // applyDomainName keeps a domain_name already in state. Import starts
-// with only the certificate key, and a self_signed certificate often
-// returns an empty domain. The name then comes from domainlist, then
-// from the common name or DNS name on the public certificate.
-func applyDomainName(prior types.String, cert *vergeos.Certificate, publicPEM string) types.String {
+// with only the certificate key. The name then comes from domain, then
+// domainname, then the first domainlist entry, then the common name or
+// DNS name on the public certificate.
+func applyDomainName(prior types.String, cert *vergeos.Certificate, storedName, publicPEM string) types.String {
 	if knownString(prior) {
 		return prior
 	}
-	reported := reportedCertificateDomain(cert, publicPEM)
+	reported := reportedCertificateDomain(cert, storedName, publicPEM)
 	if reported == "" {
 		return types.StringNull()
 	}
 	return types.StringValue(reported)
 }
 
-func reportedCertificateDomain(cert *vergeos.Certificate, publicPEM string) string {
+func reportedCertificateDomain(cert *vergeos.Certificate, storedName, publicPEM string) string {
 	if cert != nil {
 		if name := strings.TrimSpace(cert.Domain); name != "" {
 			return name
 		}
+	}
+	if name := strings.TrimSpace(storedName); name != "" {
+		return name
+	}
+	if cert != nil {
 		if name := firstDomain(cert.DomainList); name != "" {
 			return name
 		}
