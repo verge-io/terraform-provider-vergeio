@@ -318,6 +318,39 @@ func TestDeleteVolumeWaitsUntilDisabled(t *testing.T) {
 	}
 }
 
+func TestCreateVolumeSendsMinimumSize(t *testing.T) {
+	fix := newNASFixture(t)
+	api := newNASTestAPI(t, fix)
+	volume := &volumeModel{
+		Name:      types.StringValue("data"),
+		ServiceID: types.StringValue("7"),
+		Enabled:   types.BoolValue(true),
+	}
+	if err := api.createVolume(t.Context(), volume, volumeSecrets{}); err != nil {
+		t.Fatal(err)
+	}
+	posts := fix.bodies(http.MethodPost, "/api/v4/volumes")
+	if len(posts) != 1 || posts[0]["maxsize"] != float64(volumeMinBytes) {
+		t.Fatalf("create bodies = %#v", posts)
+	}
+	if volume.MaxSize.ValueInt64() != volumeMinBytes {
+		t.Fatalf("max size = %#v", volume.MaxSize)
+	}
+	explicit := &volumeModel{
+		Name:      types.StringValue("larger"),
+		ServiceID: types.StringValue("7"),
+		Enabled:   types.BoolValue(true),
+		MaxSize:   types.Int64Value(volumeMinBytes * 2),
+	}
+	if err := api.createVolume(t.Context(), explicit, volumeSecrets{}); err != nil {
+		t.Fatal(err)
+	}
+	posts = fix.bodies(http.MethodPost, "/api/v4/volumes")
+	if len(posts) != 2 || posts[1]["maxsize"] != float64(volumeMinBytes*2) {
+		t.Fatalf("create bodies = %#v", posts)
+	}
+}
+
 func TestCreateVolumeRemovesRowWhenReadFails(t *testing.T) {
 	withPoll(t, 3)
 	fix := newNASFixture(t)

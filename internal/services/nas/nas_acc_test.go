@@ -60,6 +60,7 @@ func TestAccNAS_ServiceVolumeShares(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_nas_volume.test", "name", volumeName),
 					resource.TestCheckResourceAttr("vergeio_nas_volume.test", "description", "Documents"),
 					resource.TestCheckResourceAttr("vergeio_nas_volume.test", "enabled", "true"),
+					resource.TestCheckResourceAttr("vergeio_nas_volume.test", "max_size", "1048576"),
 					resource.TestCheckResourceAttrSet("vergeio_nas_cifs_share.test", "id"),
 					resource.TestCheckResourceAttr("vergeio_nas_cifs_share.test", "name", cifsName),
 					resource.TestCheckResourceAttrSet("vergeio_nas_nfs_share.test", "id"),
@@ -234,6 +235,7 @@ resource "vergeio_nas_volume" "test" {
   name        = %q
   description = %q
   enabled     = true
+  max_size    = 1048576
 }
 
 resource "vergeio_nas_cifs_share" "test" {

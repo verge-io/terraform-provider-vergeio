@@ -19,6 +19,7 @@ resource "vergeio_nas_service" "example" {
 resource "vergeio_nas_volume" "example" {
   service_id = vergeio_nas_service.example.id
   name       = "documents"
+  max_size   = 1048576
 }
 
 resource "vergeio_nas_nfs_share" "example" {

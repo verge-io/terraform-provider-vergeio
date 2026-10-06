@@ -16,6 +16,10 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
+// volumeMinBytes is the smallest disk VergeOS will create. A missing or
+// zero max_size is sent as this value so the API does not see size 0.
+const volumeMinBytes int64 = 1048576
+
 type volumeSecrets struct {
 	EncryptionKey  string
 	SendEncryption bool
@@ -207,7 +211,7 @@ func volumeCreateRequest(data *volumeModel, secrets volumeSecrets) (*vergeos.Vol
 		Service:            serviceID,
 		Description:        stringOrEmpty(data.Description),
 		Enabled:            vergeio.KnownBool(data.Enabled),
-		MaxSize:            vergeio.KnownInt64(data.MaxSize),
+		MaxSize:            volumeCreateSize(data.MaxSize),
 		PreferredTier:      vergeio.KnownString(data.PreferredTier),
 		SnapshotProfile:    knownInt(data.SnapshotProfile),
 		Discard:            vergeio.KnownBool(data.Discard),
@@ -234,6 +238,16 @@ func volumeCreateRequest(data *volumeModel, secrets volumeSecrets) (*vergeos.Vol
 		req.CIFSPassword = &password
 	}
 	return req, nil
+}
+
+// volumeCreateSize returns a size VergeOS will accept. An omitted size, or a
+// size below the minimum, becomes volumeMinBytes.
+func volumeCreateSize(v types.Int64) *int64 {
+	if n := vergeio.KnownInt64(v); n != nil && *n >= volumeMinBytes {
+		return n
+	}
+	n := volumeMinBytes
+	return &n
 }
 
 func volumeUpdateRequest(plan, state *volumeModel, secrets volumeSecrets) *vergeos.VolumeUpdateRequest {

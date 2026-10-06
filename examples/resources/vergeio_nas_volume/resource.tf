@@ -22,4 +22,5 @@ resource "vergeio_nas_volume" "example" {
   name        = "documents"
   description = "Shared documents"
   enabled     = true
+  max_size    = 1048576
 }

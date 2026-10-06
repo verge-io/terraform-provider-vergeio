@@ -192,7 +192,7 @@ func (a *API) DeleteService(ctx context.Context, id int) error {
 			return fmt.Errorf("delete NAS service %d: %w (users were left in place: %v)", id, err, userErr)
 		}
 		retry := a.sdk.NASServices.Delete(ctx, id)
-		if retry != nil && !missing(retry) && !(methodNotAllowed(retry) && vmID > 0) {
+		if retry != nil && !missing(retry) && (!methodNotAllowed(retry) || vmID <= 0) {
 			return fmt.Errorf("delete NAS service %d: %w", id, retry)
 		}
 	}
@@ -422,7 +422,6 @@ func (a *API) waitForNASService(ctx context.Context, name string, vmID int) (*ve
 			if !missing(err) && !vergeos.IsAmbiguousNameError(err) {
 				return nil, err
 			}
-			last = err
 		}
 		service, err := a.sdk.NASServices.GetByName(ctx, name)
 		if err == nil {

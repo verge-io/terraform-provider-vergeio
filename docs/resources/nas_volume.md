@@ -41,6 +41,7 @@ resource "vergeio_nas_volume" "example" {
   name        = "documents"
   description = "Shared documents"
   enabled     = true
+  max_size    = 1048576
 }
 ```
 
@@ -67,7 +68,7 @@ resource "vergeio_nas_volume" "example" {
 - `encrypt` (Boolean) Encrypt the volume. Chosen only when the volume is created. Changing it replaces the volume.
 - `encryption_key_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Encryption passphrase sent when the volume is created. Terraform does not store it. Changing encryption_key_wo_version replaces the volume. Requires Terraform 1.11 or OpenTofu 1.11.
 - `encryption_key_wo_version` (Number) Version of encryption_key_wo. Increment it to replace the volume with a new passphrase. Terraform stores this number, not the passphrase.
-- `max_size` (Number) Maximum size in bytes. The smallest volume is 1048576 bytes. Omit to leave the current size unchanged.
+- `max_size` (Number) Maximum size in bytes. The smallest volume is 1048576 bytes. Omit on create and Terraform sends 1048576. Omit on update to leave the current size unchanged.
 - `mount_options` (String) Extra mount options, in the form VergeOS stores them. Omit to leave the current value unchanged.
 - `nfs_protocol` (String) NFS protocol version: `2`, `3`, or `4`. Omit to leave the current value unchanged.
 - `note` (String) Free form note. Omit to leave the current value unchanged.
