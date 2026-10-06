@@ -15,6 +15,7 @@ import (
 	"terraform-provider-vergeio/internal/client"
 	"terraform-provider-vergeio/internal/services/nas"
 	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/platform"
 	"terraform-provider-vergeio/internal/services/site"
 )
 
@@ -164,6 +165,7 @@ func Sweep(ctx context.Context) error {
 	// before those profiles. A VM that still references a profile can make
 	// the profile delete fail, which is why profiles stay after VMs.
 	record(sweepSites(ctx, client))
+	record(sweepPlatform(ctx, client))
 	record(sweepSnapshotProfiles(ctx, client))
 	for id, name := range networkIDs {
 		log.Printf("[SWEEP] deleting network %d (%s)", id, name)
@@ -380,6 +382,7 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 
 	left = append(left, verifyNAS(ctx, client)...)
 	left = append(left, verifySites(ctx, client)...)
+	left = append(left, verifyPlatform(ctx, client)...)
 
 	if len(left) > 0 {
 		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
@@ -443,6 +446,14 @@ func sweepNAS(ctx context.Context, client *vergeos.Client, vmIDs map[int]string)
 
 func sweepSites(ctx context.Context, client *vergeos.Client) error {
 	return site.SweepTestRows(ctx, client, HasPrefix)
+}
+
+func sweepPlatform(ctx context.Context, client *vergeos.Client) error {
+	return platform.SweepTestRows(ctx, client, HasPrefix)
+}
+
+func verifyPlatform(ctx context.Context, client *vergeos.Client) []string {
+	return platform.Leftovers(ctx, client, HasPrefix)
 }
 
 func verifySites(ctx context.Context, client *vergeos.Client) []string {

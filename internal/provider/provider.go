@@ -11,6 +11,7 @@ import (
 	"terraform-provider-vergeio/internal/services/identity"
 	"terraform-provider-vergeio/internal/services/nas"
 	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/platform"
 	"terraform-provider-vergeio/internal/services/site"
 	"terraform-provider-vergeio/internal/services/snapshot"
 	"terraform-provider-vergeio/internal/services/storage"
@@ -153,6 +154,10 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		identity.NewAuthSourceResource,
 		snapshot.NewSnapshotProfileResource,
 		site.NewSiteResource,
+		platform.NewCertificateResource,
+		platform.NewWebhookURLResource,
+		platform.NewWebhookResource,
+		platform.NewSettingResource,
 		site.NewSyncIncomingResource,
 		site.NewSyncOutgoingResource,
 		tags.NewTagCategoryResource,
