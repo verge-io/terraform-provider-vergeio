@@ -568,8 +568,10 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// applyDomainName keeps a domain_name already in state. Import starts
-// with only the certificate key, so chosen is the name from this read.
+// applyDomainName keeps a domain_name already in state. VergeOS later
+// stores the issued certificate CN in domainname. A normal read keeps
+// the name from create. Import starts with only the certificate key, so
+// chosen is the name from this read.
 func applyDomainName(prior types.String, chosen string) types.String {
 	if knownString(prior) {
 		return prior

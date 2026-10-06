@@ -391,6 +391,10 @@ func TestCertificatePublicSelfIsNotADomain(t *testing.T) {
 	if chooseCertificateDomainName(vergeos.CertificateTypeManual, "tf-acc-manual.local", "other.example", "", "self") != "tf-acc-manual.local" {
 		t.Fatal("manual domain was replaced")
 	}
+	kept := applyDomainName(types.StringValue("tf-acc-cert.local"), "verge-api")
+	if kept.ValueString() != "tf-acc-cert.local" {
+		t.Fatalf("configured domain_name became %q", kept.ValueString())
+	}
 }
 
 func sawCertificateDetail(fake *platformFake) bool {

@@ -83,10 +83,14 @@ func TestAccCertificate_SelfSigned(t *testing.T) {
 				},
 			},
 			{
-				ResourceName:            "vergeio_certificate.test",
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"created", "modified", "expires"},
+				ResourceName:      "vergeio_certificate.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				// VergeOS rewrites domainname to the issued certificate CN
+				// after the public materializes. A normal read keeps the
+				// configured domain_name through applyDomainName. Import has
+				// no prior value, so the issued name can differ.
+				ImportStateVerifyIgnore: []string{"created", "modified", "expires", "domain_name"},
 			},
 		},
 	})
