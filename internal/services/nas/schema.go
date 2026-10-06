@@ -57,6 +57,9 @@ func optInt(description string, validators ...validator.Int64) schema.Int64Attri
 	}
 }
 
+// timestampAttr is a VergeOS time such as created or modified.
+// UseStateForUnknown would keep the prior time in the plan, and a new time
+// from VergeOS would fail apply. Leave it unknown so the read can store it.
 func timestampAttr(description string) schema.Int64Attribute {
 	return schema.Int64Attribute{
 		MarkdownDescription: description,
@@ -101,21 +104,8 @@ func stableBool(description string) schema.BoolAttribute {
 	}
 }
 
-// createdAttr keeps a creation time that does not change on later writes.
-// modified and status stay unknown so a fresh value can be stored.
+// createdAttr is the creation time. It is a VergeOS timestamp, so it stays
+// unknown for the same reason as modified.
 func createdAttr(description string) schema.Int64Attribute {
-	return schema.Int64Attribute{
-		MarkdownDescription: description,
-		Computed:            true,
-		PlanModifiers: []planmodifier.Int64{
-			int64planmodifier.UseStateForUnknown(),
-		},
-	}
-}
-
-func computedInt(description string) schema.Int64Attribute {
-	return schema.Int64Attribute{
-		MarkdownDescription: description,
-		Computed:            true,
-	}
+	return timestampAttr(description)
 }

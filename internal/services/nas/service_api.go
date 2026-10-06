@@ -234,6 +234,11 @@ func (a *API) deleteServiceVolumes(ctx context.Context, serviceID int) error {
 	}
 	var errs []error
 	for _, volume := range volumes {
+		// Snapshot volumes are out of scope. Sweep skips them, and a service
+		// destroy must not delete them either.
+		if volume.IsSnapshot {
+			continue
+		}
 		id := rowID(volume.Key, volume.ID)
 		if id == "" {
 			errs = append(errs, fmt.Errorf("NAS service %d has a volume named %q with no id", serviceID, volume.Name))

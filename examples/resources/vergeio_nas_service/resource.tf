@@ -24,7 +24,7 @@ resource "vergeio_nas_service" "example" {
 
   user {
     name                = "files"
-    password_wo         = "changeme"
+    password_wo         = "changeme!"
     password_wo_version = 1
     display_name        = "Files"
     description         = "Opens the documents share"

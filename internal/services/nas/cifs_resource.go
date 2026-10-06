@@ -107,7 +107,7 @@ func (r *cifsResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"vfs_shadow_copy2": optBool("Expose previous versions from mounted snapshots. Omit to leave the current value unchanged."),
 			"created":          createdAttr("Time the share was created, as seconds since the epoch."),
 			"modified":         timestampAttr("Last modification time, as seconds since the epoch."),
-			"status":           computedInt("Share status id reported by VergeOS."),
+			"status":           stableInt("Share status id reported by VergeOS."),
 		},
 	}
 }

@@ -98,7 +98,7 @@ func (r *nfsResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 			"data_access":   optString("Read and write access: `ro` or `rw`. Omit to leave the current value unchanged.", stringvalidator.OneOf(accessValues...)),
 			"created":       createdAttr("Time the share was created, as seconds since the epoch."),
 			"modified":      timestampAttr("Last modification time, as seconds since the epoch."),
-			"status":        computedInt("Share status id reported by VergeOS."),
+			"status":        stableInt("Share status id reported by VergeOS."),
 		},
 	}
 }

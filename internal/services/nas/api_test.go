@@ -55,12 +55,12 @@ func TestNASModifiedIsNotKeptFromState(t *testing.T) {
 	keepPrior := useStateForUnknownDescription(t.Context())
 	volume := schemaOf(t, NewVolumeResource())
 	assertModifier(t, volume.Attributes["modified"], keepPrior, false)
-	assertModifier(t, volume.Attributes["created"], keepPrior, true)
+	assertModifier(t, volume.Attributes["created"], keepPrior, false)
 	for _, item := range []resource.Resource{NewCIFSShareResource(), NewNFSShareResource()} {
 		resp := schemaOf(t, item)
 		assertModifier(t, resp.Attributes["modified"], keepPrior, false)
-		assertModifier(t, resp.Attributes["status"], keepPrior, false)
-		assertModifier(t, resp.Attributes["created"], keepPrior, true)
+		assertModifier(t, resp.Attributes["status"], keepPrior, true)
+		assertModifier(t, resp.Attributes["created"], keepPrior, false)
 	}
 	service := schemaOf(t, NewServiceResource())
 	block := service.Blocks["user"].(schema.ListNestedBlock)
@@ -381,6 +381,36 @@ func TestUpdateNFSShare(t *testing.T) {
 	}
 	if plan.Modified.ValueInt64() == state.Modified.ValueInt64() {
 		t.Fatal("modified did not advance")
+	}
+}
+
+func TestDeleteServiceLeavesSnapshotVolume(t *testing.T) {
+	withPoll(t, 5)
+	fix := newNASFixture(t)
+	fix.put("service", "7", map[string]any{"$key": 7, "vm": 4, "name": "nas"})
+	fix.put("volume", "vol1", map[string]any{
+		"$key": "vol1", "id": "vol1", "name": "data", "service": 7, "enabled": true,
+	})
+	fix.put("volume", "snap1", map[string]any{
+		"$key": "snap1", "id": "snap1", "name": "data snap", "service": 7, "enabled": true, "is_snapshot": true,
+	})
+	api := newNASTestAPI(t, fix)
+	err := api.DeleteService(t.Context(), 7)
+	if err == nil || !strings.Contains(err.Error(), "in use") {
+		t.Fatalf("err = %v", err)
+	}
+	left := fix.snapshot("volume")
+	if len(left) != 1 || fieldString(left[0]["id"]) != "snap1" {
+		t.Fatalf("volumes=%v", left)
+	}
+	if len(fix.snapshot("service")) != 1 {
+		t.Fatalf("service was removed while a snapshot volume remained: %v", fix.snapshot("service"))
+	}
+	if fix.countExact("DELETE /api/v4/volumes/snap1") != 0 {
+		t.Fatalf("snapshot volume was deleted: %v", fix.callLog())
+	}
+	if fix.countExact("DELETE /api/v4/volumes/vol1") == 0 {
+		t.Fatalf("data volume was not removed: %v", fix.callLog())
 	}
 }
 

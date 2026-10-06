@@ -220,7 +220,7 @@ resource "vergeio_nas_service" "test" {
 
   user {
     name                = %q
-    password_wo         = "TerraformTest123"
+    password_wo         = "TerraformTest123!"
     password_wo_version = 1
     display_name        = "Files"
     description         = "Acceptance user"

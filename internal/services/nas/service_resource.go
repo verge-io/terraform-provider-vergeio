@@ -22,7 +22,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-const serviceDescription = "A VergeOS NAS service. VergeOS creates it by deploying the Services recipe, which builds the virtual machine and the service together. name is that virtual machine name. network_id is the network it joins. Create uses 4 CPU cores and 4096 MB of RAM. The guest uses DHCP. Its hostname comes from name. vm_id is the virtual machine VergeOS created. Removing the service removes that virtual machine. user blocks are the accounts on this service. A user left out of the configuration is deleted. Changing a user name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. Terraform stores the version, not the password. If deleting the service is refused because a volume remains, Terraform disables that volume, removes its shares, and tries again so a partial create cannot leave a row that blocks destroy."
+const serviceDescription = "A VergeOS NAS service. VergeOS creates it by deploying the Services recipe, which builds the virtual machine and the service together. name is that virtual machine name. network_id is the network it joins. Create uses 4 CPU cores and 4096 MB of RAM. The guest uses DHCP. Its hostname comes from name. vm_id is the virtual machine VergeOS created. Removing the service removes that virtual machine. user blocks are the accounts on this service. A user left out of the configuration is deleted. Changing a user name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. VergeOS requires a character that is not a letter or digit. Terraform stores the version, not the password. If deleting the service is refused because a volume remains, Terraform disables that volume, removes its shares, and tries again so a partial create cannot leave a row that blocks destroy. Snapshot volumes are left in place."
 
 var (
 	_ resource.Resource                = &serviceResource{}
@@ -106,7 +106,7 @@ func (r *serviceResource) Schema(ctx context.Context, req resource.SchemaRequest
 		},
 		Blocks: map[string]schema.Block{
 			"user": schema.ListNestedBlock{
-				MarkdownDescription: "Accounts that can open CIFS shares on this service. A user left out of the configuration is deleted. Changing name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. Terraform stores the version, not the password.",
+				MarkdownDescription: "Accounts that can open CIFS shares on this service. A user left out of the configuration is deleted. Changing name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. VergeOS requires a character that is not a letter or digit. Terraform stores the version, not the password.",
 				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"id": computedString("User id."),
@@ -118,12 +118,13 @@ func (r *serviceResource) Schema(ctx context.Context, req resource.SchemaRequest
 							},
 						},
 						"password_wo": schema.StringAttribute{
-							MarkdownDescription: "Password sent when the user is created and when password_wo_version changes. Terraform does not store it. Requires Terraform 1.11 or OpenTofu 1.11.",
+							MarkdownDescription: "Password sent when the user is created and when password_wo_version changes. VergeOS requires a character that is not a letter or digit. Terraform does not store it. Requires Terraform 1.11 or OpenTofu 1.11.",
 							Optional:            true,
 							WriteOnly:           true,
 							Sensitive:           true,
 							Validators: []validator.String{
 								stringvalidator.LengthAtLeast(1),
+								stringvalidator.RegexMatches(regexp.MustCompile(`[^A-Za-z0-9]`), "Use a character that is not a letter or digit. VergeOS rejects a password without one."),
 								stringvalidator.AlsoRequires(path.MatchRelative().AtParent().AtName("password_wo_version")),
 							},
 						},

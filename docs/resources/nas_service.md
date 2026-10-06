@@ -10,7 +10,7 @@ description: |-
 
 `vergeio_nas_service` deploys the Services virtual machine recipe. VergeOS builds the virtual machine and the service together. Set `name` and `network_id`. `network_id` is the same value as `vergeio_network.id`. Create uses 4 CPU cores and 4096 MB of RAM. The guest uses DHCP. Its hostname comes from `name`. `vm_id` is the virtual machine VergeOS created. Removing the service removes that virtual machine.
 
-`user` blocks are the accounts on this service. A user left out of the configuration is deleted. Changing `name` replaces that user. `password_wo` is sent when the user is created and when `password_wo_version` changes. Terraform stores the version, not the password.
+`user` blocks are the accounts on this service. A user left out of the configuration is deleted. Changing `name` replaces that user. `password_wo` is sent when the user is created and when `password_wo_version` changes. VergeOS requires a character that is not a letter or digit. Terraform stores the version, not the password.
 
 If deleting the service is refused because a volume remains, Terraform disables that volume, removes its shares, and tries again.
 
@@ -43,7 +43,7 @@ resource "vergeio_nas_service" "example" {
 
   user {
     name                = "files"
-    password_wo         = "changeme"
+    password_wo         = "changeme!"
     password_wo_version = 1
     display_name        = "Files"
     description         = "Opens the documents share"
@@ -69,7 +69,7 @@ resource "vergeio_nas_service" "example" {
 - `max_imports` (Number) Maximum number of concurrent imports, from 1 to 200. Omit to leave the current value unchanged.
 - `max_syncs` (Number) Maximum number of concurrent syncs, from 0 to 200. 0 disables sync. Omit to leave the current value unchanged.
 - `read_ahead_kb_default` (String) Default read ahead size in KB. One of `0`, `64`, `128`, `256`, `512`, `1024`, `2048`, or `4096`. Omit to leave the current value unchanged.
-- `user` (Block List) Accounts that can open CIFS shares on this service. A user left out of the configuration is deleted. Changing name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. Terraform stores the version, not the password. (see [below for nested schema](#nestedblock--user))
+- `user` (Block List) Accounts that can open CIFS shares on this service. A user left out of the configuration is deleted. Changing name replaces that user. password_wo is sent when the user is created and when password_wo_version changes. VergeOS requires a character that is not a letter or digit. Terraform stores the version, not the password. (see [below for nested schema](#nestedblock--user))
 
 ### Read-Only
 
@@ -95,7 +95,7 @@ Optional:
 - `enabled` (Boolean) Whether the user can sign in. Defaults to true.
 - `home_drive` (String) Windows drive letter for the home directory, one letter from A through Z. Omit to leave the current value unchanged.
 - `home_share` (Number) CIFS share id used as the home directory. Omit to leave the current value unchanged.
-- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Password sent when the user is created and when password_wo_version changes. Terraform does not store it. Requires Terraform 1.11 or OpenTofu 1.11.
+- `password_wo` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Password sent when the user is created and when password_wo_version changes. VergeOS requires a character that is not a letter or digit. Terraform does not store it. Requires Terraform 1.11 or OpenTofu 1.11.
 - `password_wo_version` (Number) Version of password_wo. Increment it to set a new password. Terraform stores this number, not the password.
 
 Read-Only:
