@@ -73,6 +73,8 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 
 `terraform query` lists VMs, networks, tenants, users, groups, tags, and snapshot profiles that already exist. Filter with `name_pattern`, `tag`, and, for VMs and networks, `tenant`. The identity `id` is the import id. OpenTofu uses that same id in an `import` block. See [Adopt an existing VergeOS system](docs/guides/adopt-system.md).
 
+Terraform keeps tenants, networks, firewall policy, VM configuration, identity, and snapshot profiles. Ansible runs procedures and configures the guest. See [Terraform and Ansible](docs/guides/terraform-ansible.md).
+
 ## Resources
 
 - vergeio_api_key

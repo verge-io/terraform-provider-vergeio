@@ -20,7 +20,7 @@ Terraform is the right place for objects that stay around and can drift. On this
 
 Ansible stays the right place for step by step work inside a guest, and for platform objects this provider still does not model. The collection already set a network description, DNS servers, a domain, and a rate limit. The provider sends those four now, under the API names, and only when the configuration sets them.
 
-A written handoff between the two tools is #79. A published modules repository is #77. Both are still open.
+The handoff is the Terraform and Ansible guide (`docs/guides/terraform-ansible.md`). A published modules repository is #77 and is still open.
 
 ## govergeos
 
@@ -92,12 +92,13 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 * #78 is closed. `vergeio_certificate` manages a TLS certificate on the UI and API. `type` is `manual`, `letsencrypt`, or `self_signed`. Changing `type` replaces the certificate. Changing a configured `domain_name` replaces it too. Leaving `domain_name` out keeps the stored name. `private_key_wo` and `eab_hmac_key_wo` are sent on create and when their version changes, and they are not stored. `vergeio_webhook_url` is the destination for an event notification. `vergeio_webhook` is one message queued with Send. VergeOS does not edit a delivery, so a message change replaces it. A delivery expires after about 70 days. `vergeio_setting` is one existing system setting. Update writes only that key's value. Destroy sets the key back to `default_value` and does not delete the row or change any other setting. The compliance baseline module stays in #82.
 
+* #79 is closed. The Terraform and Ansible guide says which tool owns which object, how a `vergeio_tag_member` on a VM becomes a group in `vergeio.vergeos.vergeos_vms`, and which `VERGEOS_*` variables both tools read.
+
 The remaining issues in this section are open.
 
 * #70. `vergeio_api_key` manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it. `ephemeral.vergeio_api_key` remains the short-lived token for one run, and Open still deletes an existing key of that name. Do not reuse a managed key's name there. `vergeio_auth_source` manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret` or other omitted keys. A key removed from `settings` stays on the auth source. Replace the auth source to drop it.
 * #73. IPsec and WireGuard, including teardown order.
 * #77. A published modules repository (tenant, network segment, VM).
-* #79. A Terraform and Ansible handoff guide.
 
 ## Deferred
 
