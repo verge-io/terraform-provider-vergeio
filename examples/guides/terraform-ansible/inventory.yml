@@ -1,0 +1,14 @@
+plugin: vergeio.vergeos.vergeos_vms
+
+sites:
+  - name: lab
+    host: "{{ lookup('env', 'VERGEOS_HOST') }}"
+    username: "{{ lookup('env', 'VERGEOS_USERNAME') }}"
+    password: "{{ lookup('env', 'VERGEOS_PASSWORD') }}"
+    # api_key: "{{ lookup('env', 'VERGEOS_API_KEY') }}"
+    insecure: false
+
+group_by:
+  - tags
+  - tenant
+  - cluster
