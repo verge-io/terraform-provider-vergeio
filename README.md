@@ -66,8 +66,14 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_network_apply
 - vergeio_vm_power
 - vergeio_tenant_snapshot
+- vergeio_tenant_clone
+- vergeio_tenant_reset
+- vergeio_tenant_node_migrate
+- vergeio_tenant_node_power
 
 `vergeio_vm_snapshot` takes an instant VM snapshot. `name` and `retention_seconds` are optional. `quiesce` asks the guest agent to freeze filesystems. `vergeio_tenant_snapshot` snapshots a whole tenant. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. Use it when `vergeio_network_rule` sets `apply` to false. A stopped network is left unchanged and the action returns an error. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. `power_on` posts poweron when the machine is not running, including when the VM `powerstate` column is already true. A later plan of that VM restores a declared powerstate. `timeout_seconds` and `force` apply only to `shutdown`.
+
+`vergeio_tenant_clone` copies a tenant. `name` is the new tenant's name. `no_vnet`, `no_storage`, and `no_nodes` skip the network, the storage, and the nodes. The copy is not stored in state. `vergeio_tenant_reset` restarts a tenant and does not change `vergeio_tenant`. `vergeio_tenant_node_migrate` moves a tenant node onto `target_node`, a host node key. `vergeio_tenant_node_power` kills or resets a tenant node. VergeOS has `poweroffmaintenance` on tenant nodes. The pinned govergeos client does not expose it, so that operation is not offered.
 
 ## Query
 
