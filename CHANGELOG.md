@@ -43,6 +43,7 @@ FEATURES:
 
 BUG FIXES:
 
+- `vergeio_tenant_clone` waits until `no_nodes` and `no_storage` have taken effect. VergeOS accepts the clone before the copy finishes, so the new tenant can still list the source node. The action reads until those rows are gone. A row that remains is removed, and the action does not report success while it is still there (#217).
 - `vergeio_tenant.isolate` can be set in configuration. `true` calls isolate on and `false` calls isolate off. Omit it to leave the current isolation unchanged. Refresh reads the tenant row, so a change made in the parent UI is drift and the next apply restores the configured value (#213).
 - `vergeio_tenant.ui_address_id` can be set in configuration. It chooses which assigned external IP is the tenant UI address, on create and on update. Omit it and the first assigned IP stays the UI address. `ui_address` remains the IP string. Refresh reads the tenant row, so a change made in the parent UI is drift and the next apply restores the configured value (#214).
 - `vergeio_tenant_external_ip` waits for the parent network `need_fw_apply` flag to clear after a successful firewall apply. VergeOS accepts the refresh before the flag drops, so an immediate read left `parent_firewall_pending` true (#210).

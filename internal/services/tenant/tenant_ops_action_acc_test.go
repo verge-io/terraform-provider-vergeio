@@ -427,21 +427,32 @@ func testAccDeleteClonedTenant(name string) resource.TestCheckFunc {
 		if err != nil {
 			return err
 		}
-		nodes, err := client.TenantNodes.ListByTenant(ctx, tenant.Key.Int())
-		if err != nil && !vergeos.IsNotFoundError(err) {
-			return err
+		// The clone name is visible before VergeOS drops the skipped rows.
+		// Keep the zero-node and zero-storage requirement, and read until
+		// the copy has finished or the wait expires.
+		deadline := time.Now().Add(2 * time.Minute)
+		var nodes []vergeos.TenantNode
+		var storage []vergeos.TenantStorage
+		for {
+			nodes, err = client.TenantNodes.ListByTenant(ctx, tenant.Key.Int())
+			if err != nil && !vergeos.IsNotFoundError(err) {
+				return err
+			}
+			storage, err = client.TenantStorage.ListByTenant(ctx, tenant.Key.Int())
+			if err != nil && !vergeos.IsNotFoundError(err) {
+				return err
+			}
+			if len(nodes) == 0 && len(storage) == 0 {
+				return deleteAccTenant(ctx, client, tenant.Key.Int())
+			}
+			if !time.Now().Before(deadline) {
+				if len(nodes) != 0 {
+					return fmt.Errorf("cloned tenant %q has %d nodes, want none because no_nodes is true", name, len(nodes))
+				}
+				return fmt.Errorf("cloned tenant %q has %d storage rows, want none because no_storage is true", name, len(storage))
+			}
+			time.Sleep(2 * time.Second)
 		}
-		if len(nodes) != 0 {
-			return fmt.Errorf("cloned tenant %q has %d nodes, want none because no_nodes is true", name, len(nodes))
-		}
-		storage, err := client.TenantStorage.ListByTenant(ctx, tenant.Key.Int())
-		if err != nil && !vergeos.IsNotFoundError(err) {
-			return err
-		}
-		if len(storage) != 0 {
-			return fmt.Errorf("cloned tenant %q has %d storage rows, want none because no_storage is true", name, len(storage))
-		}
-		return deleteAccTenant(ctx, client, tenant.Key.Int())
 	}
 }
 

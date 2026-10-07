@@ -3,12 +3,12 @@
 page_title: "vergeio_tenant_clone Action - vergeio"
 subcategory: ""
 description: |-
-  Copy a VergeOS tenant. name is the new tenant's name. no_vnet, no_storage, and no_nodes skip the network, the storage, and the nodes. When a flag is omitted, that part is copied. The copy is not stored in Terraform state. Import it with vergeio_tenant when you want Terraform to manage it. Invoke this action with terraform apply -invoke, or from a resource lifecycle action_trigger. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+  Copy a VergeOS tenant. name is the new tenant's name. no_vnet, no_storage, and no_nodes skip the network, the storage, and the nodes. When a flag is omitted, that part is copied. VergeOS accepts the clone before that copy finishes, so a new tenant can still list the source node. When no_nodes or no_storage is true, this action waits until those rows are gone and removes any the copy left behind. The copy is not stored in Terraform state. Import it with vergeio_tenant when you want Terraform to manage it. Invoke this action with terraform apply -invoke, or from a resource lifecycle action_trigger. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 ---
 
 # vergeio_tenant_clone (Action)
 
-Copy a VergeOS tenant. name is the new tenant's name. no_vnet, no_storage, and no_nodes skip the network, the storage, and the nodes. When a flag is omitted, that part is copied. The copy is not stored in Terraform state. Import it with vergeio_tenant when you want Terraform to manage it. Invoke this action with `terraform apply -invoke`, or from a resource `lifecycle` `action_trigger`. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+Copy a VergeOS tenant. name is the new tenant's name. no_vnet, no_storage, and no_nodes skip the network, the storage, and the nodes. When a flag is omitted, that part is copied. VergeOS accepts the clone before that copy finishes, so a new tenant can still list the source node. When no_nodes or no_storage is true, this action waits until those rows are gone and removes any the copy left behind. The copy is not stored in Terraform state. Import it with vergeio_tenant when you want Terraform to manage it. Invoke this action with `terraform apply -invoke`, or from a resource `lifecycle` `action_trigger`. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 
 ## Example Usage
 

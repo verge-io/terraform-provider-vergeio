@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -98,6 +99,138 @@ func TestTenantCloneActionInvoke(t *testing.T) {
 	if len(progress) == 0 || !strings.Contains(progress[len(progress)-1], "sandbox") {
 		t.Fatalf("progress = %#v", progress)
 	}
+}
+
+func TestTenantCloneActionWaitsUntilSkippedNodesAreGone(t *testing.T) {
+	restoreCloneExclusionTiming(t)
+	var nodeReads int
+	var deleted bool
+	server := cloneExclusionServer(t, &nodeReads, &deleted, false)
+	defer server.Close()
+	item := configuredTenantAction(t, server.URL, &TenantCloneAction{})
+	model := tenantCloneModel("8", "sandbox")
+	model.NoNodes = types.BoolValue(true)
+	resp := &action.InvokeResponse{}
+	item.Invoke(context.Background(), action.InvokeRequest{Config: tenantActionConfig(t, item, model)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if nodeReads < 2 {
+		t.Fatalf("node reads = %d, want the action to read again after the first copy", nodeReads)
+	}
+	if deleted {
+		t.Fatal("deleted a node the clone was about to drop")
+	}
+}
+
+func TestTenantCloneActionDeletesNodesTheCloneKeeps(t *testing.T) {
+	restoreCloneExclusionTiming(t)
+	var nodeReads int
+	var deleted bool
+	server := cloneExclusionServer(t, &nodeReads, &deleted, true)
+	defer server.Close()
+	item := configuredTenantAction(t, server.URL, &TenantCloneAction{})
+	model := tenantCloneModel("8", "sandbox")
+	model.NoNodes = types.BoolValue(true)
+	model.NoStorage = types.BoolValue(true)
+	resp := &action.InvokeResponse{}
+	item.Invoke(context.Background(), action.InvokeRequest{Config: tenantActionConfig(t, item, model)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if !deleted {
+		t.Fatal("clone left the source node and the action did not remove it")
+	}
+}
+
+func TestTenantCloneActionRefusesAnotherTenantsNode(t *testing.T) {
+	restoreCloneExclusionTiming(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/tenant_actions":
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/tenants/"):
+			_, _ = w.Write([]byte(`{"$key":9,"name":"sandbox"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenants":
+			_, _ = w.Write([]byte(`[{"$key":9,"name":"sandbox"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes":
+			_, _ = w.Write([]byte(`[{"$key":4,"tenant":3,"name":"node"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_storage":
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodDelete:
+			t.Errorf("deleted %s", r.URL.Path)
+			http.Error(w, "deleted", http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+	item := configuredTenantAction(t, server.URL, &TenantCloneAction{})
+	model := tenantCloneModel("8", "sandbox")
+	model.NoNodes = types.BoolValue(true)
+	resp := &action.InvokeResponse{}
+	item.Invoke(context.Background(), action.InvokeRequest{Config: tenantActionConfig(t, item, model)}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the action to stop rather than delete another tenant's node")
+	}
+}
+
+func restoreCloneExclusionTiming(t *testing.T) {
+	t.Helper()
+	poll, settle, timeout := cloneExclusionPoll, cloneExclusionSettle, cloneExclusionTimeout
+	cloneExclusionPoll = time.Millisecond
+	cloneExclusionSettle = 20 * time.Millisecond
+	cloneExclusionTimeout = 2 * time.Second
+	t.Cleanup(func() {
+		cloneExclusionPoll = poll
+		cloneExclusionSettle = settle
+		cloneExclusionTimeout = timeout
+	})
+}
+
+// cloneExclusionServer serves a clone named sandbox. keepNode leaves the
+// source node in the list until DELETE /tenant_nodes/4. Otherwise the second
+// node read is empty, which is the copy dropping the node on its own.
+func cloneExclusionServer(t *testing.T, nodeReads *int, deleted *bool, keepNode bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodPost && (r.URL.Path == "/api/v4/tenant_actions" || r.URL.Path == "/api/v4/tenant_node_actions"):
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenant_nodes/4":
+			*deleted = true
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/tenants/"):
+			_, _ = w.Write([]byte(`{"$key":9,"name":"sandbox"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenants":
+			_, _ = w.Write([]byte(`[{"$key":9,"name":"sandbox"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes":
+			*nodeReads++
+			if *deleted || (!keepNode && *nodeReads > 1) {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{"$key":4,"tenant":9,"name":"node"}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_storage":
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
 }
 
 func TestTenantCloneActionOmittedFlagsCopyEverything(t *testing.T) {
@@ -312,6 +445,12 @@ func actionHTTPServer(t *testing.T, actionPath string, record func(string)) *htt
 			body, _ := io.ReadAll(r.Body)
 			record(string(body))
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/tenants/"):
+			_, _ = w.Write([]byte(`{"$key":9,"name":"sandbox"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenants":
+			_, _ = w.Write([]byte(`[{"$key":9,"name":"sandbox"}]`))
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/v4/tenant_nodes" || r.URL.Path == "/api/v4/tenant_storage"):
+			_, _ = w.Write([]byte(`[]`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
 			http.Error(w, "unexpected", http.StatusInternalServerError)
