@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tenant_node (Resource)
 
-Gives a tenant a node. `cpu_cores` and `ram` are the capacity of that node. `ram` is megabytes and must be at least 2048. Changing `tenant_id` replaces the node. Destroy gracefully powers off this node when it is running, then kills it if it does not stop in time, then deletes it. Sibling nodes and the parent tenant stay up. VergeOS rejects deleting a node while that node is running. Destroying more than one node retries when VergeOS returns 405 because only the last node can be deleted. Each node is removed once it is last.
+Gives a tenant a node. [`vergeio_tenant_node_migrate`](../actions/tenant_node_migrate.html) moves that node to another host. [`vergeio_tenant_node_power`](../actions/tenant_node_power.html) kills or resets it. Those actions do not change this resource. `cpu_cores` and `ram` are the capacity of that node. `ram` is megabytes and must be at least 2048. Changing `tenant_id` replaces the node. Destroy gracefully powers off this node when it is running, then kills it if it does not stop in time, then deletes it. Sibling nodes and the parent tenant stay up. VergeOS rejects deleting a node while that node is running. Destroying more than one node retries when VergeOS returns 405 because only the last node can be deleted. Each node is removed once it is last.
 
 ## Example Usage
 

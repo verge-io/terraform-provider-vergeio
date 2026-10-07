@@ -217,6 +217,10 @@ func (p *vergeioProvider) Actions(ctx context.Context) []func() action.Action {
 		network.NewNetworkApplyAction,
 		compute.NewVMPowerAction,
 		tenant.NewTenantSnapshotAction,
+		tenant.NewTenantCloneAction,
+		tenant.NewTenantResetAction,
+		tenant.NewTenantNodeMigrateAction,
+		tenant.NewTenantNodePowerAction,
 	}
 }
 
