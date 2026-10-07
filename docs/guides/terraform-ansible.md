@@ -1,0 +1,202 @@
+---
+page_title: "Terraform and Ansible"
+description: |-
+  Which objects Terraform owns, which procedures Ansible owns, and how a tag on a VM becomes an Ansible group.
+---
+
+# Terraform and Ansible
+
+Terraform keeps the long lived shape of a VergeOS system. The Ansible collection `vergeio.vergeos` runs procedures in order and configures the guest. Both can create a VM or a network.
+
+## The split
+
+Terraform owns objects that stay in place and can drift. The next apply puts them back when someone changes them in the UI.
+
+* Tenants are `vergeio_tenant`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, and `vergeio_tenant_layer2_network`. The [tenants guide](tenants.html) uses two configurations: the parent creates the tenant, and a second configuration points at `ui_address` once that address exists.
+* Networks and firewall policy are `vergeio_network`, `vergeio_network_rule`, `vergeio_network_rules`, and `vergeio_network_rule_alias`. DNS on that network is `vergeio_network_dns_view`, `vergeio_network_dns_zone`, and `vergeio_network_dns_record`.
+* VM configuration is `vergeio_vm` (machine settings and an optional `boot_disk`), `vergeio_vm_drive`, and `vergeio_vm_nic`.
+* Identity is `vergeio_user`, `vergeio_group`, `vergeio_member`, `vergeio_permission`, and `vergeio_auth_source`.
+* Protection policy is `vergeio_snapshot_profile`. `vergeio_vm.snapshot_profile` stores that profile's key.
+
+Ansible owns work that has an order, and work inside the guest. These names are the modules and roles in `vergeio.vergeos`:
+
+* Node maintenance and rolling updates: module `vergeio.vergeos.node_maintenance`, role `node_drain`, module `vergeio.vergeos.update`, and role `rolling_update`.
+* Restore drills: role `restore_drill`.
+* Export and import: modules `vergeio.vergeos.vm_export` and `vergeio.vergeos.vm_import`.
+* Reporting: roles `health_report` and `billing_export`.
+* Key rotation: role `api_key_rotation`.
+* OS configuration: packages, services, and files on the guest.
+
+The inventory plugin talks to the VergeOS API. A play that calls a VergeOS module sets `connection: local` and delegates the task to the control node. A play that configures the guest OS uses the SSH or WinRM connection you already have to that guest. `vergeos_ip` is the first NIC address, recorded on the host for reference.
+
+## The handoff
+
+Terraform assigns tags with `vergeio_tag_category`, `vergeio_tag`, and `vergeio_tag_member`. Tags require VergeOS v26 or later. `vergeio_tag_member.member` for a VM is `vms/` followed by the VM id. Deleting the category deletes its tags and every assignment. The example sets `prevent_destroy` on the category so an ordinary destroy cannot do that.
+
+The inventory plugin is `vergeio.vergeos.vergeos_vms`, file `plugins/inventory/vergeos_vms.py` in the [Ansible collection](https://github.com/verge-io/ansible-collection-vergeos/blob/main/plugins/inventory/vergeos_vms.py). It loads VMs, tag names, and tag assignments from the API. With `tags` in `group_by`, a tag named `web` becomes the group `tag_web`. The plugin prefixes the tag name with `tag_`, replaces every character outside letters, digits, and underscores with `_`, and lowercases the result. A name that starts with a digit gets an underscore in front of it. Tenant and cluster groups use this same cleanup. Hosts come from that API read. The plugin source names the plugin, the site, and `group_by`. Its filename ends in `.vergeos_vms.yml` or `.vergeos_vms.yaml`. The default `group_by` is `site` and `status`, so the source below turns tags, tenant, and cluster on.
+
+A tenant name on the VM becomes `tenant_` plus the sanitized name. `customer-a` becomes `tenant_customer_a`. A cluster becomes `cluster_` plus the sanitized cluster name. The group is built from `cluster_name` on the VM row. `vergeos_cluster_key` is the numeric id, stored as a host variable. A cluster named Compute is the group `cluster_compute`. Stopped VMs are included unless `include_stopped` is false. The `node` dimension only includes running VMs, because a stopped VM has no node.
+
+This configuration selects the cluster named Compute, creates a tag named `web`, and assigns it to the VM `web1`. `powerstate` is omitted. Create leaves the VM stopped. A later power change stays in place on the next plan.
+
+```terraform
+# Separate example from image.tf. Provider 3.0 reads VERGEOS_HOST and either
+# VERGEOS_API_KEY or VERGEOS_USERNAME plus VERGEOS_PASSWORD.
+
+provider "vergeio" {}
+
+data "vergeio_clusters" "compute" {
+  filter_name = "Compute"
+}
+
+resource "vergeio_tag_category" "role" {
+  name                 = "role"
+  description          = "Workload role"
+  single_tag_selection = true
+  taggable_vms         = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "vergeio_tag" "web" {
+  category    = tonumber(vergeio_tag_category.role.id)
+  name        = "web"
+  description = "Web servers"
+}
+
+resource "vergeio_vm" "web" {
+  name      = "web1"
+  os_family = "linux"
+  cpu_cores = 2
+  ram       = 2048
+  cluster   = data.vergeio_clusters.compute.clusters[0].id
+}
+
+resource "vergeio_tag_member" "web" {
+  tag_id = tonumber(vergeio_tag.web.id)
+  member = "vms/${vergeio_vm.web.id}"
+}
+```
+
+Save the plugin source as `lab.vergeos_vms.yml`. `lookup('env', ...)` resolves before the plugin connects. Modules read `VERGEOS_INSECURE` on their own. Set `insecure` on the site to that same value. The plugin reads the site field.
+
+```yaml
+plugin: vergeio.vergeos.vergeos_vms
+
+sites:
+  - name: lab
+    host: "{{ lookup('env', 'VERGEOS_HOST') }}"
+    username: "{{ lookup('env', 'VERGEOS_USERNAME') }}"
+    password: "{{ lookup('env', 'VERGEOS_PASSWORD') }}"
+    # api_key: "{{ lookup('env', 'VERGEOS_API_KEY') }}"
+    insecure: false
+
+group_by:
+  - tags
+  - tenant
+  - cluster
+```
+
+After apply, the inventory host is `lab_web1`. The hostname template defaults to `{site}_{name}`. That host is a member of `tag_web`. It is also a member of `cluster_compute` when the cluster name is Compute. `vergeos_tags` on the host is a list of tag names, and `web` is in that list. `vergeos_name` is `web1`. `vergeos_vm_id` is the VM key. `vergeos_site_url` is the site host the plugin queried.
+
+```bash
+ansible-inventory -i lab.vergeos_vms.yml --graph
+ansible-inventory -i lab.vergeos_vms.yml --list
+```
+
+A play for the web VMs uses the group. It runs on the control node and calls the API. Credentials other than `host` come from the environment in the next section. `host` is `vergeos_site_url` so a second site in the same inventory still hits the system that owns the VM.
+
+```yaml
+- hosts: tag_web
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Record a snapshot before guest configuration
+      vergeio.vergeos.vm_snapshot:
+        host: "{{ vergeos_site_url }}"
+        name: "{{ vergeos_name }}"
+        snapshot_name: before_config
+        state: present
+      delegate_to: localhost
+```
+
+```bash
+ansible-playbook -i lab.vergeos_vms.yml snapshot.yml --limit tag_web
+```
+
+## One set of credentials
+
+Provider 3.0 reads an environment variable when the matching provider argument is omitted. A value in the provider block wins, including an explicit empty string. The collection modules read the same names through `env_fallback` in `plugins/module_utils/vergeos.py`. One file can export both.
+
+| Variable | Terraform argument | Ansible module argument |
+| --- | --- | --- |
+| `VERGEOS_HOST` | `host` | `host` |
+| `VERGEOS_USERNAME` | `username` | `username` |
+| `VERGEOS_PASSWORD` | `password` | `password` |
+| `VERGEOS_API_KEY` | `api_key` | `api_key` |
+| `VERGEOS_INSECURE` | `insecure` | `insecure` |
+
+```bash
+export VERGEOS_HOST="vergeos.example.com"
+export VERGEOS_USERNAME="admin"
+export VERGEOS_PASSWORD="changeme"
+export VERGEOS_INSECURE="false"
+```
+
+When `VERGEOS_API_KEY` is set, both tools send it as a bearer token. The username and password stay unused while that key is set. You can leave them unset. The provider fails during configuration, before the first API request, when `host` is missing or when neither an API key nor both a username and password are available. The error names each missing value.
+
+```terraform
+provider "vergeio" {}
+```
+
+`VERGEOS_VERIFY_SSL` is a second spelling this provider and govergeos accept. `false` skips TLS verification, the same outcome as `VERGEOS_INSECURE=true`. Ansible modules read `VERGEOS_INSECURE` for that setting. Keep `VERGEOS_INSECURE` in the shared file. When `insecure` is omitted and both variables are set, they must agree or the provider fails configuration.
+
+`VERGEOS_TIMEOUT` is a positive number of seconds. The provider default is 60. Ansible modules leave the HTTP timeout to the task. Each site in the inventory plugin has its own `timeout`, and that default is 30.
+
+Acceptance tests use `TF_ACC_VERGEIO_HOST`, `TF_ACC_VERGEIO_USERNAME`, and `TF_ACC_VERGEIO_PASSWORD`. Those variables belong to the test harness.
+
+## The image pipeline
+
+Packer builds the golden image. The builder is `source "vergeio"` in the [Packer plugin](https://github.com/verge-io/packer-plugin-vergeio). It creates a VM, imports a base disk when `vm_disks.media` is `import` and `vm_disks.media_source` is set, runs provisioners over SSH or WinRM, and shuts the VM down. Leave that VM out of Terraform. Packer's connection arguments are `vergeio_endpoint`, `vergeio_username`, `vergeio_password`, and `vergeio_insecure`.
+
+Terraform deploys the copies. `boot_disk.source` is the media source id, sent as `media_source`. `vergeio_vm_drive.media_source` is that same id on any other drive. `media = "clone"` copies an existing VM disk, which is how a workload is cut from the shut down VM Packer created. `media = "import"` imports a media image. `vergeio_mediasources` lists those images. `filter_name` keeps one name. Changing `media` or `source` on a boot disk Terraform already owns replaces the VM. A media image named golden is imported onto the boot disk like this.
+
+```terraform
+# Separate example from vm.tf. Deploy a workload VM from a media image.
+# vergeio_mediasources.id is the value boot_disk.source sends as media_source.
+
+data "vergeio_mediasources" "golden" {
+  filter_name = "golden"
+}
+
+resource "vergeio_vm" "web" {
+  name      = "web1"
+  os_family = "linux"
+  cpu_cores = 2
+  ram       = 2048
+
+  boot_disk {
+    name   = "os"
+    media  = "import"
+    source = data.vergeio_mediasources.golden.mediasources[0].id
+  }
+}
+```
+
+Ansible configures what runs on the copy: packages, services, and files on the guest, after the VM exists. The tag from the previous section is how that play finds the copy.
+
+## What not to do
+
+Give each object one owner.
+
+`vergeio_vm` is the create and the size for a VM it owns: CPU, RAM, and disks. `vergeio.vergeos.vm` stays off that VM. The same split covers `vergeio_network` and `vergeio.vergeos.network`, `vergeio_network_rule` and `vergeio.vergeos.vnet_rule`, `vergeio_tag` and `vergeio.vergeos.tag`, `vergeio_user` and `vergeio.vergeos.user`, `vergeio_snapshot_profile` and `vergeio.vergeos.snapshot_profile`, and the tenant, group, member, and permission modules. The inventory plugin and the `*_info` modules still read those objects.
+
+Power belongs to one tool on each VM.
+
+Set `vergeio_vm.powerstate` when Terraform should keep the VM on or off. Apply writes that value back after a change in the UI. The action `vergeio_vm_power` does not store a new power state, and the next plan restores a `powerstate` you set. A play for that VM uses `vergeio.vergeos.vm` with `state: present`, or skips the module. `state: running` and `state: stopped` change power, and the next Terraform plan would change it back.
+
+Omit `powerstate` when Ansible should own power for that VM. Create still leaves the new VM stopped. After that, `state: running`, `state: stopped`, or `vergeio_vm_power` can change power, and the next plan keeps the current value.
+
+A key managed by `vergeio_api_key` stays out of the `api_key_rotation` role. The role is the procedure for a key Terraform does not manage. `ephemeral.vergeio_api_key` is a different object: a short lived token for one Terraform run.
