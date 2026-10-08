@@ -17,14 +17,19 @@ import (
 )
 
 const (
-	// recipeBootLimit is the bound from power-on through recipe POST retries.
-	recipeBootLimit = 15 * time.Minute
-	// recipePollGap is the pause between status reads before the first POST.
+	// recipeGuestLimit is how long the source tenant stays powered on while
+	// the fixture waits for a guest signal. The lab's short power cycles
+	// never reached first boot.
+	recipeGuestLimit = 20 * time.Minute
+	// recipePollGap is the pause between status reads during that wait.
 	recipePollGap = 15 * time.Second
-	// recipeSteadyPolls is how many consecutive online reads count as held.
-	recipeSteadyPolls = 3
-	recipeOffPoll     = 5 * time.Second
-	recipeBackoff     = 60 * time.Second
+	// recipeOffLimit bounds one power-off and network-stop wait. A
+	// "currently running" POST retries that wait, up to recipeRunningPosts.
+	recipeOffLimit = 2 * time.Minute
+	recipeOffPoll  = 5 * time.Second
+	// recipeRunningPosts is the first POST plus retries for the
+	// "currently running" race while power-off settles.
+	recipeRunningPosts = 3
 )
 
 // recipePostKind is how one tenant-recipe POST should change the next try.
@@ -62,13 +67,8 @@ type recipeBoot struct {
 	act   recipeBootAct
 	log   strings.Builder
 
-	deadline time.Time
-	gap      time.Duration
-	steady   int
-	attempt  int
-	held     bool
-	forceOff bool
-	posted   bool
+	attempt int
+	last    string
 }
 
 func newRecipeBoot(now func() time.Time, sleep func(context.Context, time.Duration) error, logf func(string, ...any), act recipeBootAct) *recipeBoot {
@@ -80,7 +80,6 @@ func newRecipeBoot(now func() time.Time, sleep func(context.Context, time.Durati
 		sleep: sleep,
 		logf:  logf,
 		act:   act,
-		gap:   recipePollGap,
 	}
 }
 
@@ -88,78 +87,81 @@ func (b *recipeBoot) run(ctx context.Context) (string, error) {
 	if err := b.act.powerOn(ctx); err != nil {
 		return "", err
 	}
-	b.deadline = b.now().Add(recipeBootLimit)
+	if err := b.waitForGuest(ctx); err != nil {
+		return "", err
+	}
+	return b.postWhileOff(ctx)
+}
+
+func (b *recipeBoot) waitForGuest(ctx context.Context) error {
+	deadline := b.now().Add(recipeGuestLimit)
 	for {
-		if !b.now().Before(b.deadline) {
-			return "", b.timedOut()
+		view, err := b.act.observe(ctx)
+		if err != nil {
+			return err
 		}
-		id, done, err := b.step(ctx)
-		if done || err != nil {
-			return id, err
+		b.write(formatBootView(view))
+		if guestSignaled(view) {
+			return nil
 		}
-		if err := b.sleep(ctx, b.nextWait()); err != nil {
+		if !b.now().Before(deadline) {
+			return fmt.Errorf("timed out after %s waiting for the guest to report local_time, agent_version, or an answering ui_address\nlast: %s\n%s", recipeGuestLimit, b.last, b.log.String())
+		}
+		if err := b.sleep(ctx, recipePollGap); err != nil {
+			return err
+		}
+	}
+}
+
+func (b *recipeBoot) postWhileOff(ctx context.Context) (string, error) {
+	for {
+		if err := b.settleOff(ctx); err != nil {
 			return "", err
 		}
+		id, kind, err := b.post(ctx)
+		if kind == recipePostOK {
+			return id, nil
+		}
+		if kind == recipePostNeedOff && b.attempt < recipeRunningPosts {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return "", fmt.Errorf("tenant still reported as running after %d recipe posts\nlast: %s\n%s", b.attempt, b.last, b.log.String())
 	}
 }
 
-func (b *recipeBoot) step(ctx context.Context) (string, bool, error) {
-	view, err := b.act.observe(ctx)
-	if err != nil {
-		return "", false, err
-	}
-	b.noteHold(view)
-	b.write(formatBootView(view))
-	b.posted = false
-	if !b.held && !b.forceOff {
-		return "", false, nil
-	}
-	if err := b.powerOffForPost(ctx, view); err != nil {
-		return "", false, err
-	}
-	b.forceOff = false
-	b.posted = true
-	return b.post(ctx)
-}
-
-func (b *recipeBoot) post(ctx context.Context) (string, bool, error) {
+func (b *recipeBoot) post(ctx context.Context) (string, recipePostKind, error) {
 	b.attempt++
 	id, err := b.act.postRecipe(ctx)
 	kind, detail := classifyRecipePost(err)
 	b.write(fmt.Sprintf("post %d power=off %s", b.attempt, recipePostLabel(kind, detail)))
-	switch kind {
-	case recipePostOK:
-		return id, true, nil
-	case recipePostFatal:
-		return "", true, fmt.Errorf("%s\n%s", detail, b.log.String())
-	case recipePostNeedOff:
-		b.forceOff = true
-		return "", false, nil
-	default:
-		return "", false, b.powerOnForBoot(ctx)
+	if kind == recipePostOK || kind == recipePostNeedOff {
+		return id, kind, nil
 	}
+	return "", kind, fmt.Errorf("%s\n%s", detail, b.log.String())
 }
 
-func (b *recipeBoot) powerOnForBoot(ctx context.Context) error {
-	b.forceOff = false
-	if err := b.act.powerOn(ctx); err != nil {
+func (b *recipeBoot) settleOff(ctx context.Context) error {
+	view, err := b.act.observe(ctx)
+	if err != nil {
 		return err
 	}
-	b.steady = 0
-	b.held = false
-	return nil
-}
-
-func (b *recipeBoot) powerOffForPost(ctx context.Context, view tenantBootView) error {
+	b.write(formatBootView(view))
 	if tenantRowOnline(view.status) {
 		if err := b.act.powerOff(ctx); err != nil {
 			return err
 		}
 	}
+	return b.waitNetworkStopped(ctx)
+}
+
+func (b *recipeBoot) waitNetworkStopped(ctx context.Context) error {
+	deadline := b.now().Add(recipeOffLimit)
 	networkStopped := false
 	for {
-		var err error
-		view, err = b.act.observe(ctx)
+		view, err := b.act.observe(ctx)
 		if err != nil {
 			return err
 		}
@@ -175,8 +177,8 @@ func (b *recipeBoot) powerOffForPost(ctx context.Context, view tenantBootView) e
 			networkStopped = true
 			continue
 		}
-		if !b.now().Before(b.deadline) {
-			return b.timedOut()
+		if !b.now().Before(deadline) {
+			return fmt.Errorf("timed out after %s waiting for the tenant network to stop\nlast: %s\n%s", recipeOffLimit, b.last, b.log.String())
 		}
 		if err := b.sleep(ctx, recipeOffPoll); err != nil {
 			return err
@@ -184,50 +186,37 @@ func (b *recipeBoot) powerOffForPost(ctx context.Context, view tenantBootView) e
 	}
 }
 
-func (b *recipeBoot) noteHold(view tenantBootView) {
-	if view.booted() {
-		b.steady++
-	} else {
-		b.steady = 0
-	}
-	b.held = b.steady >= recipeSteadyPolls
-}
-
-func (b *recipeBoot) nextWait() time.Duration {
-	if !b.posted {
-		return recipePollGap
-	}
-	wait := b.gap
-	if b.gap < recipeBackoff {
-		b.gap *= 2
-		if b.gap > recipeBackoff {
-			b.gap = recipeBackoff
-		}
-	}
-	return wait
-}
-
 func (b *recipeBoot) write(line string) {
+	b.last = line
 	b.logf("%s", line)
 	b.log.WriteString(line)
 	b.log.WriteByte('\n')
 }
 
-func (b *recipeBoot) timedOut() error {
-	return fmt.Errorf("timed out after %s waiting to post the tenant recipe after the node machine stayed running\n%s", recipeBootLimit, b.log.String())
+func guestSignaled(view tenantBootView) bool {
+	if machineGuestReported(view) {
+		return true
+	}
+	return uiAnswers(view.ui)
 }
 
-func (v tenantBootView) booted() bool {
-	if !tenantRowOnline(v.status) || len(v.nodes) == 0 {
-		return false
-	}
-	for i := range v.nodes {
-		id := v.nodes[i].Machine.Int()
-		if !machineBootSignal(v.machines[id]) {
-			return false
+func machineGuestReported(view tenantBootView) bool {
+	for i := range view.nodes {
+		status := view.machines[view.nodes[i].Machine.Int()]
+		if status == nil {
+			continue
+		}
+		if status.LocalTime > 0 || strings.TrimSpace(status.AgentVersion) != "" {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// uiAnswers is the probe text from a ui_address that returned an HTTP status.
+// "ui_address empty" and a connection error do not count.
+func uiAnswers(ui string) bool {
+	return strings.Contains(ui, " status=")
 }
 
 func tenantRowOnline(status *vergeos.TenantStatus) bool {
@@ -239,24 +228,6 @@ func tenantRowOnline(status *vergeos.TenantStatus) bool {
 	}
 	switch status.Status {
 	case "online", "migrating", "restarting", "reduced":
-		return true
-	default:
-		return false
-	}
-}
-
-// machineBootSignal is the tenant-node machine status lead for the recipe
-// hook: running (or status started/running) with a start timestamp, read
-// again on later polls. Guest agent fields are logged and not required.
-func machineBootSignal(status *vergeos.MachineStatus) bool {
-	if status == nil || status.Started <= 0 {
-		return false
-	}
-	if status.Running || status.PowerState {
-		return true
-	}
-	switch strings.ToLower(strings.TrimSpace(status.Status)) {
-	case "running", "started", "online":
 		return true
 	default:
 		return false

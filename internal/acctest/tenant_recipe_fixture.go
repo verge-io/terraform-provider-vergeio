@@ -21,11 +21,11 @@ const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 
 // TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
 // The tenant uses govergeos. Catalogs and tenant recipes have no create
-// method there, so those rows are posted over HTTP. The source tenant stays
-// powered on until its node machine has stayed running, then it is powered
-// off and its network is stopped before the recipe POST. A later "never
-// been started" 405 powers it on and repeats that cycle until VergeOS
-// accepts the recipe or recipeBootLimit elapses.
+// method there, so those rows are posted over HTTP. The source tenant is
+// powered on once and left running until a node machine reports local_time
+// or agent_version, or its ui_address answers. That wait is recipeGuestLimit.
+// The fixture then powers the tenant off, waits for its network to stop, and
+// posts the recipe once. A "currently running" 405 retries that power-off.
 // VergeOS fills tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string
@@ -40,8 +40,9 @@ type TenantRecipeFixture struct {
 
 // NewTenantRecipeFixture creates the source tenant, gives it a node and
 // storage, posts a private catalog in the local repository, and powers the
-// tenant on. Once the node machine has stayed running, the fixture powers
-// the tenant off, waits for its network to stop, and posts the recipe.
+// tenant on. It leaves the tenant running until the guest reports
+// local_time or agent_version, or an assigned ui_address answers, then
+// powers it off, waits for its network to stop, and posts the recipe once.
 // Required questions the fixture can answer are returned as HCL
 // inside an answers map. A required question it cannot answer is disabled,
 // and the recipe is republished. An empty TF_ACC_VERGEIO_TENANT_RECIPE_ID
@@ -109,16 +110,33 @@ func (f *TenantRecipeFixture) createSourceTenant(t *testing.T, name string) {
 	f.tenantID = created.Key.Int()
 }
 
+// fixtureNodeCores and fixtureNodeRAM are the documented per-tenant-node
+// defaults: 4 cores and 16 GB. 16 GB is also the VergeOS node RAM minimum.
+// https://docs.verge.io/learn-the-platform/module-7-multi-tenancy/04-resource-allocation
+// https://docs.verge.io/plan-and-deploy/implementation-guide/sizing
+//
+// fixtureNodeStorage is 100 GiB. The multi-tenancy lab is the documented
+// create-and-power-on tenant: 4 cores, 8 GB RAM, 100 GB storage. 100 GiB is
+// that storage size. The lab's 8 GB is below the 16 GB node default and the
+// VergeOS RAM minimum, so this fixture keeps 16 GB. Storage quotas are thin.
+// 1 GiB is only the provisioned alignment unit.
+// https://docs.verge.io/learn-the-platform/module-7-multi-tenancy/lab
+const (
+	fixtureNodeCores         = 4
+	fixtureNodeRAM           = 16384
+	fixtureNodeStorage int64 = 100 * 1073741824
+)
+
 // addSourceCapacity gives the tenant a node and storage. Power-on with no
-// node cannot reach running. 4 cores and 16 GB are the tenant-node defaults.
+// node cannot reach running.
 func (f *TenantRecipeFixture) addSourceCapacity(t *testing.T, nodeName string) {
 	t.Helper()
 	enabled := true
 	if _, err := f.sdk.TenantNodes.Create(f.ctx, &vergeos.TenantNodeCreateRequest{
 		Tenant:   f.tenantID,
 		Name:     nodeName,
-		CPUCores: 4,
-		RAM:      16384,
+		CPUCores: fixtureNodeCores,
+		RAM:      fixtureNodeRAM,
 		Enabled:  &enabled,
 	}); err != nil {
 		t.Fatal(err)
@@ -133,7 +151,7 @@ func (f *TenantRecipeFixture) addSourceCapacity(t *testing.T, nodeName string) {
 	if _, err := f.sdk.TenantStorage.Create(f.ctx, &vergeos.TenantStorageCreateRequest{
 		Tenant:      f.tenantID,
 		Tier:        tiers[0].Key,
-		Provisioned: 1073741824,
+		Provisioned: fixtureNodeStorage,
 	}); err != nil {
 		t.Fatal(err)
 	}

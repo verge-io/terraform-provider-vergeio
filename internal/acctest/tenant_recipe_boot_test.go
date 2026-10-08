@@ -54,8 +54,8 @@ func TestClassifyRecipePost(t *testing.T) {
 	}
 }
 
-func TestRecipeBootWaitsForHeldMachineBeforePost(t *testing.T) {
-	actor := &fakeBoot{machineBoot: true}
+func TestRecipeBootPostsAfterGuestSignal(t *testing.T) {
+	actor := &fakeBoot{guestAfter: 1}
 	lines, id, err := runFakeBoot(t, actor)
 	if err != nil {
 		t.Fatal(err)
@@ -66,8 +66,8 @@ func TestRecipeBootWaitsForHeldMachineBeforePost(t *testing.T) {
 	if len(actor.posts) != 1 || actor.posts[0] != "off" {
 		t.Fatalf("posts = %#v", actor.posts)
 	}
-	if actor.observesBeforePost < recipeSteadyPolls {
-		t.Fatalf("observes before post = %d, want at least %d", actor.observesBeforePost, recipeSteadyPolls)
+	if actor.powerOns != 1 || actor.powerOffs != 1 {
+		t.Fatalf("power on=%d off=%d", actor.powerOns, actor.powerOffs)
 	}
 	if actor.networkStops != 1 || actor.postsWhileNetworkUp != 0 {
 		t.Fatalf("network stops=%d posts while network up=%d", actor.networkStops, actor.postsWhileNetworkUp)
@@ -78,50 +78,53 @@ func TestRecipeBootWaitsForHeldMachineBeforePost(t *testing.T) {
 	}
 }
 
-func TestRecipeBootCyclesWhenPoweredOffPostSaysNeverStarted(t *testing.T) {
-	offPosts := 0
-	actor := &fakeBoot{
-		machineBoot: true,
-		postErr: func(online bool) error {
-			if online {
-				return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "Tenant is currently running"}
-			}
-			offPosts++
-			if offPosts == 1 {
-				return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "You cannot create a recipe based on a tenant that has never been started"}
-			}
-			return nil
-		},
-	}
+func TestRecipeBootPostsWhenUIAnswers(t *testing.T) {
+	actor := &fakeBoot{uiAnswer: true}
 	_, id, err := runFakeBoot(t, actor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != "recipe-1" {
-		t.Fatalf("id = %s", id)
+	if id != "recipe-1" || actor.powerOns != 1 || len(actor.posts) != 1 || actor.posts[0] != "off" {
+		t.Fatalf("id=%s powerOns=%d posts=%#v", id, actor.powerOns, actor.posts)
 	}
-	if len(actor.posts) != 2 || actor.posts[0] != "off" || actor.posts[1] != "off" {
-		t.Fatalf("posts = %#v", actor.posts)
+}
+
+func TestRecipeBootNeverStartedAfterOffIsFatal(t *testing.T) {
+	actor := &fakeBoot{
+		guestAfter: 1,
+		postErr: func(bool) error {
+			return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "You cannot create a recipe based on a tenant that has never been started"}
+		},
 	}
-	if actor.powerOns < 2 || actor.powerOffs < 2 {
-		t.Fatalf("power on=%d off=%d", actor.powerOns, actor.powerOffs)
+	lines, _, err := runFakeBoot(t, actor)
+	if err == nil || !strings.Contains(err.Error(), "never been started") {
+		t.Fatalf("err = %v", err)
+	}
+	if actor.powerOns != 1 || actor.powerOffs != 1 || len(actor.posts) != 1 || actor.posts[0] != "off" {
+		t.Fatalf("power on=%d off=%d posts=%#v", actor.powerOns, actor.powerOffs, actor.posts)
+	}
+	if strings.Contains(err.Error(), "timed out after") {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "power=off") {
+		t.Fatalf("log = %s", strings.Join(lines, "\n"))
 	}
 }
 
 func TestFakeBootLabPostMatchesVergeOS(t *testing.T) {
-	short := &fakeBoot{}
+	short := &fakeBoot{online: true}
 	_, err := short.postRecipe(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "never been started") {
-		t.Fatalf("short power cycle = %v", err)
+		t.Fatalf("unbooted guest = %v", err)
 	}
 
-	running := &fakeBoot{online: true, booted: true}
+	running := &fakeBoot{online: true, guestLive: true}
 	_, err = running.postRecipe(context.Background())
 	if got := errString(err); got != "405 Tenant is currently running" {
 		t.Fatalf("running tenant = %q", got)
 	}
 
-	ready := &fakeBoot{online: false, booted: true}
+	ready := &fakeBoot{online: false, guestLive: true}
 	id, err := ready.postRecipe(context.Background())
 	if err != nil || id != "recipe-1" {
 		t.Fatalf("booted and powered off = %s %v", id, err)
@@ -136,41 +139,17 @@ func errString(err error) string {
 	return fmt.Sprintf("%d %s", apiErr.StatusCode, apiErr.VergeError)
 }
 
-func TestRecipeBootPowersBackOnIfOffPostStillNeverStarted(t *testing.T) {
-	actor := &fakeBoot{
-		machineBoot: true,
-		postErr: func(bool) error {
-			return vergeio.Error{StatusCode: 405, Endpoint: "tenant_recipes", VergeError: "You cannot create a recipe based on a tenant that has never been started"}
-		},
-	}
-	lines, _, err := runFakeBoot(t, actor)
-	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "never been started") {
-		t.Fatalf("err = %v", err)
-	}
-	if actor.powerOns < 2 || actor.powerOffs < 1 {
-		t.Fatalf("power on=%d off=%d posts=%#v", actor.powerOns, actor.powerOffs, actor.posts)
-	}
-	for _, state := range actor.posts {
-		if state != "off" {
-			t.Fatalf("posts = %#v", actor.posts)
-		}
-	}
-	if len(actor.posts) < 2 || !strings.Contains(strings.Join(lines, "\n"), "power=off") {
-		t.Fatalf("posts=%#v log=%s", actor.posts, strings.Join(lines, "\n"))
-	}
-}
-
 func TestRecipeBootRetriesCurrentlyRunning(t *testing.T) {
 	calls := 0
-	actor := &fakeBoot{
-		machineBoot: true,
-		postErr: func(bool) error {
-			calls++
-			if calls == 1 {
-				return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "Tenant is currently running"}
-			}
-			return nil
-		},
+	actor := &fakeBoot{guestAfter: 1}
+	actor.postErr = func(bool) error {
+		calls++
+		if calls == 1 {
+			actor.online = true
+			actor.networkRunning = true
+			return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "Tenant is currently running"}
+		}
+		return nil
 	}
 	lines, id, err := runFakeBoot(t, actor)
 	if err != nil {
@@ -179,14 +158,38 @@ func TestRecipeBootRetriesCurrentlyRunning(t *testing.T) {
 	if id != "recipe-1" || len(actor.posts) != 2 || actor.posts[0] != "off" || actor.posts[1] != "off" {
 		t.Fatalf("id=%s posts=%#v", id, actor.posts)
 	}
+	if actor.powerOns != 1 || actor.powerOffs != 2 || actor.networkStops != 2 {
+		t.Fatalf("power on=%d off=%d network stops=%d", actor.powerOns, actor.powerOffs, actor.networkStops)
+	}
 	if !strings.Contains(strings.Join(lines, "\n"), "Tenant is currently running") {
 		t.Fatal(strings.Join(lines, "\n"))
 	}
 }
 
+func TestRecipeBootStopsAfterCurrentlyRunningRetries(t *testing.T) {
+	actor := &fakeBoot{guestAfter: 1}
+	actor.postErr = func(bool) error {
+		actor.online = true
+		actor.networkRunning = true
+		return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "Tenant is currently running"}
+	}
+	_, _, err := runFakeBoot(t, actor)
+	if err == nil || !strings.Contains(err.Error(), "still reported as running") {
+		t.Fatalf("err = %v", err)
+	}
+	if actor.powerOns != 1 || actor.powerOffs != recipeRunningPosts || len(actor.posts) != recipeRunningPosts {
+		t.Fatalf("power on=%d off=%d posts=%#v", actor.powerOns, actor.powerOffs, actor.posts)
+	}
+	for _, state := range actor.posts {
+		if state != "off" {
+			t.Fatalf("posts = %#v", actor.posts)
+		}
+	}
+}
+
 func TestRecipeBootStopsOnUnexpectedPostError(t *testing.T) {
 	actor := &fakeBoot{
-		machineBoot: true,
+		guestAfter: 1,
 		postErr: func(bool) error {
 			return vergeio.Error{StatusCode: 422, Endpoint: "tenant_recipes", VergeError: "field 'tenant_snapshot' cannot be set"}
 		},
@@ -201,16 +204,16 @@ func TestRecipeBootStopsOnUnexpectedPostError(t *testing.T) {
 }
 
 func TestRecipeBootTimeoutLogsMachineStatus(t *testing.T) {
-	actor := &fakeBoot{machineBoot: false}
+	actor := &fakeBoot{}
 	lines, _, err := runFakeBoot(t, actor)
-	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "started=0") {
+	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "local_time=0") || !strings.Contains(err.Error(), `agent=""`) {
 		t.Fatalf("err = %v", err)
 	}
-	if len(actor.posts) != 0 {
-		t.Fatalf("posts = %#v", actor.posts)
+	if len(actor.posts) != 0 || actor.powerOns != 1 || actor.powerOffs != 0 {
+		t.Fatalf("power on=%d off=%d posts=%#v", actor.powerOns, actor.powerOffs, actor.posts)
 	}
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "tenant ") || !strings.Contains(joined, "machine 5") {
+	if !strings.Contains(joined, "tenant ") || !strings.Contains(joined, "machine 5") || !strings.Contains(err.Error(), "last:") {
 		t.Fatalf("log = %s", joined)
 	}
 }
@@ -228,8 +231,9 @@ func (c *fakeClock) sleep(_ context.Context, d time.Duration) error {
 
 type fakeBoot struct {
 	online              bool
-	machineBoot         bool
-	booted              bool
+	guestAfter          int
+	guestLive           bool
+	uiAnswer            bool
 	onlinePolls         int
 	networkRunning      bool
 	networkStops        int
@@ -263,13 +267,11 @@ func (a *fakeBoot) stopNetwork(context.Context) error {
 
 func (a *fakeBoot) observe(context.Context) (tenantBootView, error) {
 	a.observes++
-	if a.online && a.machineBoot {
+	if a.online {
 		a.onlinePolls++
-		if a.onlinePolls >= recipeSteadyPolls {
-			a.booted = true
+		if a.guestAfter > 0 && a.onlinePolls >= a.guestAfter {
+			a.guestLive = true
 		}
-	} else {
-		a.onlinePolls = 0
 	}
 	status := &vergeos.TenantStatus{Started: 1791467895, Status: "offline", State: "offline"}
 	machine := &vergeos.MachineStatus{Machine: 5, Status: "stopped", State: "offline", Started: 0}
@@ -281,11 +283,15 @@ func (a *fakeBoot) observe(context.Context) (tenantBootView, error) {
 		machine.PowerState = true
 		machine.Status = "running"
 		machine.State = "online"
-		if a.machineBoot {
-			machine.Started = 1700000000
+		machine.Started = 1700000000
+		if a.guestLive {
 			machine.LocalTime = 1700000100
 			machine.AgentVersion = "nested"
 		}
+	}
+	ui := "ui_address empty"
+	if a.uiAnswer {
+		ui = "ui 203.0.113.10 https status=200"
 	}
 	return tenantBootView{
 		status:         status,
@@ -293,7 +299,7 @@ func (a *fakeBoot) observe(context.Context) (tenantBootView, error) {
 		machines:       map[int]*vergeos.MachineStatus{5: machine},
 		networkID:      84,
 		networkRunning: a.networkRunning,
-		ui:             "ui_address empty",
+		ui:             ui,
 	}, nil
 }
 
@@ -322,10 +328,11 @@ func (a *fakeBoot) postRecipe(context.Context) (string, error) {
 }
 
 func (a *fakeBoot) labPostError() error {
-	if a.online && a.booted {
+	booted := a.guestLive || a.uiAnswer
+	if a.online && booted {
 		return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "Tenant is currently running"}
 	}
-	if !a.booted || a.online {
+	if !booted || a.online {
 		return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "You cannot create a recipe based on a tenant that has never been started"}
 	}
 	return nil
