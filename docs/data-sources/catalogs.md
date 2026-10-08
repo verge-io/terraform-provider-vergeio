@@ -3,12 +3,12 @@
 page_title: "vergeio_catalogs Data Source - vergeio"
 subcategory: ""
 description: |-
-  Lists VergeOS recipe catalogs. filter_name keeps an exact name match. The same name in two repositories is returned as two catalogs. Use id with vergeio_vm_recipes.catalog_id.
+  Lists VergeOS recipe catalogs. filter_name keeps an exact name match. The same name in two repositories is returned as two catalogs. Use id with vergeio_vm_recipes.catalog_id or vergeio_tenant_recipes.catalog_id.
 ---
 
 # vergeio_catalogs (Data Source)
 
-Lists recipe catalogs. `filter_name` keeps an exact name match. The same name in two repositories is two rows. Pass `id` to [`vergeio_vm_recipes`](vm_recipes.md) as `catalog_id`.
+Lists recipe catalogs. `filter_name` keeps an exact name match. The same name in two repositories is two rows. Pass `id` to [`vergeio_vm_recipes`](vm_recipes.md) or [`vergeio_tenant_recipes`](tenant_recipes.md) as `catalog_id`.
 
 ## Example Usage
 

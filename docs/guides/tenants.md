@@ -208,6 +208,48 @@ Creating or deleting the block leaves `need_fw_apply` set on that parent network
 
 VergeOS refuses to delete the block while a network inside the tenant is still built on it. Terraform returns that error and leaves the block in state. Remove the tenant network, then destroy the block.
 
+## Recipes
+
+A tenant recipe is a catalog entry built from a tenant snapshot. It asks a set of questions and creates a configured tenant. `vergeio_tenant_recipes` lists those recipes and their questions. `filter_name` is an exact recipe name. `catalog_id` or `catalog_name` limits the list to one catalog. `vergeio_catalogs` returns the catalog key.
+
+`vergeio_tenant_recipe_instance` deploys one tenant from a recipe. `recipe_id` is `recipes[0].id`. `answers` is a map of question name to string. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. A disk size is bytes, so 50 GB is `53687091200`. A network answer is a network name, a vnet key, or `__new_internal__`.
+
+`tenant_id` is the key of the tenant VergeOS created. That is the same key `vergeio_tenant` stores in `id`, as a number. Pass `tostring(vergeio_tenant_recipe_instance.customer.tenant_id)` to `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, `vergeio_tenant_layer2_network`, or `vergeio_tenant_snapshot`. The recipe instance owns the tenant: destroy powers it off, waits for its network to stop, deletes the tenant, then deletes the recipe instance.
+
+```terraform
+data "vergeio_catalogs" "tenants" {
+  filter_name = "Tenants"
+}
+
+data "vergeio_tenant_recipes" "trial" {
+  catalog_id  = data.vergeio_catalogs.tenants.catalogs[0].id
+  filter_name = "30-Day Trial (POC)"
+}
+
+# answers values are strings. A disksize question is bytes: 50 GB is
+# 53687091200. 50 is fifty bytes and is rejected. A bool question accepts
+# true, false, yes, no, on, off, 1, or 0. enabled is rejected.
+# tenant_id is the new tenant's key. Child resources take that key as a string.
+resource "vergeio_tenant_recipe_instance" "customer" {
+  name      = "customer-a"
+  recipe_id = data.vergeio_tenant_recipes.trial.recipes[0].id
+
+  answers = {
+    YB_USER_NAME              = "admin"
+    YB_EXPOSE_CLOUD_SNAPSHOTS = "true"
+    YB_DRIVE_OS_SIZE          = "53687091200"
+    YB_NIC_ETH0               = "Internal"
+  }
+}
+
+resource "vergeio_tenant_node" "node" {
+  tenant_id = tostring(vergeio_tenant_recipe_instance.customer.tenant_id)
+  name      = "node1"
+  cpu_cores = 4
+  ram       = 8192
+}
+```
+
 ## Snapshots
 
 `vergeio_tenant_snapshot` keeps one snapshot of the tenant. Create takes it. A later change to `description` updates that text. A later change to `expires` or `never_expires` updates the expiration. Destroy deletes the snapshot. `name` can be set at creation. VergeOS will not rename the snapshot, so a new name replaces it. Omit `name` and VergeOS assigns one. `type` is `full`, `partial_include`, or `partial_exclude`. Omit it and VergeOS uses `full`. Changing `type` or `tenant_id` replaces the snapshot.

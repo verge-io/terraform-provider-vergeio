@@ -113,6 +113,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_tenant_layer2_network
 - vergeio_tenant_network_block
 - vergeio_tenant_node
+- vergeio_tenant_recipe_instance
 - vergeio_tenant_snapshot
 - vergeio_tenant_storage
 - vergeio_user
@@ -145,6 +146,8 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 
+`vergeio_tenant_recipe_instance` deploys a tenant from a catalog recipe. `vergeio_tenant_recipes` lists the recipes and their questions. `answers` is a map of strings. A disk size is bytes, so 50 GB is `53687091200`. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. `tenant_id` is the new tenant's key. The other tenant resources take that key as a string. The resource deploys the tenant. It has no simulate argument.
+
 `vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_snapshot` keeps one snapshot of that tenant. `description` and the expiration update in place. Changing `name`, `type`, or `tenant_id` replaces the snapshot, because VergeOS does not rename one or change its coverage. The action of the same name takes a snapshot and does not keep it. `vergeio_tenant_snapshots` lists the snapshots on a tenant. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. `vergeio_tenant_external_ip` assigns one virtual IP on a parent network to the tenant. The first assigned IP becomes the UI address. Set `ui_address_id` on `vergeio_tenant` to choose a different assigned IP. A parent UI move of that value is drift, and the next apply restores it. `vergeio_tenant_network_block` assigns one routed CIDR from a parent network to the tenant. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into the tenant on VergeOS 26.0 or later. Destroy disables that assignment, then deletes it. Networks created inside the tenant remain after the host-side delete and belong to the tenant-side configuration. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
 
 Assigning an external IP or a network block can leave `need_fw_apply` set on the parent network. Both resources report that flag as `parent_firewall_pending`. Set `apply_parent_firewall` to apply the rules in the same call. VergeOS refuses to delete a network block while a tenant network is still built on it.
@@ -162,6 +165,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_site_sync_incoming_status
 - vergeio_site_sync_outgoing_status
 - vergeio_tags
+- vergeio_tenant_recipes
 - vergeio_tenant_snapshots
 - vergeio_tenants
 - vergeio_users

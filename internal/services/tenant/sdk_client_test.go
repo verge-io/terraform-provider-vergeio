@@ -35,6 +35,22 @@ func TestTenantConstructorReturnsClientError(t *testing.T) {
 	if err != nil || api == nil || api.sdk == nil {
 		t.Fatalf("api=%v err=%v", api, err)
 	}
+
+	recipe, err := NewTenantRecipeAPI(nil)
+	if err == nil || recipe != nil {
+		t.Fatalf("nil client: api=%v err=%v", recipe, err)
+	}
+	recipe, err = NewTenantRecipeAPI(versionClient(t, "25.0.0"))
+	if err == nil || recipe != nil {
+		t.Fatalf("unsupported version: api=%v err=%v", recipe, err)
+	}
+	if !vergeos.IsUnsupportedVersionError(err) {
+		t.Fatalf("error = %v", err)
+	}
+	recipe, err = NewTenantRecipeAPI(versionClient(t, "26.0.0"))
+	if err != nil || recipe == nil || recipe.sdk == nil || recipe.http == nil || recipe.tenants == nil || recipe.tenants.sdk == nil {
+		t.Fatalf("recipe api=%v err=%v", recipe, err)
+	}
 }
 
 func tenantTestClient(t *testing.T) *vergeio.Client {

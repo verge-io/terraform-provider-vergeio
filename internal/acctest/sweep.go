@@ -183,6 +183,7 @@ func Sweep(ctx context.Context) error {
 	record(sweepAuthSources(ctx, client))
 
 	record(sweepTenants(ctx, client))
+	record(sweepTenantRecipeInstances(ctx, client))
 	record(sweepTags(ctx, client))
 
 	if len(errs) > 0 {
@@ -265,6 +266,20 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	for _, tenant := range tenants {
 		if !tenant.IsSnapshot && HasPrefix(tenant.Name) {
 			left = append(left, fmt.Sprintf("tenant %s (%d)", tenant.Name, tenant.Key.Int()))
+		}
+	}
+
+	tenantRecipes, err := client.TenantRecipeInstances.List(ctx)
+	if listEndpointMissing(err) {
+		tenantRecipes = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tenant recipe instances: %w", err)
+	}
+	for _, instance := range tenantRecipes {
+		if HasPrefix(instance.Name) {
+			left = append(left, fmt.Sprintf("tenant recipe instance %s (%d)", instance.Name, instance.Key.Int()))
 		}
 	}
 
@@ -970,6 +985,36 @@ func sweepVMRecipeInstances(ctx context.Context, client *vergeos.Client) error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("sweep vm recipe instances: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantRecipeInstances(ctx context.Context, client *vergeos.Client) error {
+	rows, err := client.TenantRecipeInstances.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] tenant recipe instances endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant recipe instances: %w", err)
+	}
+	httpClient, err := acceptanceHTTPClient()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range rows {
+		if !HasPrefix(row.Name) {
+			continue
+		}
+		id := row.Key.Int()
+		log.Printf("[SWEEP] deleting tenant recipe instance %d (%s)", id, row.Name)
+		if err := httpClient.DeleteTenantRecipeInstance(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete tenant recipe instance %d: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant recipe instances: %w", errorsJoin(errs))
 	}
 	return nil
 }
