@@ -6,6 +6,7 @@ package tenant
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -228,8 +229,91 @@ func (api *TenantRecipeAPI) delete(ctx context.Context, data *TenantRecipeInstan
 	return nil
 }
 
+// deleteRecipeTenant removes the copy a recipe deploy stamps out.
+// That copy has its own nodes and storage. Tenants.Delete returns 405
+// while those rows still exist, so they go first.
 func (api *TenantRecipeAPI) deleteRecipeTenant(ctx context.Context, tenantID int) error {
+	if err := api.deleteStampedSnapshots(ctx, tenantID); err != nil {
+		return err
+	}
+	if err := api.deleteStampedNodes(ctx, tenantID); err != nil {
+		return err
+	}
+	if err := api.deleteStampedStorage(ctx, tenantID); err != nil {
+		return err
+	}
 	return api.tenants.deleteTenant(ctx, &TenantResourceModel{Id: idString(tenantID)})
+}
+
+func recipeListGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	if vergeos.IsNotFoundError(err) {
+		return true
+	}
+	var apiErr *vergeos.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
+}
+
+func (api *TenantRecipeAPI) deleteStampedSnapshots(ctx context.Context, tenantID int) error {
+	snaps, err := api.sdk.TenantSnapshots.ListByTenant(ctx, tenantID)
+	if recipeListGone(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for i := range snaps {
+		id := snaps[i].Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if err := api.sdk.TenantSnapshots.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("delete tenant snapshot %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func (api *TenantRecipeAPI) deleteStampedNodes(ctx context.Context, tenantID int) error {
+	nodes, err := api.sdk.TenantNodes.ListByTenant(ctx, tenantID)
+	if recipeListGone(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for i := range nodes {
+		id := nodes[i].Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if err := api.tenants.deleteTenantNode(ctx, &TenantNodeResourceModel{Id: idString(id)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (api *TenantRecipeAPI) deleteStampedStorage(ctx context.Context, tenantID int) error {
+	rows, err := api.sdk.TenantStorage.ListByTenant(ctx, tenantID)
+	if recipeListGone(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		id := rows[i].Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if err := api.sdk.TenantStorage.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("delete tenant storage %d: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func tenantRecipeDeployRequest(ctx context.Context, data *TenantRecipeInstanceResourceModel) (*vergeos.TenantRecipeDeployRequest, error) {

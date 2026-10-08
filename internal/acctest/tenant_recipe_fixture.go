@@ -10,20 +10,21 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
-	"terraform-provider-vergeio/internal/services/tenant"
 )
 
 const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 
 // TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
 // The tenant uses govergeos. Catalogs and tenant recipes have no create
-// method there, so those rows are posted over HTTP. The source tenant is
-// powered on once and then powered off before the recipe POST. VergeOS
-// fills tenant_snapshot itself. The fixture does not send that field.
+// method there, so those rows are posted over HTTP. The source tenant stays
+// powered on while its node machine status stays running, and the recipe
+// POST is retried until VergeOS accepts it or recipeBootLimit elapses.
+// VergeOS fills tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string
 	AnswersHCL string
@@ -35,12 +36,13 @@ type TenantRecipeFixture struct {
 	catalogID string
 }
 
-// NewTenantRecipeFixture creates the source tenant, powers it on until it
-// is running, powers it off, waits for its network to stop, posts a private
-// catalog in the local repository, and posts a tenant recipe for that
-// tenant. Required questions the fixture can answer are returned as HCL
+// NewTenantRecipeFixture creates the source tenant, gives it a node and
+// storage, posts a private catalog in the local repository, powers the
+// tenant on, and posts a tenant recipe once the node machine has stayed
+// running. Required questions the fixture can answer are returned as HCL
 // inside an answers map. A required question it cannot answer is disabled,
-// and the recipe is republished.
+// and the recipe is republished. An empty TF_ACC_VERGEIO_TENANT_RECIPE_ID
+// uses this fixture. That is not a skip.
 func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -71,7 +73,7 @@ func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 		}
 	}
 	f.createSourceTenant(t, tenantName)
-	f.startSourceTenant(t, nodeName)
+	f.addSourceCapacity(t, nodeName)
 
 	repository, err := f.http.LocalCatalogRepositoryID(f.ctx)
 	if err != nil {
@@ -88,18 +90,7 @@ func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.catalogID = catalogID
-
-	recipeID, err := f.http.CreateTenantRecipe(f.ctx, vergeio.TenantRecipeCreate{
-		Name:        recipeName,
-		Description: "acceptance tenant recipe",
-		Catalog:     catalogID,
-		Tenant:      f.tenantID,
-		Version:     "1.0.0",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.RecipeID = recipeID
+	f.postRecipeAfterBoot(t, recipeName)
 }
 
 func (f *TenantRecipeFixture) createSourceTenant(t *testing.T, name string) {
@@ -115,16 +106,11 @@ func (f *TenantRecipeFixture) createSourceTenant(t *testing.T, name string) {
 	f.tenantID = created.Key.Int()
 }
 
-// startSourceTenant gives the tenant a node and storage, powers it on, and
-// waits until tenant_status.started is set. VergeOS returns 405 for a
-// recipe while that timestamp is still 0. Status online is not that field.
-// Power-on with no node cannot reach running.
-func (f *TenantRecipeFixture) startSourceTenant(t *testing.T, nodeName string) {
+// addSourceCapacity gives the tenant a node and storage. Power-on with no
+// node cannot reach running. 4 cores and 16 GB are the tenant-node defaults.
+func (f *TenantRecipeFixture) addSourceCapacity(t *testing.T, nodeName string) {
 	t.Helper()
 	enabled := true
-	// 4 cores and 16 GB are the documented tenant-node defaults. Nested
-	// VergeOS needs that 16 GB before it finishes its own boot. 2048 MB
-	// reaches node Running while tenant_status.started stays 0.
 	if _, err := f.sdk.TenantNodes.Create(f.ctx, &vergeos.TenantNodeCreateRequest{
 		Tenant:   f.tenantID,
 		Name:     nodeName,
@@ -148,11 +134,16 @@ func (f *TenantRecipeFixture) startSourceTenant(t *testing.T, nodeName string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	started, err := tenant.StartTenantOnce(f.ctx, f.sdk, f.tenantID)
+}
+
+func (f *TenantRecipeFixture) postRecipeAfterBoot(t *testing.T, name string) {
+	t.Helper()
+	boot := newRecipeBoot(time.Now, sleepCtx, t.Logf, fixtureRecipePost{f: f, name: name})
+	id, err := boot.run(f.ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("tenant %d tenant_status.started=%d; powered off before the recipe POST", f.tenantID, started)
+	f.RecipeID = id
 }
 
 func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {

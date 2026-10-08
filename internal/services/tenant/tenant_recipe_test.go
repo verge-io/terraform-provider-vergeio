@@ -531,6 +531,35 @@ func TestTenantRecipeInstanceDeleteMissingRowStopsStateTenant(t *testing.T) {
 	}
 }
 
+func TestTenantRecipeInstanceDeleteRemovesStampedChildrenFirst(t *testing.T) {
+	fake := newTenantRecipeFake()
+	fake.nodePresent = true
+	fake.storagePresent = true
+	fake.online = true
+	fake.vnetRunning = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: tenantRecipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.nodeDeletes != 1 || fake.storageDeletes != 1 || fake.tenantDeletes != 1 || fake.instanceDeletes != 1 {
+		t.Fatalf("node=%d storage=%d tenant=%d instance=%d", fake.nodeDeletes, fake.storageDeletes, fake.tenantDeletes, fake.instanceDeletes)
+	}
+	if strings.Join(fake.deleteOrder, ",") != "node,storage,tenant" {
+		t.Fatalf("delete order = %#v", fake.deleteOrder)
+	}
+	if !fake.sawAction("poweroff") {
+		t.Fatalf("actions = %#v, want poweroff before Tenants.Delete", fake.actionBodies())
+	}
+}
+
 func TestTenantRecipeInstanceDeleteStatusErrorKeepsRow(t *testing.T) {
 	fake := newTenantRecipeFake()
 	fake.statusFailure = true
@@ -909,6 +938,11 @@ type tenantRecipeFake struct {
 	questionCalls               int
 	tenantDeletes               int
 	instanceDeletes             int
+	nodeDeletes                 int
+	storageDeletes              int
+	nodePresent                 bool
+	storagePresent              bool
+	deleteOrder                 []string
 	tenantDeletedBeforeInstance bool
 	actions                     []string
 	deploy                      string
@@ -1045,6 +1079,12 @@ func (f *tenantRecipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"$key":44,"name":"customer-a","vnet":84,"is_snapshot":false}`))
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenants/44":
 		f.tenantDeletes++
+		f.deleteOrder = append(f.deleteOrder, "tenant")
+		if f.nodePresent {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = w.Write([]byte(`{"err":"Cannot delete tenant while nodes exist"}`))
+			return
+		}
 		if f.tenantMissing {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"err":"not found"}`))
@@ -1066,7 +1106,53 @@ func (f *tenantRecipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write([]byte(`{}`))
 	default:
+		if f.serveStampedChildren(w, r) {
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"err":"unexpected ` + r.Method + ` ` + r.URL.RequestURI() + `"}`))
+	}
+}
+
+// serveStampedChildren answers node and storage calls for a recipe copy.
+// ServeHTTP holds f.mu.
+func (f *tenantRecipeFake) serveStampedChildren(w http.ResponseWriter, r *http.Request) bool {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes":
+		if !f.nodePresent {
+			_, _ = w.Write([]byte(`[]`))
+			return true
+		}
+		_, _ = w.Write([]byte(`[{"$key":7,"tenant":44,"name":"copy","machine":0,"enabled":true}]`))
+		return true
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes/7":
+		if !f.nodePresent {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"err":"not found"}`))
+			return true
+		}
+		_, _ = w.Write([]byte(`{"$key":7,"tenant":44,"name":"copy","machine":0,"enabled":true}`))
+		return true
+	case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenant_nodes/7":
+		f.nodeDeletes++
+		f.nodePresent = false
+		f.deleteOrder = append(f.deleteOrder, "node")
+		_, _ = w.Write([]byte(`{}`))
+		return true
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_storage":
+		if !f.storagePresent {
+			_, _ = w.Write([]byte(`[]`))
+			return true
+		}
+		_, _ = w.Write([]byte(`[{"$key":8,"tenant":44,"tier":1,"provisioned":1073741824}]`))
+		return true
+	case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenant_storage/8":
+		f.storageDeletes++
+		f.storagePresent = false
+		f.deleteOrder = append(f.deleteOrder, "storage")
+		_, _ = w.Write([]byte(`{}`))
+		return true
+	default:
+		return false
 	}
 }

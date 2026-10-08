@@ -14,6 +14,25 @@ import (
 	"time"
 )
 
+func TestProbeURLReturnsStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient("example.test", "user", "pass", true)
+	code, err := client.ProbeURL(context.Background(), server.URL+"/")
+	if err != nil || code != http.StatusNoContent {
+		t.Fatalf("probe = %d %v", code, err)
+	}
+	if _, err := (*Client)(nil).ProbeURL(context.Background(), server.URL); err == nil {
+		t.Fatal("nil client should fail the probe")
+	}
+}
+
 func TestNewClientSetsTimeout(t *testing.T) {
 	client := NewClient("example.test", "user", "pass", true)
 	if client.Timeout() != DefaultTimeout {
