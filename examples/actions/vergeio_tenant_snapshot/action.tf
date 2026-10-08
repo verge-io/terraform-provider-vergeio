@@ -1,4 +1,5 @@
 # Snapshot a tenant before a change inside it. The snapshot is not Terraform state.
+# The vergeio_tenant_snapshot resource keeps a snapshot. This action does not.
 # terraform apply -invoke=action.vergeio_tenant_snapshot.before runs it on its own.
 # Requires Terraform 1.14. OpenTofu does not implement actions.
 

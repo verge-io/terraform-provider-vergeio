@@ -169,6 +169,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		tenant.NewTenantExternalIPResource,
 		tenant.NewTenantLayer2NetworkResource,
 		tenant.NewTenantNetworkBlockResource,
+		tenant.NewTenantSnapshotResource,
 	}
 }
 
@@ -208,6 +209,7 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		site.NewSyncIncomingStatusDataSource,
 		site.NewSyncOutgoingStatusDataSource,
 		tenant.NewTenantsDataSource,
+		tenant.NewTenantSnapshotsDataSource,
 	}
 }
 

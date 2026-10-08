@@ -78,6 +78,7 @@ type fakeVerge struct {
 	layer2DeleteMessage string
 	nodes               map[int]map[string]any
 	storage             map[int]map[string]any
+	snapshots           map[int]map[string]any
 	vnets               map[int]map[string]any
 	machines            map[int]map[string]any
 	calls               []string
@@ -104,6 +105,7 @@ func newFake(t *testing.T) *fakeVerge {
 		layer2:         map[int]map[string]any{},
 		nodes:          map[int]map[string]any{},
 		storage:        map[int]map[string]any{},
+		snapshots:      map[int]map[string]any{},
 		vnets:          map[int]map[string]any{},
 		machines:       map[int]map[string]any{},
 	}
@@ -282,6 +284,8 @@ func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveNodeAction(w, payload)
 	case "tenant_storage":
 		f.serveStorage(w, r, id, payload)
+	case "tenant_snapshots":
+		f.serveSnapshots(w, r, id, payload)
 	case "vnet_addresses":
 		f.serveAddress(w, r, id, payload)
 	case "vnet_cidrs":
@@ -565,6 +569,68 @@ func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, p
 			"ha_group":      stringField(payload, "ha_group"),
 		}
 	})
+}
+
+func (f *fakeVerge) serveSnapshots(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	switch {
+	case r.Method == http.MethodPost && id == 0:
+		id = f.alloc()
+		name := strings.TrimSpace(stringField(payload, "name"))
+		if name == "" {
+			name = fmt.Sprintf("snap-%d", id)
+		}
+		typ := strings.TrimSpace(stringField(payload, "type"))
+		if typ == "" {
+			typ = "full"
+		}
+		f.snapshots[id] = map[string]any{
+			"$key":        id,
+			"tenant":      intField(payload["tenant"]),
+			"name":        name,
+			"description": stringField(payload, "description"),
+			"type":        typ,
+			"created":     int64(1700000000),
+			"expires":     int64Field(payload["expires"]),
+		}
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodGet && id == 0:
+		rows := make([]map[string]any, 0, len(f.snapshots))
+		for _, row := range f.snapshots {
+			rows = append(rows, row)
+		}
+		writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
+	case r.Method == http.MethodGet && id > 0:
+		obj, ok := f.snapshots[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		writeJSON(f.t, w, http.StatusOK, obj)
+	case r.Method == http.MethodPut && id > 0:
+		obj, ok := f.snapshots[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		// Name, type, and tenant are readonly after create.
+		if v, ok := payload["description"]; ok {
+			obj["description"] = v
+		}
+		if v, ok := payload["expires"]; ok {
+			obj["expires"] = int64Field(v)
+		}
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodDelete && id > 0:
+		if _, ok := f.snapshots[id]; !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		delete(f.snapshots, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		f.t.Errorf("unexpected tenant_snapshots %s id %d", r.Method, id)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
 }
 
 func (f *fakeVerge) serveStorage(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {

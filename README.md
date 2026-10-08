@@ -71,7 +71,7 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 - vergeio_tenant_node_migrate
 - vergeio_tenant_node_power
 
-`vergeio_vm_snapshot` takes an instant VM snapshot. `name` and `retention_seconds` are optional. `quiesce` asks the guest agent to freeze filesystems. `vergeio_tenant_snapshot` snapshots a whole tenant. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. Use it when `vergeio_network_rule` sets `apply` to false. A stopped network is left unchanged and the action returns an error. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. `power_on` posts poweron when the machine is not running, including when the VM `powerstate` column is already true. A later plan of that VM restores a declared powerstate. `timeout_seconds` and `force` apply only to `shutdown`.
+`vergeio_vm_snapshot` takes an instant VM snapshot. `name` and `retention_seconds` are optional. `quiesce` asks the guest agent to freeze filesystems. `vergeio_tenant_snapshot` snapshots a whole tenant and does not keep it. The resource of the same name keeps one snapshot in state. `vergeio_tenant_snapshots` lists the snapshots on a tenant. `vergeio_network_apply` refreshes firewall rules, DNS, or both on a running network. Use it when `vergeio_network_rule` sets `apply` to false. A stopped network is left unchanged and the action returns an error. `vergeio_vm_power` shuts down, resets, or powers on a VM without changing `vergeio_vm.powerstate`. `power_on` posts poweron when the machine is not running, including when the VM `powerstate` column is already true. A later plan of that VM restores a declared powerstate. `timeout_seconds` and `force` apply only to `shutdown`.
 
 `vergeio_tenant_clone` copies a tenant. `name` is the new tenant's name. `no_vnet`, `no_storage`, and `no_nodes` skip the network, the storage, and the nodes. VergeOS accepts the clone before that copy finishes, so the action waits until a skipped node or storage row is gone and removes one the copy left behind. The copy is not stored in state. `vergeio_tenant_reset` restarts a tenant and does not change `vergeio_tenant`. `vergeio_tenant_node_migrate` moves a tenant node onto `target_node`, a host node key. `vergeio_tenant_node_power` kills or resets a tenant node. VergeOS has `poweroffmaintenance` on tenant nodes. The pinned govergeos client does not expose it, so that operation is not offered.
 
@@ -113,6 +113,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_tenant_layer2_network
 - vergeio_tenant_network_block
 - vergeio_tenant_node
+- vergeio_tenant_snapshot
 - vergeio_tenant_storage
 - vergeio_user
 - vergeio_vm
@@ -144,7 +145,7 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 
-`vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. `vergeio_tenant_external_ip` assigns one virtual IP on a parent network to the tenant. The first assigned IP becomes the UI address. Set `ui_address_id` on `vergeio_tenant` to choose a different assigned IP. A parent UI move of that value is drift, and the next apply restores it. `vergeio_tenant_network_block` assigns one routed CIDR from a parent network to the tenant. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into the tenant on VergeOS 26.0 or later. Destroy disables that assignment, then deletes it. Networks created inside the tenant remain after the host-side delete and belong to the tenant-side configuration. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
+`vergeio_tenant` creates a tenant on the parent system, with its power state and UI address. `vergeio_tenant_snapshot` keeps one snapshot of that tenant. `description` and the expiration update in place. Changing `name`, `type`, or `tenant_id` replaces the snapshot, because VergeOS does not rename one or change its coverage. The action of the same name takes a snapshot and does not keep it. `vergeio_tenant_snapshots` lists the snapshots on a tenant. `vergeio_tenant_node` and `vergeio_tenant_storage` hand that tenant compute and storage. `vergeio_tenant_external_ip` assigns one virtual IP on a parent network to the tenant. The first assigned IP becomes the UI address. Set `ui_address_id` on `vergeio_tenant` to choose a different assigned IP. A parent UI move of that value is drift, and the next apply restores it. `vergeio_tenant_network_block` assigns one routed CIDR from a parent network to the tenant. `vergeio_tenant_layer2_network` bridges one parent layer 2 network into the tenant on VergeOS 26.0 or later. Destroy disables that assignment, then deletes it. Networks created inside the tenant remain after the host-side delete and belong to the tenant-side configuration. A second Terraform configuration, pointed at `ui_address`, manages the inside of the tenant. The tenants guide in the docs has a working parent stack and tenant stack.
 
 Assigning an external IP or a network block can leave `need_fw_apply` set on the parent network. Both resources report that flag as `parent_firewall_pending`. Set `apply_parent_firewall` to apply the rules in the same call. VergeOS refuses to delete a network block while a tenant network is still built on it.
 
@@ -161,6 +162,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_site_sync_incoming_status
 - vergeio_site_sync_outgoing_status
 - vergeio_tags
+- vergeio_tenant_snapshots
 - vergeio_tenants
 - vergeio_users
 - vergeio_version

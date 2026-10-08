@@ -80,6 +80,14 @@ Creating or deleting the block leaves `need_fw_apply` set on that parent network
 
 VergeOS refuses to delete the block while a network inside the tenant is still built on it. Terraform returns that error and leaves the block in state. Remove the tenant network, then destroy the block.
 
+## Snapshots
+
+`vergeio_tenant_snapshot` keeps one snapshot of the tenant. Create takes it. A later change to `description` updates that text. A later change to `expires` or `never_expires` updates the expiration. Destroy deletes the snapshot. `name` can be set at creation. VergeOS will not rename the snapshot, so a new name replaces it. Omit `name` and VergeOS assigns one. `type` is `full`, `partial_include`, or `partial_exclude`. Omit it and VergeOS uses `full`. Changing `type` or `tenant_id` replaces the snapshot.
+
+The action `vergeio_tenant_snapshot` takes a snapshot from `terraform apply -invoke` or an `action_trigger` and does not keep it in state. Use the action for a one-off recovery point before a change. Use the resource when Terraform should retain the snapshot.
+
+`vergeio_tenant_snapshots` lists the snapshots VergeOS has for one tenant, including ones this configuration did not create. `expires` is null when a snapshot does not expire. The Provider and Local labels in the tenant UI belong to cloud snapshots. This list reports the coverage type on the tenant snapshot row, which is not that label.
+
 ## Layer 2 networks
 
 `vergeio_tenant_layer2_network` bridges a tenant onto a parent network (`tenant_layer2_vnets`). It requires VergeOS 26.0 or later. VergeOS creates three things inside the tenant: a NIC on the tenant node connected to that network, a physical network whose name is "Physical" followed by the parent network name, and an external network named after the parent network. `network_id` is the parent network key, the same value as `vergeio_network.id`. Changing `tenant_id` or `network_id` replaces the assignment. `enabled` updates in place and defaults to true.
