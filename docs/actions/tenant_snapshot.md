@@ -3,17 +3,18 @@
 page_title: "vergeio_tenant_snapshot Action - vergeio"
 subcategory: ""
 description: |-
-  Take a snapshot of a VergeOS tenant. Invoke it with terraform apply -invoke, or from a resource lifecycle action_trigger, before a change inside the tenant. The snapshot is a full tenant snapshot and is not stored in Terraform state. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+  Take a snapshot of a VergeOS tenant. Invoke it with terraform apply -invoke, or from a resource lifecycle action_trigger, before a change inside the tenant. The snapshot is a full tenant snapshot and is not stored in Terraform state. The vergeio_tenant_snapshot resource keeps a snapshot in state. This action does not. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 ---
 
 # vergeio_tenant_snapshot (Action)
 
-Take a snapshot of a VergeOS tenant. Invoke it with `terraform apply -invoke`, or from a resource `lifecycle` `action_trigger`, before a change inside the tenant. The snapshot is a full tenant snapshot and is not stored in Terraform state. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
+Take a snapshot of a VergeOS tenant. Invoke it with `terraform apply -invoke`, or from a resource `lifecycle` `action_trigger`, before a change inside the tenant. The snapshot is a full tenant snapshot and is not stored in Terraform state. The vergeio_tenant_snapshot resource keeps a snapshot in state. This action does not. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.
 
 ## Example Usage
 
 ```terraform
 # Snapshot a tenant before a change inside it. The snapshot is not Terraform state.
+# The vergeio_tenant_snapshot resource keeps a snapshot. This action does not.
 # terraform apply -invoke=action.vergeio_tenant_snapshot.before runs it on its own.
 # Requires Terraform 1.14. OpenTofu does not implement actions.
 

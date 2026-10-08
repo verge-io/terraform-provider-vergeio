@@ -50,7 +50,7 @@ func (a *TenantSnapshotAction) Metadata(ctx context.Context, req action.Metadata
 
 func (a *TenantSnapshotAction) Schema(ctx context.Context, req action.SchemaRequest, resp *action.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Take a snapshot of a VergeOS tenant. Invoke it with `terraform apply -invoke`, or from a resource `lifecycle` `action_trigger`, before a change inside the tenant. The snapshot is a full tenant snapshot and is not stored in Terraform state. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.",
+		MarkdownDescription: "Take a snapshot of a VergeOS tenant. Invoke it with `terraform apply -invoke`, or from a resource `lifecycle` `action_trigger`, before a change inside the tenant. The snapshot is a full tenant snapshot and is not stored in Terraform state. The vergeio_tenant_snapshot resource keeps a snapshot in state. This action does not. Requires Terraform 1.14 or later. OpenTofu does not implement actions, and no resource behavior depends on this action.",
 		Attributes: map[string]schema.Attribute{
 			"tenant_id": schema.StringAttribute{
 				MarkdownDescription: "Tenant id, the same value as vergeio_tenant.id.",

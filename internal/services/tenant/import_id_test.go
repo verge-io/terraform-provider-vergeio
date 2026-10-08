@@ -58,6 +58,12 @@ func TestTenantImportStateEmptyID(t *testing.T) {
 			summary:  "Invalid Tenant Layer 2 Network Import ID",
 			detail:   "Import vergeio_tenant_layer2_network with the tenant_layer2_vnets key.",
 		},
+		{
+			name:     "snapshot",
+			resource: NewTenantSnapshotResource(),
+			summary:  "Invalid Tenant Snapshot Import ID",
+			detail:   "Import vergeio_tenant_snapshot with the snapshot key, such as 15, or with tenant_id/name, such as 7/before-change.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
