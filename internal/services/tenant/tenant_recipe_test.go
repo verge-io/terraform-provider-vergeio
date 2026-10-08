@@ -5,6 +5,7 @@ package tenant
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -560,6 +561,34 @@ func TestTenantRecipeInstanceDeleteRemovesStampedChildrenFirst(t *testing.T) {
 	}
 }
 
+func TestTenantRecipeInstanceDeleteRemovesHighestNodeFirst(t *testing.T) {
+	orig := tenantPowerTimeout
+	t.Cleanup(func() { tenantPowerTimeout = orig })
+	tenantPowerTimeout = 30 * time.Millisecond
+
+	fake := newTenantRecipeFake()
+	fake.multiNodes = true
+	fake.liveNodes = map[int]int{7: 1, 11: 2}
+	fake.storagePresent = true
+	fake.online = true
+	fake.vnetRunning = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: tenantRecipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if strings.Join(fake.deleteOrder, ",") != "node-11,node-7,storage,tenant" {
+		t.Fatalf("delete order = %#v", fake.deleteOrder)
+	}
+}
+
 func TestTenantRecipeInstanceDeleteStatusErrorKeepsRow(t *testing.T) {
 	fake := newTenantRecipeFake()
 	fake.statusFailure = true
@@ -942,6 +971,8 @@ type tenantRecipeFake struct {
 	storageDeletes              int
 	nodePresent                 bool
 	storagePresent              bool
+	multiNodes                  bool
+	liveNodes                   map[int]int
 	deleteOrder                 []string
 	tenantDeletedBeforeInstance bool
 	actions                     []string
@@ -1080,7 +1111,7 @@ func (f *tenantRecipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenants/44":
 		f.tenantDeletes++
 		f.deleteOrder = append(f.deleteOrder, "tenant")
-		if f.nodePresent {
+		if f.nodePresent || len(f.liveNodes) > 0 {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			_, _ = w.Write([]byte(`{"err":"Cannot delete tenant while nodes exist"}`))
 			return
@@ -1117,6 +1148,9 @@ func (f *tenantRecipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // serveStampedChildren answers node and storage calls for a recipe copy.
 // ServeHTTP holds f.mu.
 func (f *tenantRecipeFake) serveStampedChildren(w http.ResponseWriter, r *http.Request) bool {
+	if f.serveMultiNodes(w, r) {
+		return true
+	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes":
 		if !f.nodePresent {
@@ -1155,4 +1189,93 @@ func (f *tenantRecipeFake) serveStampedChildren(w http.ResponseWriter, r *http.R
 	default:
 		return false
 	}
+}
+
+// serveMultiNodes lists the lower nodeid first and refuses to delete it
+// while a higher nodeid remains. ServeHTTP holds f.mu.
+func (f *tenantRecipeFake) serveMultiNodes(w http.ResponseWriter, r *http.Request) bool {
+	if !f.multiNodes {
+		return false
+	}
+	const nodePrefix = "/api/v4/tenant_nodes/"
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes":
+		_, _ = w.Write([]byte(f.multiNodeList()))
+		return true
+	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, nodePrefix):
+		f.writeMultiNode(w, r.URL.Path[len(nodePrefix):])
+		return true
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, nodePrefix):
+		f.deleteMultiNode(w, r.URL.Path[len(nodePrefix):])
+		return true
+	default:
+		return false
+	}
+}
+
+func (f *tenantRecipeFake) multiNodeList() string {
+	var b strings.Builder
+	b.WriteByte('[')
+	first := true
+	for _, key := range []int{7, 11} {
+		nodeID, ok := f.liveNodes[key]
+		if !ok {
+			continue
+		}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		fmt.Fprintf(&b, `{"$key":%d,"tenant":44,"name":"copy","machine":0,"enabled":true,"nodeid":%d}`, key, nodeID)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
+func (f *tenantRecipeFake) writeMultiNode(w http.ResponseWriter, idText string) {
+	id, err := strconv.Atoi(idText)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"err":"not found"}`))
+		return
+	}
+	nodeID, ok := f.liveNodes[id]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"err":"not found"}`))
+		return
+	}
+	if _, err := fmt.Fprintf(w, `{"$key":%d,"tenant":44,"name":"copy","machine":0,"enabled":true,"nodeid":%d}`, id, nodeID); err != nil {
+		return
+	}
+}
+
+func (f *tenantRecipeFake) deleteMultiNode(w http.ResponseWriter, idText string) {
+	id, err := strconv.Atoi(idText)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"err":"not found"}`))
+		return
+	}
+	nodeID, ok := f.liveNodes[id]
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"err":"not found"}`))
+		return
+	}
+	highest := 0
+	for _, candidate := range f.liveNodes {
+		if candidate > highest {
+			highest = candidate
+		}
+	}
+	if nodeID != highest {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = w.Write([]byte(`{"err":"Only the last node can be deleted"}`))
+		return
+	}
+	delete(f.liveNodes, id)
+	f.nodeDeletes++
+	f.deleteOrder = append(f.deleteOrder, "node-"+idText)
+	_, _ = w.Write([]byte(`{}`))
 }

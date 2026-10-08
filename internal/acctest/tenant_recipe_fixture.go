@@ -22,8 +22,10 @@ const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 // TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
 // The tenant uses govergeos. Catalogs and tenant recipes have no create
 // method there, so those rows are posted over HTTP. The source tenant stays
-// powered on while its node machine status stays running, and the recipe
-// POST is retried until VergeOS accepts it or recipeBootLimit elapses.
+// powered on until its node machine has stayed running, then it is powered
+// off and its network is stopped before the recipe POST. A later "never
+// been started" 405 powers it on and repeats that cycle until VergeOS
+// accepts the recipe or recipeBootLimit elapses.
 // VergeOS fills tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string
@@ -37,9 +39,10 @@ type TenantRecipeFixture struct {
 }
 
 // NewTenantRecipeFixture creates the source tenant, gives it a node and
-// storage, posts a private catalog in the local repository, powers the
-// tenant on, and posts a tenant recipe once the node machine has stayed
-// running. Required questions the fixture can answer are returned as HCL
+// storage, posts a private catalog in the local repository, and powers the
+// tenant on. Once the node machine has stayed running, the fixture powers
+// the tenant off, waits for its network to stop, and posts the recipe.
+// Required questions the fixture can answer are returned as HCL
 // inside an answers map. A required question it cannot answer is disabled,
 // and the recipe is republished. An empty TF_ACC_VERGEIO_TENANT_RECIPE_ID
 // uses this fixture. That is not a skip.

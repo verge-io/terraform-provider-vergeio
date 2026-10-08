@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -284,6 +285,13 @@ func (api *TenantRecipeAPI) deleteStampedNodes(ctx context.Context, tenantID int
 	if err != nil {
 		return err
 	}
+	// VergeOS deletes only the highest nodeid. List order is not that order.
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].NodeID != nodes[j].NodeID {
+			return nodes[i].NodeID > nodes[j].NodeID
+		}
+		return nodes[i].Key.Int() > nodes[j].Key.Int()
+	})
 	for i := range nodes {
 		id := nodes[i].Key.Int()
 		if id <= 0 {

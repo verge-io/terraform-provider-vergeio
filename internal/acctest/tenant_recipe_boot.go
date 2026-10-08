@@ -23,10 +23,8 @@ const (
 	recipePollGap = 15 * time.Second
 	// recipeSteadyPolls is how many consecutive online reads count as held.
 	recipeSteadyPolls = 3
-	// recipeOffDwell is how long the node stays running before an off POST.
-	recipeOffDwell = 3 * time.Minute
-	recipeOffPoll  = 5 * time.Second
-	recipeBackoff  = 60 * time.Second
+	recipeOffPoll     = 5 * time.Second
+	recipeBackoff     = 60 * time.Second
 )
 
 // recipePostKind is how one tenant-recipe POST should change the next try.
@@ -41,15 +39,18 @@ const (
 )
 
 type tenantBootView struct {
-	status   *vergeos.TenantStatus
-	nodes    []vergeos.TenantNode
-	machines map[int]*vergeos.MachineStatus
-	ui       string
+	status         *vergeos.TenantStatus
+	nodes          []vergeos.TenantNode
+	machines       map[int]*vergeos.MachineStatus
+	networkID      int
+	networkRunning bool
+	ui             string
 }
 
 type recipeBootAct interface {
 	powerOn(ctx context.Context) error
 	powerOff(ctx context.Context) error
+	stopNetwork(ctx context.Context) error
 	observe(ctx context.Context) (tenantBootView, error)
 	postRecipe(ctx context.Context) (string, error)
 }
@@ -61,15 +62,13 @@ type recipeBoot struct {
 	act   recipeBootAct
 	log   strings.Builder
 
-	deadline  time.Time
-	firstHeld time.Time
-	lastOff   time.Time
-	gap       time.Duration
-	steady    int
-	attempt   int
-	held      bool
-	forceOff  bool
-	posted    bool
+	deadline time.Time
+	gap      time.Duration
+	steady   int
+	attempt  int
+	held     bool
+	forceOff bool
+	posted   bool
 }
 
 func newRecipeBoot(now func() time.Time, sleep func(context.Context, time.Duration) error, logf func(string, ...any), act recipeBootAct) *recipeBoot {
@@ -112,61 +111,36 @@ func (b *recipeBoot) step(ctx context.Context) (string, bool, error) {
 	b.noteHold(view)
 	b.write(formatBootView(view))
 	b.posted = false
-
-	online := tenantRowOnline(view.status)
-	wantOff := b.forceOff || (b.held && b.dueForOff())
-	if wantOff && online {
-		if err := b.powerOffForPost(ctx); err != nil {
-			return "", false, err
-		}
-		online = false
-	}
 	if !b.held && !b.forceOff {
 		return "", false, nil
 	}
-	if !online && !wantOff {
-		return "", false, nil
+	if err := b.powerOffForPost(ctx, view); err != nil {
+		return "", false, err
 	}
+	b.forceOff = false
 	b.posted = true
-	return b.post(ctx, online)
+	return b.post(ctx)
 }
 
-func (b *recipeBoot) post(ctx context.Context, online bool) (string, bool, error) {
+func (b *recipeBoot) post(ctx context.Context) (string, bool, error) {
 	b.attempt++
 	id, err := b.act.postRecipe(ctx)
 	kind, detail := classifyRecipePost(err)
-	b.write(fmt.Sprintf("post %d power=%s %s", b.attempt, powerWord(online), recipePostLabel(kind, detail)))
+	b.write(fmt.Sprintf("post %d power=off %s", b.attempt, recipePostLabel(kind, detail)))
 	switch kind {
 	case recipePostOK:
 		return id, true, nil
 	case recipePostFatal:
 		return "", true, fmt.Errorf("%s\n%s", detail, b.log.String())
 	case recipePostNeedOff:
-		return "", false, b.demandOff(ctx, online)
+		b.forceOff = true
+		return "", false, nil
 	default:
-		return "", false, b.demandOn(ctx, online, kind)
+		return "", false, b.powerOnForBoot(ctx)
 	}
 }
 
-func (b *recipeBoot) demandOff(ctx context.Context, online bool) error {
-	b.forceOff = true
-	if !online {
-		return nil
-	}
-	if err := b.act.powerOff(ctx); err != nil {
-		return err
-	}
-	b.lastOff = b.now()
-	return nil
-}
-
-func (b *recipeBoot) demandOn(ctx context.Context, online bool, kind recipePostKind) error {
-	if kind == recipePostNeedOn {
-		b.forceOff = false
-	}
-	if online {
-		return nil
-	}
+func (b *recipeBoot) powerOnForBoot(ctx context.Context) error {
 	b.forceOff = false
 	if err := b.act.powerOn(ctx); err != nil {
 		return err
@@ -176,19 +150,30 @@ func (b *recipeBoot) demandOn(ctx context.Context, online bool, kind recipePostK
 	return nil
 }
 
-func (b *recipeBoot) powerOffForPost(ctx context.Context) error {
-	if err := b.act.powerOff(ctx); err != nil {
-		return err
+func (b *recipeBoot) powerOffForPost(ctx context.Context, view tenantBootView) error {
+	if tenantRowOnline(view.status) {
+		if err := b.act.powerOff(ctx); err != nil {
+			return err
+		}
 	}
-	b.lastOff = b.now()
+	networkStopped := false
 	for {
-		view, err := b.act.observe(ctx)
+		var err error
+		view, err = b.act.observe(ctx)
 		if err != nil {
 			return err
 		}
 		b.write(formatBootView(view))
-		if !tenantRowOnline(view.status) {
+		offline := !tenantRowOnline(view.status)
+		if offline && !view.networkRunning {
 			return nil
+		}
+		if offline && view.networkRunning && !networkStopped {
+			if err := b.act.stopNetwork(ctx); err != nil {
+				return err
+			}
+			networkStopped = true
+			continue
 		}
 		if !b.now().Before(b.deadline) {
 			return b.timedOut()
@@ -206,20 +191,6 @@ func (b *recipeBoot) noteHold(view tenantBootView) {
 		b.steady = 0
 	}
 	b.held = b.steady >= recipeSteadyPolls
-	if b.held && b.firstHeld.IsZero() {
-		b.firstHeld = b.now()
-	}
-}
-
-func (b *recipeBoot) dueForOff() bool {
-	if b.firstHeld.IsZero() {
-		return false
-	}
-	mark := b.firstHeld
-	if !b.lastOff.IsZero() {
-		mark = b.lastOff
-	}
-	return !b.now().Before(mark.Add(recipeOffDwell))
 }
 
 func (b *recipeBoot) nextWait() time.Duration {
@@ -243,7 +214,7 @@ func (b *recipeBoot) write(line string) {
 }
 
 func (b *recipeBoot) timedOut() error {
-	return fmt.Errorf("timed out after %s waiting for the tenant node machine to stay running before the recipe POST\n%s", recipeBootLimit, b.log.String())
+	return fmt.Errorf("timed out after %s waiting to post the tenant recipe after the node machine stayed running\n%s", recipeBootLimit, b.log.String())
 }
 
 func (v tenantBootView) booted() bool {
@@ -317,6 +288,8 @@ func recipeNeedsOff(msg string) bool {
 	return strings.Contains(msg, "powered off") ||
 		strings.Contains(msg, "must be off") ||
 		strings.Contains(msg, "while running") ||
+		strings.Contains(msg, "currently running") ||
+		strings.Contains(msg, "still running") ||
 		strings.Contains(msg, "power off")
 }
 
@@ -342,15 +315,15 @@ func recipePostLabel(kind recipePostKind, detail string) string {
 	}
 }
 
-func powerWord(online bool) string {
-	if online {
-		return "on"
-	}
-	return "off"
+func formatBootView(view tenantBootView) string {
+	return tenantStatusText(view.status) + "; " + machineStatusText(view) + "; " + networkText(view) + "; " + uiText(view.ui)
 }
 
-func formatBootView(view tenantBootView) string {
-	return tenantStatusText(view.status) + "; " + machineStatusText(view) + "; " + uiText(view.ui)
+func networkText(view tenantBootView) string {
+	if view.networkID <= 0 {
+		return "vnet unset"
+	}
+	return fmt.Sprintf("vnet %d running=%t", view.networkID, view.networkRunning)
 }
 
 func tenantStatusText(status *vergeos.TenantStatus) string {
@@ -402,6 +375,23 @@ func (p fixtureRecipePost) powerOff(ctx context.Context) error {
 	return p.f.sdk.Tenants.PowerOff(ctx, p.f.tenantID)
 }
 
+func (p fixtureRecipePost) stopNetwork(ctx context.Context) error {
+	row, err := p.f.sdk.Tenants.Get(ctx, p.f.tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+	if row == nil || row.VNet.Int() <= 0 {
+		return nil
+	}
+	if err := p.f.sdk.Networks.Kill(ctx, row.VNet.Int()); err != nil && !vergeos.IsNotFoundError(err) {
+		return err
+	}
+	return nil
+}
+
 func (p fixtureRecipePost) postRecipe(ctx context.Context) (string, error) {
 	return p.f.http.CreateTenantRecipe(ctx, vergeio.TenantRecipeCreate{
 		Name:        p.name,
@@ -443,7 +433,43 @@ func (p fixtureRecipePost) observe(ctx context.Context) (tenantBootView, error) 
 		}
 		machines[id] = machine
 	}
-	return tenantBootView{status: status, nodes: nodes, machines: machines, ui: p.probeUI(ctx)}, nil
+	networkID, networkRunning, err := p.tenantNetwork(ctx)
+	if err != nil {
+		return tenantBootView{}, err
+	}
+	return tenantBootView{
+		status:         status,
+		nodes:          nodes,
+		machines:       machines,
+		networkID:      networkID,
+		networkRunning: networkRunning,
+		ui:             p.probeUI(ctx),
+	}, nil
+}
+
+func (p fixtureRecipePost) tenantNetwork(ctx context.Context) (int, bool, error) {
+	row, err := p.f.sdk.Tenants.Get(ctx, p.f.tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if row == nil || row.VNet.Int() <= 0 {
+		return 0, false, nil
+	}
+	id := row.VNet.Int()
+	network, err := p.f.sdk.Networks.Get(ctx, id)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return id, false, nil
+		}
+		return id, false, err
+	}
+	if network == nil {
+		return id, false, nil
+	}
+	return id, network.Running, nil
 }
 
 func (p fixtureRecipePost) probeUI(ctx context.Context) string {
