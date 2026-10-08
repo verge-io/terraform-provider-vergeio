@@ -25,9 +25,10 @@ import (
 //
 // It is skipped unless TF_ACC=1 and lab credentials are set. When
 // TF_ACC_VERGEIO_TENANT_RECIPE_ID is unset, setup creates a tenant and a
-// node, powers the tenant on until it is running, powers it off, waits for
-// its network to stop, posts a catalog, and posts a tenant recipe for that
-// tenant. VergeOS records its own snapshot of the tenant.
+// node (4 cores, 16 GB RAM, 1 GiB storage), powers the tenant on, and waits
+// until tenant_status.started is set. It then powers the tenant off, waits
+// for its network to stop, posts a catalog, and posts a tenant recipe.
+// VergeOS records its own snapshot of the tenant.
 // TF_ACC_VERGEIO_TENANT_RECIPE_ID is an optional
 // override. It is a 40-character hex key, the same value as
 // vergeio_tenant_recipes recipes[].id.

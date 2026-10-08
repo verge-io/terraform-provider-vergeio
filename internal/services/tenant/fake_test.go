@@ -90,6 +90,9 @@ type fakeVerge struct {
 	// need_fw_apply. Zero clears the flag inside the refresh handler.
 	fwSettleReads int
 	fwSettleLeft  map[int]int
+	// deferStarted is how many online tenant_status reads still report
+	// started=0. The read that brings it to zero sets the timestamp.
+	deferStarted int
 }
 
 func newFake(t *testing.T) *fakeVerge {
@@ -418,9 +421,27 @@ func (f *fakeVerge) serveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]map[string]any, 0, len(f.status))
 	for _, row := range f.status {
+		f.settleStarted(row)
 		rows = append(rows, row)
 	}
 	writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
+}
+
+// settleStarted keeps tenant_status.started at 0 for deferStarted online
+// reads, then records a timestamp. Online status and node running do not
+// set this field.
+func (f *fakeVerge) settleStarted(row map[string]any) {
+	if f.deferStarted <= 0 || row == nil {
+		return
+	}
+	running, _ := row["running"].(bool)
+	if !running {
+		return
+	}
+	f.deferStarted--
+	if f.deferStarted == 0 {
+		row["started"] = int64(1700000100)
+	}
 }
 
 // advancePower lets one transitional status poll be observed, then settles
@@ -480,9 +501,16 @@ func (f *fakeVerge) serveTenantAction(w http.ResponseWriter, payload map[string]
 			f.seenTransition[id] = false
 		} else {
 			f.status[id] = statusObject(id, true)
+			if f.deferStarted == 0 {
+				f.status[id]["started"] = int64(1700000100)
+			}
 		}
 		f.setTenantVNetRunning(id, true)
 	case "poweroff":
+		started := int64(0)
+		if st := f.status[id]; st != nil {
+			started = int64(intField(st["started"]))
+		}
 		if f.transitionPower {
 			f.status[id] = statusObjectTransitional(id, false)
 			f.seenTransition[id] = false
@@ -491,6 +519,9 @@ func (f *fakeVerge) serveTenantAction(w http.ResponseWriter, payload map[string]
 		} else {
 			f.status[id] = statusObject(id, false)
 			f.setTenantVNetRunning(id, false)
+		}
+		if started > 0 {
+			f.status[id]["started"] = started
 		}
 	}
 	w.WriteHeader(http.StatusOK)

@@ -264,7 +264,12 @@ func (r *TenantRecipeInstanceResource) rememberInstance(ctx context.Context, res
 	if !tenantRecipeInstanceIDSet(data) {
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, data)...)
+	// Deploy can name a tenant before Tenants.Get can read it. Leave
+	// tenant_id unset until the successful read below. A later refresh of
+	// this partial state must not treat that id as a deleted tenant.
+	stored := *data
+	stored.TenantID = types.Int64Null()
+	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {
 		return

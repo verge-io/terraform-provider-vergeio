@@ -748,6 +748,61 @@ func TestTenantRecipeInstanceCreateTimesOutWhileUnlinked(t *testing.T) {
 	}
 }
 
+func TestTenantRecipeInstanceCreateTimeoutDoesNotConfirmTenant(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantPowerInterval = time.Millisecond
+
+	fake := newTenantRecipeFake()
+	fake.tenantMissing = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	diags := plan.Set(ctx, &TenantRecipeInstanceResourceModel{
+		Name:     types.StringValue("customer-a"),
+		RecipeID: types.StringValue(testTenantRecipeKey),
+		Answers: tenantRecipeStringMap(t, map[string]string{
+			"YB_USER_NAME":     "admin",
+			"YB_DRIVE_OS_SIZE": strconv.FormatInt(vergeos.RecipeDiskSize50GB, 10),
+		}),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	created := &fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	resource.Create(ctx, fwresource.CreateRequest{Plan: plan}, created)
+	if !created.Diagnostics.HasError() || !strings.Contains(created.Diagnostics.Errors()[0].Detail(), "timed out") {
+		t.Fatalf("diagnostics = %v", created.Diagnostics)
+	}
+	var stored TenantRecipeInstanceResourceModel
+	if diags := created.State.Get(ctx, &stored); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if stored.Id.ValueString() != "9" || !stored.TenantID.IsNull() {
+		t.Fatalf("state id=%s tenant_id=%s, an unconfirmed tenant must stay unset", stored.Id.ValueString(), stored.TenantID)
+	}
+	read := &fwresource.ReadResponse{State: created.State}
+	resource.Read(ctx, fwresource.ReadRequest{State: created.State}, read)
+	if !read.Diagnostics.HasError() {
+		t.Fatal("expected the still-missing tenant to fail refresh")
+	}
+	if read.State.Raw.IsNull() {
+		t.Fatal("refresh removed the instance before the tenant was confirmed")
+	}
+	if fake.instanceDeletes != 0 {
+		t.Fatal("refresh deleted the instance for a tenant id that was not stored")
+	}
+}
+
 func TestTenantRecipeInstanceReadStoresNameDrift(t *testing.T) {
 	fake := newTenantRecipeFake()
 	server := httptest.NewServer(fake)

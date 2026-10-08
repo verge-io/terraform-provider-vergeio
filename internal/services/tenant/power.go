@@ -17,6 +17,10 @@ import (
 var (
 	tenantPowerTimeout  = 2 * time.Minute
 	tenantPowerInterval = time.Second
+	// tenantStartedTimeout bounds the wait for tenant_status.started after
+	// the tenant is already online. Nested VergeOS sets that timestamp when
+	// its own boot finishes, which is later than status online.
+	tenantStartedTimeout = 5 * time.Minute
 )
 
 // tenantPoweredOn reports whether Terraform should store powerstate as true.
@@ -224,6 +228,40 @@ func (a *API) stopTenantVNet(ctx context.Context, vnetID int) error {
 		}
 		if err := sleepPower(ctx); err != nil {
 			return err
+		}
+	}
+}
+
+// waitTenantStarted polls tenant_status.started until VergeOS records that
+// the tenant has been started. Status online is a different column and can
+// be true while started is still 0. The timeout error includes the last
+// value of that field. The tenant is left running.
+func (a *API) waitTenantStarted(ctx context.Context, id int) (int64, error) {
+	deadline := time.Now().Add(tenantStartedTimeout)
+	var started int64
+	var statusName string
+	var running bool
+	for {
+		status, err := a.tenantStatus(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		started = 0
+		statusName = ""
+		running = false
+		if status != nil {
+			started = status.Started
+			statusName = status.Status
+			running = status.Running
+		}
+		if started > 0 {
+			return started, nil
+		}
+		if !time.Now().Before(deadline) {
+			return 0, fmt.Errorf("timed out waiting for tenant %d tenant_status.started to be set; started=%d status=%q running=%t", id, started, statusName, running)
+		}
+		if err := sleepPower(ctx); err != nil {
+			return 0, err
 		}
 	}
 }

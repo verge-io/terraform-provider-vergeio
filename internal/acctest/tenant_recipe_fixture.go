@@ -115,17 +115,21 @@ func (f *TenantRecipeFixture) createSourceTenant(t *testing.T, name string) {
 	f.tenantID = created.Key.Int()
 }
 
-// startSourceTenant gives the tenant a node and storage, then powers it on
-// and back off. VergeOS returns 405 for a recipe whose tenant has never
-// been started. Power-on with no node cannot reach running.
+// startSourceTenant gives the tenant a node and storage, powers it on, and
+// waits until tenant_status.started is set. VergeOS returns 405 for a
+// recipe while that timestamp is still 0. Status online is not that field.
+// Power-on with no node cannot reach running.
 func (f *TenantRecipeFixture) startSourceTenant(t *testing.T, nodeName string) {
 	t.Helper()
 	enabled := true
+	// 4 cores and 16 GB are the documented tenant-node defaults. Nested
+	// VergeOS needs that 16 GB before it finishes its own boot. 2048 MB
+	// reaches node Running while tenant_status.started stays 0.
 	if _, err := f.sdk.TenantNodes.Create(f.ctx, &vergeos.TenantNodeCreateRequest{
 		Tenant:   f.tenantID,
 		Name:     nodeName,
-		CPUCores: 2,
-		RAM:      2048,
+		CPUCores: 4,
+		RAM:      16384,
 		Enabled:  &enabled,
 	}); err != nil {
 		t.Fatal(err)
@@ -144,9 +148,11 @@ func (f *TenantRecipeFixture) startSourceTenant(t *testing.T, nodeName string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tenant.StartTenantOnce(f.ctx, f.sdk, f.tenantID); err != nil {
+	started, err := tenant.StartTenantOnce(f.ctx, f.sdk, f.tenantID)
+	if err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("tenant %d tenant_status.started=%d; powered off before the recipe POST", f.tenantID, started)
 }
 
 func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
