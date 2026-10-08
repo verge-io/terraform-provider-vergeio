@@ -4,6 +4,12 @@ Notable changes to the VergeIO Terraform provider. Versions follow semantic vers
 
 ## Unreleased
 
+## v2.7.10 - 2026-10-08
+
+### Fixed
+
+- `LICENSE` is now the verbatim Apache 2.0 text from apache.org with only the copyright line filled in. The copy added in v2.7.7 carried three wording edits and a garbled appendix sentence, which made the OpenTofu registry scanner match the file as both Apache-2.0 and ECL-2.0 and flag v2.7.7 through v2.7.9 as `incompatible_license`. No code change. [#273](https://github.com/verge-io/terraform-provider-vergeio/pull/273)
+
 ## v2.7.9 - 2026-10-05
 
 ### Fixed
