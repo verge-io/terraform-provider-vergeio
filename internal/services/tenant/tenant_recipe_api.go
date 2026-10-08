@@ -6,7 +6,6 @@ package tenant
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -133,17 +132,22 @@ func (api *TenantRecipeAPI) read(ctx context.Context, data *TenantRecipeInstance
 	if instance == nil {
 		return &vergeos.NotFoundError{Resource: "TenantRecipeInstance", ID: id}
 	}
-	if name := strings.TrimSpace(data.Name.ValueString()); name != "" && instance.Name != name {
-		return &vergeos.NotFoundError{Resource: "TenantRecipeInstance", ID: id}
-	}
-	if recipe := strings.TrimSpace(data.RecipeID.ValueString()); recipe != "" && instance.Recipe != recipe {
-		return &vergeos.NotFoundError{Resource: "TenantRecipeInstance", ID: id}
-	}
 	tenantID := instance.Tenant.Int()
 	if tenantID <= 0 {
+		if err := api.http.DeleteTenantRecipeInstance(ctx, id); err != nil {
+			return err
+		}
 		return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
 	}
 	if _, err := api.sdk.Tenants.Get(ctx, tenantID); err != nil {
+		if !vergeos.IsNotFoundError(err) {
+			return err
+		}
+		// The tenant was removed outside Terraform. Drop the instance row
+		// with it, or the next apply would find this key still taken.
+		if delErr := api.http.DeleteTenantRecipeInstance(ctx, id); delErr != nil {
+			return delErr
+		}
 		return err
 	}
 	answers := data.Answers
@@ -188,11 +192,7 @@ func (api *TenantRecipeAPI) delete(ctx context.Context, data *TenantRecipeInstan
 }
 
 func (api *TenantRecipeAPI) deleteRecipeTenant(ctx context.Context, tenantID int) error {
-	err := api.tenants.deleteTenant(ctx, &TenantResourceModel{Id: idString(tenantID)})
-	if err == nil || tenantAlreadyGone(err) {
-		return nil
-	}
-	return err
+	return api.tenants.deleteTenant(ctx, &TenantResourceModel{Id: idString(tenantID)})
 }
 
 func tenantRecipeDeployRequest(ctx context.Context, data *TenantRecipeInstanceResourceModel) (*vergeos.TenantRecipeDeployRequest, error) {
@@ -264,14 +264,6 @@ func recipeStateTenantID(data *TenantRecipeInstanceResourceModel) int {
 		return 0
 	}
 	return int(*id)
-}
-
-func tenantAlreadyGone(err error) bool {
-	if vergeos.IsNotFoundError(err) {
-		return true
-	}
-	var sdkErr *vergeos.APIError
-	return errors.As(err, &sdkErr) && sdkErr.StatusCode == 404
 }
 
 func parseRecipeInstanceID(id types.String) (int, error) {

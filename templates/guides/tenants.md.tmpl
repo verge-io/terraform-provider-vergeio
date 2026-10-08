@@ -82,11 +82,9 @@ VergeOS refuses to delete the block while a network inside the tenant is still b
 
 ## Recipes
 
-A tenant recipe is a catalog entry built from a tenant snapshot. It asks a set of questions and creates a configured tenant. `vergeio_tenant_recipes` lists those recipes and their questions. `filter_name` is an exact recipe name. `catalog_id` or `catalog_name` limits the list to one catalog. `vergeio_catalogs` returns the catalog key.
+A tenant recipe is a catalog entry built from a tenant snapshot. `vergeio_tenant_recipes` lists those recipes. `vergeio_tenant_recipe_instance` deploys one. Answers, replacement, and destroy are on the [resource page](../resources/tenant_recipe_instance.md).
 
-`vergeio_tenant_recipe_instance` deploys one tenant from a recipe. `recipe_id` is `recipes[0].id`. `answers` is a map of question name to string. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. A disk size is bytes, so 50 GB is `53687091200`. A network answer is a network name, a vnet key, or `__new_internal__`.
-
-`tenant_id` is the key of the tenant VergeOS created. That is the same key `vergeio_tenant` stores in `id`, as a number. Pass `tostring(vergeio_tenant_recipe_instance.customer.tenant_id)` to `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, `vergeio_tenant_layer2_network`, or `vergeio_tenant_snapshot`. The recipe instance owns the tenant: destroy powers it off, waits for its network to stop, deletes the tenant, then deletes the recipe instance.
+`tenant_id` is the key of the tenant VergeOS created. That is the same key `vergeio_tenant` stores in `id`, as a number. Pass `tostring(vergeio_tenant_recipe_instance.customer.tenant_id)` to `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, `vergeio_tenant_layer2_network`, or `vergeio_tenant_snapshot`.
 
 {{ tffile "examples/resources/vergeio_tenant_recipe_instance/resource.tf" }}
 

@@ -59,7 +59,7 @@ func (r *TenantRecipeInstanceResource) Metadata(ctx context.Context, req resourc
 
 func (r *TenantRecipeInstanceResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Deploys a tenant from a catalog recipe. Look the recipe up with vergeio_tenant_recipes. answers is a map of question name to string. A bool question accepts true, false, yes, no, on, off, 1, or 0. Any other value is rejected before the request is sent, because VergeOS would store it as false. A disksize answer is bytes. 50 GB is 53687091200. Zero keeps the recipe default. A value above zero and under 1 MB is rejected before the request is sent. A network answer is a network name, a vnet key, or __new_internal__. Changing name, recipe_id, or answers replaces the tenant. Destroy powers the tenant off, waits for the tenant network to stop, deletes the tenant, then deletes the recipe instance. A missing tenant does not block that delete. A missing recipe instance still powers off and deletes the tenant stored in tenant_id. This resource always deploys. It has no simulate argument.",
+		MarkdownDescription: "Deploys a tenant from a catalog recipe. Look the recipe up with vergeio_tenant_recipes. Changing name, recipe_id, or answers replaces the tenant. This resource always deploys. It has no simulate argument.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Recipe instance key assigned by VergeOS.",

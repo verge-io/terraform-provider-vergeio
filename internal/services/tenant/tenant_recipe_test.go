@@ -578,9 +578,12 @@ func TestTenantRecipeInstanceReadDropsMissingTenant(t *testing.T) {
 	if !resp.State.Raw.IsNull() {
 		t.Fatal("missing tenant should remove the recipe instance from state")
 	}
+	if fake.instanceDeletes != 1 {
+		t.Fatalf("instance deletes = %d, the row should go with the tenant", fake.instanceDeletes)
+	}
 }
 
-func TestTenantRecipeInstanceReadDropsReusedKey(t *testing.T) {
+func TestTenantRecipeInstanceReadStoresNameDrift(t *testing.T) {
 	fake := newTenantRecipeFake()
 	server := httptest.NewServer(fake)
 	t.Cleanup(server.Close)
@@ -593,7 +596,7 @@ func TestTenantRecipeInstanceReadDropsReusedKey(t *testing.T) {
 	diags := state.Set(ctx, &TenantRecipeInstanceResourceModel{
 		Id:       types.StringValue("9"),
 		Name:     types.StringValue("someone-else"),
-		RecipeID: types.StringValue(testTenantRecipeKey),
+		RecipeID: types.StringValue("eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
 		Answers:  types.MapNull(types.StringType),
 	})
 	if diags.HasError() {
@@ -604,8 +607,16 @@ func TestTenantRecipeInstanceReadDropsReusedKey(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatal(resp.Diagnostics)
 	}
-	if !resp.State.Raw.IsNull() {
-		t.Fatal("a reused instance key with a different name should leave state")
+	var got TenantRecipeInstanceResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.Name.ValueString() != "customer-a" || got.RecipeID.ValueString() != testTenantRecipeKey {
+		t.Fatalf("state name = %s recipe_id = %s, refresh should store the VergeOS values", got.Name.ValueString(), got.RecipeID.ValueString())
+	}
+	if fake.instanceDeletes != 0 {
+		t.Fatal("a name difference is drift, not a missing instance")
 	}
 }
 

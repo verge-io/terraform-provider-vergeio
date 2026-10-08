@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -19,26 +20,32 @@ import (
 
 // TestAccTenantRecipeInstance deploys a tenant from a catalog recipe, reads
 // it back, imports it, and destroys the tenant and the recipe instance.
-// Names start with tf-acc- so the tenant and tenant recipe instance sweeps
-// can remove a leftover.
+// Names start with tf-acc- so the tenant, recipe, catalog, and recipe
+// instance sweeps can remove a leftover.
 //
-// It is skipped unless TF_ACC=1 and TF_ACC_VERGEIO_TENANT_RECIPE_ID is set
-// to a tenant recipe key (40 hexadecimal characters, the id from
-// vergeio_tenant_recipes). TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS is optional
-// HCL inside the answers map, for example:
-// YB_USER_NAME = "admin" and YB_EXPOSE_CLOUD_SNAPSHOTS = "true".
-// Set it when the recipe has required questions.
+// It is skipped unless TF_ACC=1 and lab credentials are set. When
+// TF_ACC_VERGEIO_TENANT_RECIPE_ID is unset, setup creates a tenant, snapshots
+// it, posts a catalog, and posts a tenant recipe from that snapshot.
+// TF_ACC_VERGEIO_TENANT_RECIPE_ID overrides that recipe. It is a 40-character
+// hex key, the same value as vergeio_tenant_recipes recipes[].id.
+// TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS is optional HCL inside the answers
+// map and replaces the answers setup would send. Set it when the override
+// recipe has required questions, for example YB_USER_NAME = "admin".
 func TestAccTenantRecipeInstance(t *testing.T) {
 	acctest.PreCheck(t)
 	recipeID := os.Getenv("TF_ACC_VERGEIO_TENANT_RECIPE_ID")
+	answers := os.Getenv("TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS")
 	if recipeID == "" {
-		t.Skip("set TF_ACC_VERGEIO_TENANT_RECIPE_ID to a tenant recipe key (40 hexadecimal characters) to deploy a tenant")
+		fixture := acctest.NewTenantRecipeFixture(t)
+		recipeID = fixture.RecipeID
+		if answers == "" {
+			answers = fixture.AnswersHCL
+		}
 	}
 	name := acctest.Name("tenant-recipe")
 	if err := acctest.RequirePrefix(name); err != nil {
 		t.Fatal(err)
 	}
-	answers := os.Getenv("TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS")
 	config := testAccTenantRecipeInstanceConfig(name, recipeID, answers)
 
 	resource.Test(t, resource.TestCase{
@@ -70,7 +77,11 @@ func TestAccTenantRecipeInstance(t *testing.T) {
 func testAccTenantRecipeInstanceConfig(name, recipeID, answers string) string {
 	body := ""
 	if answers != "" {
-		body = "\n  answers = {\n    " + answers + "\n  }\n"
+		if strings.Contains(answers, "\n") {
+			body = "\n  answers = {\n" + answers + "\n  }\n"
+		} else {
+			body = "\n  answers = {\n    " + answers + "\n  }\n"
+		}
 	}
 	return acctest.Config(fmt.Sprintf(`
 data "vergeio_tenant_recipes" "all" {}

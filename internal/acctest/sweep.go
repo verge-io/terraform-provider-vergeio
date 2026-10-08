@@ -182,8 +182,10 @@ func Sweep(ctx context.Context) error {
 	}
 	record(sweepAuthSources(ctx, client))
 
-	record(sweepTenants(ctx, client))
 	record(sweepTenantRecipeInstances(ctx, client))
+	record(sweepTenantRecipes(ctx, client))
+	record(sweepCatalogs(ctx, client))
+	record(sweepTenants(ctx, client))
 	record(sweepTags(ctx, client))
 
 	if len(errs) > 0 {
@@ -280,6 +282,34 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	for _, instance := range tenantRecipes {
 		if HasPrefix(instance.Name) {
 			left = append(left, fmt.Sprintf("tenant recipe instance %s (%d)", instance.Name, instance.Key.Int()))
+		}
+	}
+
+	recipes, err := client.TenantRecipes.List(ctx)
+	if listEndpointMissing(err) {
+		recipes = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tenant recipes: %w", err)
+	}
+	for _, recipe := range recipes {
+		if HasPrefix(recipe.Name) {
+			left = append(left, fmt.Sprintf("tenant recipe %s (%s)", recipe.Name, recipeHex(recipe.Key, recipe.ID)))
+		}
+	}
+
+	catalogs, err := client.Catalogs.List(ctx)
+	if listEndpointMissing(err) {
+		catalogs = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify catalogs: %w", err)
+	}
+	for _, catalog := range catalogs {
+		if HasPrefix(catalog.Name) {
+			left = append(left, fmt.Sprintf("catalog %s (%s)", catalog.Name, recipeHex(catalog.Key, catalog.ID)))
 		}
 	}
 
@@ -1017,6 +1047,72 @@ func sweepTenantRecipeInstances(ctx context.Context, client *vergeos.Client) err
 		return fmt.Errorf("sweep tenant recipe instances: %w", errorsJoin(errs))
 	}
 	return nil
+}
+
+func sweepTenantRecipes(ctx context.Context, client *vergeos.Client) error {
+	rows, err := client.TenantRecipes.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] tenant recipes endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant recipes: %w", err)
+	}
+	return deletePrefixedHex(ctx, "tenant recipe", rows, func(row vergeos.TenantRecipe) (string, string) {
+		return row.Name, recipeHex(row.Key, row.ID)
+	}, (*vergeio.Client).DeleteTenantRecipe)
+}
+
+func sweepCatalogs(ctx context.Context, client *vergeos.Client) error {
+	rows, err := client.Catalogs.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] catalogs endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list catalogs: %w", err)
+	}
+	return deletePrefixedHex(ctx, "catalog", rows, func(row vergeos.Catalog) (string, string) {
+		return row.Name, recipeHex(row.Key, row.ID)
+	}, (*vergeio.Client).DeleteCatalog)
+}
+
+func deletePrefixedHex[T any](ctx context.Context, kind string, rows []T, nameKey func(T) (string, string), deleteFn func(*vergeio.Client, context.Context, string) error) error {
+	var matched []string
+	var names []string
+	for _, row := range rows {
+		name, key := nameKey(row)
+		if !HasPrefix(name) || key == "" {
+			continue
+		}
+		names = append(names, name)
+		matched = append(matched, key)
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	httpClient, err := acceptanceHTTPClient()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for i, key := range matched {
+		log.Printf("[SWEEP] deleting %s %s (%s)", kind, key, names[i])
+		if err := deleteFn(httpClient, ctx, key); err != nil {
+			errs = append(errs, fmt.Errorf("delete %s %s: %w", kind, key, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep %ss: %w", kind, errorsJoin(errs))
+	}
+	return nil
+}
+
+func recipeHex(key, id string) string {
+	if key != "" {
+		return key
+	}
+	return id
 }
 
 func acceptanceHTTPClient() (*vergeio.Client, error) {
