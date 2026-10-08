@@ -15,6 +15,7 @@ const (
 	VMActionEndpoint                 = APIEndpoint + "/vm_actions"
 	VMRecipeEndpoint                 = APIEndpoint + "/vm_recipes"
 	RecipeInstanceEndpoint           = APIEndpoint + "/vm_recipe_instances"
+	TenantRecipeInstanceEndpoint     = APIEndpoint + "/tenant_recipe_instances"
 	NICEndpoint                      = APIEndpoint + "/machine_nics"
 	IPEndpoint                       = APIEndpoint + "/vnet_addresses"
 	DiskEndpoint                     = APIEndpoint + "/machine_drives"

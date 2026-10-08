@@ -64,6 +64,12 @@ func TestTenantImportStateEmptyID(t *testing.T) {
 			summary:  "Invalid Tenant Snapshot Import ID",
 			detail:   "Import vergeio_tenant_snapshot with the snapshot key, such as 15, or with tenant_id/name, such as 7/before-change.",
 		},
+		{
+			name:     "recipe instance",
+			resource: NewTenantRecipeInstanceResource(),
+			summary:  "Invalid Tenant Recipe Instance Import ID",
+			detail:   "Import vergeio_tenant_recipe_instance with the instance key, a positive integer.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

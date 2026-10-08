@@ -50,7 +50,7 @@ func (d *CatalogsDataSource) Metadata(ctx context.Context, req datasource.Metada
 
 func (d *CatalogsDataSource) Schema(ctx context.Context, req datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Lists VergeOS recipe catalogs. filter_name keeps an exact name match. The same name in two repositories is returned as two catalogs. Use id with vergeio_vm_recipes.catalog_id.",
+		MarkdownDescription: "Lists VergeOS recipe catalogs. filter_name keeps an exact name match. The same name in two repositories is returned as two catalogs. Use id with vergeio_vm_recipes.catalog_id or vergeio_tenant_recipes.catalog_id.",
 		Attributes: map[string]schema.Attribute{
 			"filter_name": schema.StringAttribute{
 				MarkdownDescription: "Exact catalog name. Omit to list every catalog.",

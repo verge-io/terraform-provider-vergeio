@@ -62,6 +62,27 @@ func TestDeleteVMRecipeInstance(t *testing.T) {
 	}
 }
 
+func TestDeleteTenantRecipeInstance(t *testing.T) {
+	var method, path string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+		method = r.Method
+		path = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient(server.URL, "user", "pass", true)
+	if err := client.DeleteTenantRecipeInstance(context.Background(), 9); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodDelete || path != "/api/v4/tenant_recipe_instances/9" {
+		t.Fatalf("request = %s %s", method, path)
+	}
+}
+
 func TestDeleteVMRecipeInstanceNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if AnswerCredentialCheck(w, r) {

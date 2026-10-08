@@ -38,13 +38,24 @@ func (c *Client) DownloadVMRecipe(ctx context.Context, key string) error {
 // govergeos VMRecipeInstances has no Delete method.
 // A missing row is success.
 func (c *Client) DeleteVMRecipeInstance(ctx context.Context, id int) error {
+	return c.deleteRecipeInstance(ctx, RecipeInstanceEndpoint, id)
+}
+
+// DeleteTenantRecipeInstance removes one tenant recipe instance row.
+// govergeos TenantRecipeInstances has no Delete method.
+// A missing row is success.
+func (c *Client) DeleteTenantRecipeInstance(ctx context.Context, id int) error {
+	return c.deleteRecipeInstance(ctx, TenantRecipeInstanceEndpoint, id)
+}
+
+func (c *Client) deleteRecipeInstance(ctx context.Context, endpoint string, id int) error {
 	if c == nil {
 		return fmt.Errorf("vergeio client is nil")
 	}
 	if id <= 0 {
 		return fmt.Errorf("recipe instance id %d is not a positive integer", id)
 	}
-	resp, err := c.Delete(ctx, ObjectPath(RecipeInstanceEndpoint, strconv.Itoa(id)))
+	resp, err := c.Delete(ctx, ObjectPath(endpoint, strconv.Itoa(id)))
 	if err != nil {
 		var apiErr Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {

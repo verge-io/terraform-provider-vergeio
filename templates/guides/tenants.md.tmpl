@@ -80,6 +80,14 @@ Creating or deleting the block leaves `need_fw_apply` set on that parent network
 
 VergeOS refuses to delete the block while a network inside the tenant is still built on it. Terraform returns that error and leaves the block in state. Remove the tenant network, then destroy the block.
 
+## Recipes
+
+A tenant recipe is a catalog entry built from a tenant snapshot. `vergeio_tenant_recipes` lists those recipes. `vergeio_tenant_recipe_instance` deploys one. Answers, replacement, and destroy are on the [resource page](../resources/tenant_recipe_instance.md).
+
+`tenant_id` is the key of the tenant VergeOS created. That is the same key `vergeio_tenant` stores in `id`, as a number. Pass `tostring(vergeio_tenant_recipe_instance.customer.tenant_id)` to `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, `vergeio_tenant_layer2_network`, or `vergeio_tenant_snapshot`.
+
+{{ tffile "examples/resources/vergeio_tenant_recipe_instance/resource.tf" }}
+
 ## Snapshots
 
 `vergeio_tenant_snapshot` keeps one snapshot of the tenant. Create takes it. A later change to `description` updates that text. A later change to `expires` or `never_expires` updates the expiration. Destroy deletes the snapshot. `name` can be set at creation. VergeOS will not rename the snapshot, so a new name replaces it. Omit `name` and VergeOS assigns one. `type` is `full`, `partial_include`, or `partial_exclude`. Omit it and VergeOS uses `full`. Changing `type` or `tenant_id` replaces the snapshot.

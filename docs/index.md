@@ -56,7 +56,7 @@ Every argument is optional. The provider reads the matching environment variable
 provider "vergeio" {}
 ```
 
-A tenant is created on the parent system. Resources inside that tenant use a second Terraform configuration, because the tenant address is not known until the parent configuration has been applied and the tenant is online. See the [tenants guide](guides/tenants.html). That guide uses `password_wo` on the tenant and an ephemeral `vergeio_api_key` so the tenant admin password and the working API key are not stored.
+A tenant is created on the parent system. `vergeio_tenant_recipes` lists catalog recipes that stamp a tenant from a snapshot, and `vergeio_tenant_recipe_instance` answers the recipe's questions and stores the new tenant key. Resources inside that tenant use a second Terraform configuration, because the tenant address is not known until the parent configuration has been applied and the tenant is online. See the [tenants guide](guides/tenants.html). That guide uses `password_wo` on the tenant and an ephemeral `vergeio_api_key` so the tenant admin password and the working API key are not stored.
 
 An existing system can be listed and imported in bulk. `terraform query` returns VMs, networks, tenants, users, groups, tags, and snapshot profiles. See [Adopt an existing VergeOS system](guides/adopt-system.html). The identity `id` is the same value an OpenTofu `import` block uses.
 

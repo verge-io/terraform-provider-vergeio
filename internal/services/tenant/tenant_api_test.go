@@ -825,6 +825,112 @@ func TestDeleteRunningTenantPowersOffFirst(t *testing.T) {
 	}
 }
 
+func TestStartTenantOncePowersOnThenOff(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, data.Id)
+	started, err := StartTenantOnce(context.Background(), api.sdk, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started != 1700000100 {
+		t.Fatalf("tenant_status.started = %d", started)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 2 || actions[0]["action"] != "poweron" || actions[1]["action"] != "poweroff" {
+		t.Fatalf("actions = %#v, want poweron then poweroff", actions)
+	}
+	status, err := api.tenantStatus(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tenantPoweredOff(status) {
+		t.Fatalf("status = %#v, want offline", status)
+	}
+	if vnetActions := fake.recordedVNetActions(); len(vnetActions) != 0 {
+		t.Fatalf("vnet actions = %#v, want none when poweroff already stopped the network", vnetActions)
+	}
+}
+
+func TestStartTenantOnceRejectsEmptyID(t *testing.T) {
+	started, err := StartTenantOnce(context.Background(), nil, 0)
+	if err == nil || started != 0 {
+		t.Fatalf("started=%d err=%v, want an error for an empty tenant id", started, err)
+	}
+}
+
+func TestStartTenantOnceWaitsForStartedTimestamp(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.deferStarted = 2
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, data.Id)
+	started, err := StartTenantOnce(context.Background(), api.sdk, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started != 1700000100 {
+		t.Fatalf("tenant_status.started = %d", started)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 2 || actions[0]["action"] != "poweron" || actions[1]["action"] != "poweroff" {
+		t.Fatalf("actions = %#v, want poweroff only after tenant_status.started is set", actions)
+	}
+}
+
+func TestStartTenantOnceTimesOutWhileStartedIsZero(t *testing.T) {
+	origTimeout, origStarted, origInterval := tenantPowerTimeout, tenantStartedTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantStartedTimeout = origStarted
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantStartedTimeout = 20 * time.Millisecond
+	tenantPowerInterval = time.Millisecond
+
+	fake := newFake(t)
+	fake.deferStarted = 1000
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, data.Id)
+	started, err := StartTenantOnce(context.Background(), api.sdk, id)
+	if err == nil || started != 0 || !strings.Contains(err.Error(), "tenant_status.started") || !strings.Contains(err.Error(), "started=0") {
+		t.Fatalf("started=%d err=%v", started, err)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 1 || actions[0]["action"] != "poweron" {
+		t.Fatalf("actions = %#v, want poweron and no poweroff while started is 0", actions)
+	}
+}
+
 func TestDeleteOfflineTenantStopsRunningVNet(t *testing.T) {
 	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
 	t.Cleanup(func() {

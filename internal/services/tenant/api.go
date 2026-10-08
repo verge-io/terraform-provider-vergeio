@@ -4,6 +4,7 @@
 package tenant
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -33,6 +34,49 @@ func NewAPI(c *vergeio.Client) (*API, error) {
 
 func (a *API) Name() string {
 	return a.name
+}
+
+// RemoveTenant powers the tenant off, waits for its network to stop, and
+// deletes it. A missing tenant is already gone. This is the vergeio_tenant
+// destroy sequence.
+func RemoveTenant(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
+		return nil
+	}
+	return (&API{sdk: sdk}).deleteTenant(ctx, &TenantResourceModel{Id: idString(id)})
+}
+
+// StartTenantOnce powers the tenant on, waits until tenant_status.started is
+// set, powers it off, and waits until its network has stopped. It returns
+// that timestamp. VergeOS rejects a tenant recipe while started is still 0.
+// A tenant with no node cannot reach running, so the caller creates a node
+// first.
+func StartTenantOnce(ctx context.Context, sdk *vergeos.Client, id int) (int64, error) {
+	if sdk == nil || id <= 0 {
+		return 0, fmt.Errorf("tenant id is empty")
+	}
+	api := &API{sdk: sdk}
+	if err := api.reconcilePower(ctx, id, types.BoolValue(true), types.Int32Null()); err != nil {
+		return 0, err
+	}
+	started, err := api.waitTenantStarted(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	if err := api.ensurePoweredOff(ctx, id); err != nil {
+		return started, fmt.Errorf("tenant %d tenant_status.started=%d but power off failed: %w", id, started, err)
+	}
+	return started, nil
+}
+
+// RemoveTenantNode stops the node when it is running, then deletes it. A
+// missing node is already gone. This is the vergeio_tenant_node destroy
+// sequence.
+func RemoveTenantNode(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
+		return nil
+	}
+	return (&API{sdk: sdk}).deleteTenantNode(ctx, &TenantNodeResourceModel{Id: idString(id)})
 }
 
 func idString(id int) types.String {

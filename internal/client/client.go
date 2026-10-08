@@ -273,3 +273,29 @@ func (c *Client) Put(ctx context.Context, endpoint string, jsonpayload *bytes.Bu
 func (c *Client) Delete(ctx context.Context, endpoint string) (*http.Response, error) {
 	return c.Do(ctx, "DELETE", endpoint, nil, nil)
 }
+
+// ProbeURL GETs an absolute URL with the client's transport and a short timeout.
+// It returns the HTTP status. Connection failures return status 0.
+func (c *Client) ProbeURL(ctx context.Context, rawURL string) (int, error) {
+	if c == nil || c.httpClient == nil || c.httpClient.Transport == nil {
+		return 0, errors.New("HTTP client is not initialized")
+	}
+	if ctx == nil {
+		return 0, errors.New("missing request context")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	probe := &http.Client{Transport: c.httpClient.Transport, Timeout: 3 * time.Second}
+	resp, err := probe.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	if err := resp.Body.Close(); err != nil {
+		return resp.StatusCode, err
+	}
+	return resp.StatusCode, nil
+}
