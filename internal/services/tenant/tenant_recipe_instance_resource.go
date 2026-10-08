@@ -172,7 +172,16 @@ func (r *TenantRecipeInstanceResource) Create(ctx context.Context, req resource.
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.api.read(ctx, &data); err != nil {
+	instanceID, err := parseRecipeInstanceID(data.Id)
+	if err != nil {
+		resp.Diagnostics.AddError("Error creating tenant from recipe", err.Error())
+		return
+	}
+	if err := r.api.waitForLinkedTenant(ctx, instanceID); err != nil {
+		resp.Diagnostics.AddError("Error creating tenant from recipe", err.Error())
+		return
+	}
+	if err := r.api.read(ctx, &data, 0); err != nil {
 		resp.Diagnostics.AddError("Error reading recipe instance", err.Error())
 		return
 	}
@@ -186,7 +195,7 @@ func (r *TenantRecipeInstanceResource) Read(ctx context.Context, req resource.Re
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.api.read(ctx, &data); err != nil {
+	if err := r.api.read(ctx, &data, recipeStateTenantID(&data)); err != nil {
 		if vergeos.IsNotFoundError(err) {
 			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 			if resp.Diagnostics.HasError() {

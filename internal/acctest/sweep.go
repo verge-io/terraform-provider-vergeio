@@ -17,6 +17,7 @@ import (
 	"terraform-provider-vergeio/internal/services/network"
 	"terraform-provider-vergeio/internal/services/platform"
 	"terraform-provider-vergeio/internal/services/site"
+	"terraform-provider-vergeio/internal/services/tenant"
 )
 
 // Sweep deletes acceptance-test leftovers whose names start with ResourcePrefix.
@@ -265,9 +266,9 @@ func verifySweep(ctx context.Context, client *vergeos.Client) error {
 	if err != nil {
 		return fmt.Errorf("verify tenants: %w", err)
 	}
-	for _, tenant := range tenants {
-		if !tenant.IsSnapshot && HasPrefix(tenant.Name) {
-			left = append(left, fmt.Sprintf("tenant %s (%d)", tenant.Name, tenant.Key.Int()))
+	for _, row := range tenants {
+		if HasPrefix(row.Name) {
+			left = append(left, fmt.Sprintf("tenant %s (%d)", row.Name, row.Key.Int()))
 		}
 	}
 
@@ -704,11 +705,11 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 		return fmt.Errorf("list tenants: %w", err)
 	}
 	ids := map[int]string{}
-	for _, tenant := range tenants {
-		if tenant.IsSnapshot || !HasPrefix(tenant.Name) {
+	for _, row := range tenants {
+		if !HasPrefix(row.Name) {
 			continue
 		}
-		ids[tenant.Key.Int()] = tenant.Name
+		ids[row.Key.Int()] = row.Name
 	}
 	if err := sweepTenantExternalIPs(ctx, client, ids); err != nil {
 		return err
@@ -863,30 +864,53 @@ func deleteTenantExternalIP(ctx context.Context, client *vergeos.Client, id int)
 }
 
 func deleteTenant(ctx context.Context, client *vergeos.Client, id int) error {
-	err := client.Tenants.Delete(ctx, id)
-	if err == nil || vergeos.IsNotFoundError(err) {
+	return tenant.RemoveTenant(ctx, client, id)
+}
+
+// deleteSnapshotTenant removes a tenant VergeOS created as a recipe's
+// tenant_snapshot when that row is marked as a snapshot. A normal tenant is
+// left for the tenant sweep.
+func deleteSnapshotTenant(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
 		return nil
 	}
-	if offErr := client.Tenants.PowerOff(ctx, id); offErr != nil && !vergeos.IsNotFoundError(offErr) {
-		log.Printf("[SWEEP] tenant %d power off: %v", id, offErr)
+	row, err := sdk.Tenants.Get(ctx, id)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
 	}
-	if tenant, getErr := client.Tenants.Get(ctx, id); getErr == nil {
-		if vnetID := tenant.VNet.Int(); vnetID > 0 {
-			if killErr := client.Networks.Kill(ctx, vnetID); killErr != nil && !vergeos.IsNotFoundError(killErr) {
-				log.Printf("[SWEEP] tenant %d vnet %d kill: %v", id, vnetID, killErr)
-			}
-			// Brief wait so Tenants.Delete does not race a still-running vnet.
-			deadline := time.Now().Add(30 * time.Second)
-			for time.Now().Before(deadline) {
-				network, netErr := client.Networks.Get(ctx, vnetID)
-				if netErr != nil || !network.Running {
-					break
-				}
-				time.Sleep(time.Second)
-			}
+	if row == nil || !row.IsSnapshot {
+		return nil
+	}
+	if err := deleteOwnedTenantSnapshots(ctx, sdk, id); err != nil {
+		return err
+	}
+	return tenant.RemoveTenant(ctx, sdk, id)
+}
+
+func deleteOwnedTenantSnapshots(ctx context.Context, sdk *vergeos.Client, tenantID int) error {
+	if sdk == nil || tenantID <= 0 {
+		return nil
+	}
+	snaps, err := sdk.TenantSnapshots.ListByTenant(ctx, tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+	for _, snap := range snaps {
+		id := snap.Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if err := sdk.TenantSnapshots.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("delete tenant snapshot %d: %w", id, err)
 		}
 	}
-	return ignoreNotFound(client.Tenants.Delete(ctx, id), "tenant", id)
+	return nil
 }
 
 func deleteTenantNode(ctx context.Context, client *vergeos.Client, id int) error {
@@ -1058,9 +1082,30 @@ func sweepTenantRecipes(ctx context.Context, client *vergeos.Client) error {
 	if err != nil {
 		return fmt.Errorf("list tenant recipes: %w", err)
 	}
-	return deletePrefixedHex(ctx, "tenant recipe", rows, func(row vergeos.TenantRecipe) (string, string) {
+	var copies []int
+	for _, row := range rows {
+		if !HasPrefix(row.Name) || row.TenantSnapshot == nil {
+			continue
+		}
+		if id := row.TenantSnapshot.Int(); id > 0 {
+			copies = append(copies, id)
+		}
+	}
+	if err := deletePrefixedHex(ctx, "tenant recipe", rows, func(row vergeos.TenantRecipe) (string, string) {
 		return row.Name, recipeHex(row.Key, row.ID)
-	}, (*vergeio.Client).DeleteTenantRecipe)
+	}, (*vergeio.Client).DeleteTenantRecipe); err != nil {
+		return err
+	}
+	var errs []error
+	for _, id := range copies {
+		if err := deleteSnapshotTenant(ctx, client, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete recipe snapshot tenant %d: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant recipe snapshots: %w", errorsJoin(errs))
+	}
+	return nil
 }
 
 func sweepCatalogs(ctx context.Context, client *vergeos.Client) error {

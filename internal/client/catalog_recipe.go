@@ -35,13 +35,14 @@ type CatalogCreate struct {
 
 // TenantRecipeCreate is the POST body for a tenant recipe.
 // govergeos TenantRecipes has no Create method. Catalog is the catalog hex key.
+// tenant_snapshot is omitted. VergeOS sets that tenants-table row itself and
+// returns 422 if a client sends it, the same way vm_recipes.vm_snapshot is read-only.
 type TenantRecipeCreate struct {
-	Name           string `json:"name"`
-	Description    string `json:"description,omitempty"`
-	Catalog        string `json:"catalog"`
-	Tenant         int    `json:"tenant"`
-	TenantSnapshot int    `json:"tenant_snapshot"`
-	Version        string `json:"version,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Catalog     string `json:"catalog"`
+	Tenant      int    `json:"tenant"`
+	Version     string `json:"version,omitempty"`
 }
 
 // CreateCatalog posts a catalog into a repository and returns its hex key.
@@ -54,7 +55,8 @@ func (c *Client) DeleteCatalog(ctx context.Context, key string) error {
 	return c.deleteHex(ctx, catalogEndpoint, key)
 }
 
-// CreateTenantRecipe posts a tenant recipe built from a snapshot and returns its hex key.
+// CreateTenantRecipe posts a tenant recipe for a tenant and returns its hex key.
+// VergeOS copies that tenant into tenant_snapshot. The caller does not.
 func (c *Client) CreateTenantRecipe(ctx context.Context, req TenantRecipeCreate) (string, error) {
 	if strings.TrimSpace(req.Version) == "" {
 		req.Version = "1.0.0"

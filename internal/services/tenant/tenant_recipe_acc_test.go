@@ -24,10 +24,11 @@ import (
 // instance sweeps can remove a leftover.
 //
 // It is skipped unless TF_ACC=1 and lab credentials are set. When
-// TF_ACC_VERGEIO_TENANT_RECIPE_ID is unset, setup creates a tenant, snapshots
-// it, posts a catalog, and posts a tenant recipe from that snapshot.
-// TF_ACC_VERGEIO_TENANT_RECIPE_ID overrides that recipe. It is a 40-character
-// hex key, the same value as vergeio_tenant_recipes recipes[].id.
+// TF_ACC_VERGEIO_TENANT_RECIPE_ID is unset, setup creates a tenant, posts a
+// catalog, and posts a tenant recipe for that tenant. VergeOS records its
+// own snapshot of the tenant. TF_ACC_VERGEIO_TENANT_RECIPE_ID is an optional
+// override. It is a 40-character hex key, the same value as
+// vergeio_tenant_recipes recipes[].id.
 // TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS is optional HCL inside the answers
 // map and replaces the answers setup would send. Set it when the override
 // recipe has required questions, for example YB_USER_NAME = "admin".

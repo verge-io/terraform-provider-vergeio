@@ -4,6 +4,7 @@
 package vergeio
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -26,6 +27,11 @@ func TestCreateCatalogAndTenantRecipe(t *testing.T) {
 		case "/api/v4/catalogs":
 			_, _ = w.Write([]byte(`{"$key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`))
 		case "/api/v4/tenant_recipes":
+			if strings.Contains(string(body), `"tenant_snapshot"`) {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(`{"err":"field 'tenant_snapshot' cannot be set"}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"$key":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -56,10 +62,9 @@ func TestCreateCatalogAndTenantRecipe(t *testing.T) {
 		t.Fatalf("catalog = %s", catalog)
 	}
 	recipe, err := httpClient.CreateTenantRecipe(ctx, TenantRecipeCreate{
-		Name:           "tf-acc-recipe",
-		Catalog:        catalog,
-		Tenant:         7,
-		TenantSnapshot: 8,
+		Name:    "tf-acc-recipe",
+		Catalog: catalog,
+		Tenant:  7,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,12 +80,40 @@ func TestCreateCatalogAndTenantRecipe(t *testing.T) {
 		`"publishing_scope":"private"`,
 		`"catalog":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`,
 		`"tenant":7`,
-		`"tenant_snapshot":8`,
 		`"version":"1.0.0"`,
 	} {
 		if !strings.Contains(joined, part) {
 			t.Fatalf("calls = %#v missing %s", calls, part)
 		}
+	}
+	if strings.Contains(joined, "tenant_snapshot") {
+		t.Fatalf("create sent tenant_snapshot: %s", joined)
+	}
+}
+
+func TestCreateTenantRecipeRejectsTenantSnapshot(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AnswerCredentialCheck(w, r) {
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if r.Method == http.MethodPost && strings.Contains(string(body), `"tenant_snapshot"`) {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"err":"field 'tenant_snapshot' cannot be set"}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"$key":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`))
+	}))
+	t.Cleanup(server.Close)
+	httpClient := NewClient(server.URL, "user", "pass", true)
+	resp, err := httpClient.Post(context.Background(), tenantRecipeEndpoint, bytes.NewBufferString(`{"catalog":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","name":"tf-acc-recipe","tenant":7,"tenant_snapshot":1,"version":"1.0.0"}`))
+	if resp != nil && resp.Body != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "field 'tenant_snapshot' cannot be set") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

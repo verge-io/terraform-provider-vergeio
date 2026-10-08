@@ -14,30 +14,31 @@ import (
 	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/services/tenant"
 )
 
 const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 
-// TenantRecipeFixture is a throwaway tenant, snapshot, catalog, and tenant
-// recipe. The tenant and snapshot use govergeos. Catalogs and tenant recipes
-// have no create method there, so those rows are posted over HTTP.
+// TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
+// The tenant uses govergeos. Catalogs and tenant recipes have no create
+// method there, so those rows are posted over HTTP. VergeOS fills
+// tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string
 	AnswersHCL string
 
-	ctx        context.Context
-	sdk        *vergeos.Client
-	http       *vergeio.Client
-	tenantID   int
-	snapshotID int
-	catalogID  string
+	ctx       context.Context
+	sdk       *vergeos.Client
+	http      *vergeio.Client
+	tenantID  int
+	catalogID string
 }
 
-// NewTenantRecipeFixture creates the source tenant, snapshots it, posts a
-// private catalog in the local repository, and posts a tenant recipe from
-// that snapshot. Required questions the fixture can answer are returned as
-// HCL inside an answers map. A required question it cannot answer is disabled,
-// and the recipe is republished.
+// NewTenantRecipeFixture creates the source tenant, posts a private catalog
+// in the local repository, and posts a tenant recipe for that tenant.
+// Required questions the fixture can answer are returned as HCL inside an
+// answers map. A required question it cannot answer is disabled, and the
+// recipe is republished.
 func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -59,10 +60,9 @@ func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 	t.Helper()
 	tenantName := Name("tenant-recipe-source")
-	snapName := Name("tenant-recipe-source-snap")
 	catalogName := Name("tenant-recipe-catalog")
 	recipeName := Name("tenant-recipe-def")
-	for _, name := range []string{tenantName, snapName, catalogName, recipeName} {
+	for _, name := range []string{tenantName, catalogName, recipeName} {
 		if err := RequirePrefix(name); err != nil {
 			t.Fatal(err)
 		}
@@ -77,17 +77,6 @@ func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.tenantID = created.Key.Int()
-
-	snap, err := f.sdk.TenantSnapshots.Create(f.ctx, &vergeos.TenantSnapshotCreateRequest{
-		Tenant:      f.tenantID,
-		Name:        snapName,
-		Description: "acceptance tenant recipe source",
-		Type:        vergeos.TenantSnapshotTypeFull,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.snapshotID = snap.Key.Int()
 
 	repository, err := f.http.LocalCatalogRepositoryID(f.ctx)
 	if err != nil {
@@ -106,12 +95,11 @@ func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 	f.catalogID = catalogID
 
 	recipeID, err := f.http.CreateTenantRecipe(f.ctx, vergeio.TenantRecipeCreate{
-		Name:           recipeName,
-		Description:    "acceptance tenant recipe",
-		Catalog:        catalogID,
-		Tenant:         f.tenantID,
-		TenantSnapshot: f.snapshotID,
-		Version:        "1.0.0",
+		Name:        recipeName,
+		Description: "acceptance tenant recipe",
+		Catalog:     catalogID,
+		Tenant:      f.tenantID,
+		Version:     "1.0.0",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -139,13 +127,15 @@ func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
 	f.AnswersHCL = tenantRecipeAnswersHCL(answers)
 }
 
-// Destroy removes the recipe, the catalog, the snapshot, and the source tenant.
-// The deployed tenant belongs to vergeio_tenant_recipe_instance.
+// Destroy removes the recipe, the catalog, a snapshot tenant VergeOS created
+// for the recipe, and the source tenant. The deployed tenant belongs to
+// vergeio_tenant_recipe_instance.
 func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 	t.Helper()
 	if f == nil {
 		return
 	}
+	copyID := f.recipeSnapshotTenant()
 	if f.RecipeID != "" && f.http != nil {
 		if err := f.http.DeleteTenantRecipe(f.ctx, f.RecipeID); err != nil {
 			t.Errorf("delete tenant recipe %s: %v", f.RecipeID, err)
@@ -156,16 +146,30 @@ func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 			t.Errorf("delete catalog %s: %v", f.catalogID, err)
 		}
 	}
-	if f.snapshotID > 0 && f.sdk != nil {
-		if err := f.sdk.TenantSnapshots.Delete(f.ctx, f.snapshotID); err != nil && !vergeos.IsNotFoundError(err) {
-			t.Errorf("delete tenant snapshot %d: %v", f.snapshotID, err)
-		}
+	if err := deleteSnapshotTenant(f.ctx, f.sdk, copyID); err != nil {
+		t.Errorf("delete recipe snapshot tenant %d: %v", copyID, err)
 	}
-	if f.tenantID > 0 && f.sdk != nil {
-		if err := f.sdk.Tenants.Delete(f.ctx, f.tenantID); err != nil && !vergeos.IsNotFoundError(err) {
-			t.Errorf("delete tenant %d: %v", f.tenantID, err)
-		}
+	if err := deleteOwnedTenantSnapshots(f.ctx, f.sdk, f.tenantID); err != nil {
+		t.Errorf("delete snapshots of tenant %d: %v", f.tenantID, err)
 	}
+	if err := tenant.RemoveTenant(f.ctx, f.sdk, f.tenantID); err != nil {
+		t.Errorf("delete tenant %d: %v", f.tenantID, err)
+	}
+}
+
+func (f *TenantRecipeFixture) recipeSnapshotTenant() int {
+	if f == nil || f.sdk == nil || f.RecipeID == "" {
+		return 0
+	}
+	recipe, err := f.sdk.TenantRecipes.Get(f.ctx, f.RecipeID)
+	if err != nil || recipe == nil || recipe.TenantSnapshot == nil {
+		return 0
+	}
+	id := recipe.TenantSnapshot.Int()
+	if id <= 0 || id == f.tenantID {
+		return 0
+	}
+	return id
 }
 
 // tenantRecipeFixturePlan returns answers for required questions the fixture

@@ -4,6 +4,7 @@
 package tenant
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -33,6 +34,16 @@ func NewAPI(c *vergeio.Client) (*API, error) {
 
 func (a *API) Name() string {
 	return a.name
+}
+
+// RemoveTenant powers the tenant off, waits for its network to stop, and
+// deletes it. A missing tenant is already gone. This is the vergeio_tenant
+// destroy sequence.
+func RemoveTenant(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
+		return nil
+	}
+	return (&API{sdk: sdk}).deleteTenant(ctx, &TenantResourceModel{Id: idString(id)})
 }
 
 func idString(id int) types.String {

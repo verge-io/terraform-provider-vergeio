@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"terraform-provider-vergeio/internal/client"
 
@@ -120,7 +121,43 @@ func (api *TenantRecipeAPI) deploy(ctx context.Context, data *TenantRecipeInstan
 	return nil
 }
 
-func (api *TenantRecipeAPI) read(ctx context.Context, data *TenantRecipeInstanceResourceModel) error {
+// waitForLinkedTenant polls until the instance row names a tenant that Get can read.
+func (api *TenantRecipeAPI) waitForLinkedTenant(ctx context.Context, instanceID int) error {
+	deadline := time.Now().Add(tenantPowerTimeout)
+	var pending string
+	for {
+		instance, err := api.sdk.TenantRecipeInstances.Get(ctx, instanceID)
+		if err != nil {
+			return err
+		}
+		tenantID := 0
+		if instance != nil {
+			tenantID = instance.Tenant.Int()
+		}
+		if tenantID > 0 {
+			if _, err := api.sdk.Tenants.Get(ctx, tenantID); err != nil {
+				if !vergeos.IsNotFoundError(err) {
+					return err
+				}
+				pending = fmt.Sprintf("tenant %d is not visible yet", tenantID)
+			} else {
+				return nil
+			}
+		} else {
+			pending = "the instance has no tenant yet"
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for recipe instance %d to link a visible tenant: %s", instanceID, pending)
+		}
+		if err := sleepPower(ctx); err != nil {
+			return err
+		}
+	}
+}
+
+// read refreshes one instance. knownTenant is the tenant id already stored in
+// state. The instance row is deleted only when that same id returns 404.
+func (api *TenantRecipeAPI) read(ctx context.Context, data *TenantRecipeInstanceResourceModel, knownTenant int) error {
 	id, err := parseRecipeInstanceID(data.Id)
 	if err != nil {
 		return err
@@ -133,26 +170,26 @@ func (api *TenantRecipeAPI) read(ctx context.Context, data *TenantRecipeInstance
 		return &vergeos.NotFoundError{Resource: "TenantRecipeInstance", ID: id}
 	}
 	tenantID := instance.Tenant.Int()
-	if tenantID <= 0 {
-		if err := api.http.DeleteTenantRecipeInstance(ctx, id); err != nil {
-			return err
+	if tenantID > 0 {
+		if _, err := api.sdk.Tenants.Get(ctx, tenantID); err != nil {
+			if !vergeos.IsNotFoundError(err) {
+				return err
+			}
+			if knownTenant > 0 && knownTenant == tenantID {
+				if delErr := api.http.DeleteTenantRecipeInstance(ctx, id); delErr != nil {
+					return delErr
+				}
+				return err
+			}
+			return fmt.Errorf("tenant %d for recipe instance %d is not visible yet", tenantID, id)
 		}
-		return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
-	}
-	if _, err := api.sdk.Tenants.Get(ctx, tenantID); err != nil {
-		if !vergeos.IsNotFoundError(err) {
-			return err
-		}
-		// The tenant was removed outside Terraform. Drop the instance row
-		// with it, or the next apply would find this key still taken.
-		if delErr := api.http.DeleteTenantRecipeInstance(ctx, id); delErr != nil {
-			return delErr
-		}
-		return err
 	}
 	answers := data.Answers
 	applyTenantRecipeInstance(data, instance)
 	data.Answers = answers
+	if tenantID <= 0 && knownTenant > 0 {
+		data.TenantID = types.Int64Value(int64(knownTenant))
+	}
 	tflog.Debug(ctx, fmt.Sprintf("read tenant recipe instance %d", id))
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -565,6 +566,7 @@ func TestTenantRecipeInstanceReadDropsMissingTenant(t *testing.T) {
 		Id:       types.StringValue("9"),
 		Name:     types.StringValue("customer-a"),
 		RecipeID: types.StringValue(testTenantRecipeKey),
+		TenantID: types.Int64Value(44),
 		Answers:  tenantRecipeStringMap(t, map[string]string{"YB_USER_NAME": "admin"}),
 	})
 	if diags.HasError() {
@@ -580,6 +582,169 @@ func TestTenantRecipeInstanceReadDropsMissingTenant(t *testing.T) {
 	}
 	if fake.instanceDeletes != 1 {
 		t.Fatalf("instance deletes = %d, the row should go with the tenant", fake.instanceDeletes)
+	}
+}
+
+func TestTenantRecipeInstanceReadKeepsUnlinkedTenant(t *testing.T) {
+	fake := newTenantRecipeFake()
+	fake.omitTenant = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	diags := state.Set(ctx, &TenantRecipeInstanceResourceModel{
+		Id:       types.StringValue("9"),
+		Name:     types.StringValue("customer-a"),
+		RecipeID: types.StringValue(testTenantRecipeKey),
+		TenantID: types.Int64Value(44),
+		Answers:  types.MapNull(types.StringType),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &fwresource.ReadResponse{State: state}
+	resource.Read(ctx, fwresource.ReadRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("an unlinked tenant should stay in state")
+	}
+	if fake.instanceDeletes != 0 {
+		t.Fatal("an unlinked tenant is not a deleted tenant")
+	}
+	var got TenantRecipeInstanceResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.TenantID.ValueInt64() != 44 {
+		t.Fatalf("tenant_id = %s", got.TenantID)
+	}
+}
+
+func TestTenantRecipeInstanceReadKeepsInvisibleTenant(t *testing.T) {
+	fake := newTenantRecipeFake()
+	fake.tenantMissing = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	diags := state.Set(ctx, &TenantRecipeInstanceResourceModel{
+		Id:       types.StringValue("9"),
+		Name:     types.StringValue("customer-a"),
+		RecipeID: types.StringValue(testTenantRecipeKey),
+		Answers:  types.MapNull(types.StringType),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &fwresource.ReadResponse{State: state}
+	resource.Read(ctx, fwresource.ReadRequest{State: state}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the tenant to be reported as not visible yet")
+	}
+	if resp.State.Raw.IsNull() {
+		t.Fatal("a tenant that was not already in state should stay")
+	}
+	if fake.instanceDeletes != 0 {
+		t.Fatal("a tenant that was not already known should not delete the instance")
+	}
+}
+
+func TestTenantRecipeInstanceCreateWaitsForTenant(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = time.Second
+	tenantPowerInterval = time.Millisecond
+
+	fake := newTenantRecipeFake()
+	fake.unlinkedReads = 2
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	diags := plan.Set(ctx, &TenantRecipeInstanceResourceModel{
+		Name:     types.StringValue("customer-a"),
+		RecipeID: types.StringValue(testTenantRecipeKey),
+		Answers: tenantRecipeStringMap(t, map[string]string{
+			"YB_USER_NAME":     "admin",
+			"YB_DRIVE_OS_SIZE": strconv.FormatInt(vergeos.RecipeDiskSize50GB, 10),
+		}),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	created := &fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	resource.Create(ctx, fwresource.CreateRequest{Plan: plan}, created)
+	if created.Diagnostics.HasError() {
+		t.Fatal(created.Diagnostics)
+	}
+	var got TenantRecipeInstanceResourceModel
+	created.Diagnostics.Append(created.State.Get(ctx, &got)...)
+	if created.Diagnostics.HasError() {
+		t.Fatal(created.Diagnostics)
+	}
+	if got.Id.ValueString() != "9" || got.TenantID.ValueInt64() != 44 {
+		t.Fatalf("instance = %+v", got)
+	}
+	if fake.instanceDeletes != 0 {
+		t.Fatal("create deleted the instance while the tenant was still linking")
+	}
+}
+
+func TestTenantRecipeInstanceCreateTimesOutWhileUnlinked(t *testing.T) {
+	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
+	t.Cleanup(func() {
+		tenantPowerTimeout = origTimeout
+		tenantPowerInterval = origInterval
+	})
+	tenantPowerTimeout = 20 * time.Millisecond
+	tenantPowerInterval = time.Millisecond
+
+	fake := newTenantRecipeFake()
+	fake.unlinkedReads = 1000
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	diags := plan.Set(ctx, &TenantRecipeInstanceResourceModel{
+		Name:     types.StringValue("customer-a"),
+		RecipeID: types.StringValue(testTenantRecipeKey),
+		Answers: tenantRecipeStringMap(t, map[string]string{
+			"YB_USER_NAME":     "admin",
+			"YB_DRIVE_OS_SIZE": strconv.FormatInt(vergeos.RecipeDiskSize50GB, 10),
+		}),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	created := &fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	resource.Create(ctx, fwresource.CreateRequest{Plan: plan}, created)
+	if !created.Diagnostics.HasError() || !strings.Contains(created.Diagnostics.Errors()[0].Detail(), "timed out") {
+		t.Fatalf("diagnostics = %v", created.Diagnostics)
+	}
+	if fake.instanceDeletes != 0 {
+		t.Fatal("a timeout deleted the instance")
 	}
 }
 
@@ -680,6 +845,8 @@ type tenantRecipeFake struct {
 	online                      bool
 	vnetRunning                 bool
 	tenantMissing               bool
+	omitTenant                  bool
+	unlinkedReads               int
 	instanceMissing             bool
 	statusFailure               bool
 	deployCount                 int
@@ -782,7 +949,14 @@ func (f *tenantRecipeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"err":"not found"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"$key":9,"recipe":"` + testTenantRecipeKey + `","recipe_name":"Trial Tenant","name":"customer-a","tenant":44,"tenant_name":"customer-a","version":"1.0.0","build":3,"answers":{"YB_EXPOSE_CLOUD_SNAPSHOTS":true,"YB_USER_NAME":"admin"}}`))
+		tenantJSON := `"tenant":44,"tenant_name":"customer-a",`
+		if f.omitTenant || f.unlinkedReads > 0 {
+			if f.unlinkedReads > 0 {
+				f.unlinkedReads--
+			}
+			tenantJSON = `"tenant":0,`
+		}
+		_, _ = w.Write([]byte(`{"$key":9,"recipe":"` + testTenantRecipeKey + `","recipe_name":"Trial Tenant","name":"customer-a",` + tenantJSON + `"version":"1.0.0","build":3,"answers":{"YB_EXPOSE_CLOUD_SNAPSHOTS":true,"YB_USER_NAME":"admin"}}`))
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_status":
 		if f.statusFailure {
 			w.WriteHeader(http.StatusInternalServerError)
