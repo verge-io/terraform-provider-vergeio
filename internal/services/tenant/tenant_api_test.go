@@ -825,6 +825,42 @@ func TestDeleteRunningTenantPowersOffFirst(t *testing.T) {
 	}
 }
 
+func TestStartTenantOncePowersOnThenOff(t *testing.T) {
+	fake := newFake(t)
+	api := fake.api(t)
+	data := &TenantResourceModel{
+		Name:       types.StringValue("customer-a"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createTenant(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	id := mustParseID(t, data.Id)
+	if err := StartTenantOnce(context.Background(), api.sdk, id); err != nil {
+		t.Fatal(err)
+	}
+	actions := fake.recordedActions()
+	if len(actions) != 2 || actions[0]["action"] != "poweron" || actions[1]["action"] != "poweroff" {
+		t.Fatalf("actions = %#v, want poweron then poweroff", actions)
+	}
+	status, err := api.tenantStatus(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tenantPoweredOff(status) {
+		t.Fatalf("status = %#v, want offline", status)
+	}
+	if vnetActions := fake.recordedVNetActions(); len(vnetActions) != 0 {
+		t.Fatalf("vnet actions = %#v, want none when poweroff already stopped the network", vnetActions)
+	}
+}
+
+func TestStartTenantOnceRejectsEmptyID(t *testing.T) {
+	if err := StartTenantOnce(context.Background(), nil, 0); err == nil {
+		t.Fatal("expected an error for an empty tenant id")
+	}
+}
+
 func TestDeleteOfflineTenantStopsRunningVNet(t *testing.T) {
 	origTimeout, origInterval := tenantPowerTimeout, tenantPowerInterval
 	t.Cleanup(func() {

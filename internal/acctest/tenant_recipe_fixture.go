@@ -21,8 +21,9 @@ const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 
 // TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
 // The tenant uses govergeos. Catalogs and tenant recipes have no create
-// method there, so those rows are posted over HTTP. VergeOS fills
-// tenant_snapshot itself. The fixture does not send that field.
+// method there, so those rows are posted over HTTP. The source tenant is
+// powered on once and then powered off before the recipe POST. VergeOS
+// fills tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string
 	AnswersHCL string
@@ -34,11 +35,12 @@ type TenantRecipeFixture struct {
 	catalogID string
 }
 
-// NewTenantRecipeFixture creates the source tenant, posts a private catalog
-// in the local repository, and posts a tenant recipe for that tenant.
-// Required questions the fixture can answer are returned as HCL inside an
-// answers map. A required question it cannot answer is disabled, and the
-// recipe is republished.
+// NewTenantRecipeFixture creates the source tenant, powers it on until it
+// is running, powers it off, waits for its network to stop, posts a private
+// catalog in the local repository, and posts a tenant recipe for that
+// tenant. Required questions the fixture can answer are returned as HCL
+// inside an answers map. A required question it cannot answer is disabled,
+// and the recipe is republished.
 func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 	t.Helper()
 	ctx := context.Background()
@@ -60,23 +62,16 @@ func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 	t.Helper()
 	tenantName := Name("tenant-recipe-source")
+	nodeName := Name("tenant-recipe-node")
 	catalogName := Name("tenant-recipe-catalog")
 	recipeName := Name("tenant-recipe-def")
-	for _, name := range []string{tenantName, catalogName, recipeName} {
+	for _, name := range []string{tenantName, nodeName, catalogName, recipeName} {
 		if err := RequirePrefix(name); err != nil {
 			t.Fatal(err)
 		}
 	}
-
-	created, err := f.sdk.Tenants.Create(f.ctx, &vergeos.TenantCreateRequest{
-		Name:        tenantName,
-		Password:    fixtureTenantAdmin,
-		Description: "acceptance tenant recipe source",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.tenantID = created.Key.Int()
+	f.createSourceTenant(t, tenantName)
+	f.startSourceTenant(t, nodeName)
 
 	repository, err := f.http.LocalCatalogRepositoryID(f.ctx)
 	if err != nil {
@@ -107,6 +102,53 @@ func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 	f.RecipeID = recipeID
 }
 
+func (f *TenantRecipeFixture) createSourceTenant(t *testing.T, name string) {
+	t.Helper()
+	created, err := f.sdk.Tenants.Create(f.ctx, &vergeos.TenantCreateRequest{
+		Name:        name,
+		Password:    fixtureTenantAdmin,
+		Description: "acceptance tenant recipe source",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.tenantID = created.Key.Int()
+}
+
+// startSourceTenant gives the tenant a node and storage, then powers it on
+// and back off. VergeOS returns 405 for a recipe whose tenant has never
+// been started. Power-on with no node cannot reach running.
+func (f *TenantRecipeFixture) startSourceTenant(t *testing.T, nodeName string) {
+	t.Helper()
+	enabled := true
+	if _, err := f.sdk.TenantNodes.Create(f.ctx, &vergeos.TenantNodeCreateRequest{
+		Tenant:   f.tenantID,
+		Name:     nodeName,
+		CPUCores: 2,
+		RAM:      2048,
+		Enabled:  &enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tiers, err := f.sdk.StorageTiers.List(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tiers) == 0 {
+		t.Fatal("no storage tiers on the lab")
+	}
+	if _, err := f.sdk.TenantStorage.Create(f.ctx, &vergeos.TenantStorageCreateRequest{
+		Tenant:      f.tenantID,
+		Tier:        tiers[0].Key,
+		Provisioned: 1073741824,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tenant.StartTenantOnce(f.ctx, f.sdk, f.tenantID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
 	t.Helper()
 	questions, err := f.sdk.TenantRecipes.Questions(f.ctx, f.RecipeID)
@@ -128,7 +170,8 @@ func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
 }
 
 // Destroy removes the recipe, the catalog, a snapshot tenant VergeOS created
-// for the recipe, and the source tenant. The deployed tenant belongs to
+// for the recipe, and the source tenant. Nodes and storage on those tenants
+// are deleted first. The deployed tenant belongs to
 // vergeio_tenant_recipe_instance.
 func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 	t.Helper()
@@ -149,10 +192,7 @@ func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 	if err := deleteSnapshotTenant(f.ctx, f.sdk, copyID); err != nil {
 		t.Errorf("delete recipe snapshot tenant %d: %v", copyID, err)
 	}
-	if err := deleteOwnedTenantSnapshots(f.ctx, f.sdk, f.tenantID); err != nil {
-		t.Errorf("delete snapshots of tenant %d: %v", f.tenantID, err)
-	}
-	if err := tenant.RemoveTenant(f.ctx, f.sdk, f.tenantID); err != nil {
+	if err := removeManagedTenant(f.ctx, f.sdk, f.tenantID); err != nil {
 		t.Errorf("delete tenant %d: %v", f.tenantID, err)
 	}
 }

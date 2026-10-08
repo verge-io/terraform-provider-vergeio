@@ -884,10 +884,65 @@ func deleteSnapshotTenant(ctx context.Context, sdk *vergeos.Client, id int) erro
 	if row == nil || !row.IsSnapshot {
 		return nil
 	}
+	return removeManagedTenant(ctx, sdk, id)
+}
+
+// removeManagedTenant deletes snapshots, nodes, and storage, then powers the
+// tenant off, waits for its network to stop, and deletes it.
+func removeManagedTenant(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
+		return nil
+	}
 	if err := deleteOwnedTenantSnapshots(ctx, sdk, id); err != nil {
 		return err
 	}
+	if err := deleteNodesOfTenant(ctx, sdk, id); err != nil {
+		return err
+	}
+	if err := deleteStorageOfTenant(ctx, sdk, id); err != nil {
+		return err
+	}
 	return tenant.RemoveTenant(ctx, sdk, id)
+}
+
+func deleteNodesOfTenant(ctx context.Context, sdk *vergeos.Client, tenantID int) error {
+	nodes, err := sdk.TenantNodes.ListByTenant(ctx, tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+	for _, node := range nodes {
+		id := node.Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if err := tenant.RemoveTenantNode(ctx, sdk, id); err != nil {
+			return fmt.Errorf("delete tenant node %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func deleteStorageOfTenant(ctx context.Context, sdk *vergeos.Client, tenantID int) error {
+	rows, err := sdk.TenantStorage.ListByTenant(ctx, tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+	for _, row := range rows {
+		id := row.Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if err := sdk.TenantStorage.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("delete tenant storage %d: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func deleteOwnedTenantSnapshots(ctx context.Context, sdk *vergeos.Client, tenantID int) error {

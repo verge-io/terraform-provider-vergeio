@@ -46,6 +46,31 @@ func RemoveTenant(ctx context.Context, sdk *vergeos.Client, id int) error {
 	return (&API{sdk: sdk}).deleteTenant(ctx, &TenantResourceModel{Id: idString(id)})
 }
 
+// StartTenantOnce powers the tenant on, waits until it is running, powers
+// it off, and waits until its network has stopped. This is the vergeio_tenant
+// power-on and power-off sequence. A tenant with no node cannot reach
+// running, so the caller creates a node first.
+func StartTenantOnce(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
+		return fmt.Errorf("tenant id is empty")
+	}
+	api := &API{sdk: sdk}
+	if err := api.reconcilePower(ctx, id, types.BoolValue(true), types.Int32Null()); err != nil {
+		return err
+	}
+	return api.ensurePoweredOff(ctx, id)
+}
+
+// RemoveTenantNode stops the node when it is running, then deletes it. A
+// missing node is already gone. This is the vergeio_tenant_node destroy
+// sequence.
+func RemoveTenantNode(ctx context.Context, sdk *vergeos.Client, id int) error {
+	if sdk == nil || id <= 0 {
+		return nil
+	}
+	return (&API{sdk: sdk}).deleteTenantNode(ctx, &TenantNodeResourceModel{Id: idString(id)})
+}
+
 func idString(id int) types.String {
 	return types.StringValue(strconv.Itoa(id))
 }
