@@ -99,3 +99,9 @@ func (c *Client) GetTenantNodeQuery(ctx context.Context, id string) (string, str
 	}
 	return row.Status, strings.Trim(string(row.Result), `"`), nil
 }
+
+// DeleteTenantNodeQuery removes one tenant_node_queries row.
+// A missing row is success.
+func (c *Client) DeleteTenantNodeQuery(ctx context.Context, id string) error {
+	return c.deleteHex(ctx, tenantNodeQueryEndpoint, id)
+}

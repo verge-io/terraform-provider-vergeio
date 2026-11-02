@@ -27,7 +27,10 @@ const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 // successful. That wait is recipeGuestLimit. Tenant nodes are LXC
 // containers and have no guest agent. The fixture then powers the tenant
 // off, waits for its network to stop, and posts the recipe once. A
-// "currently running" 405 retries that power-off.
+// "currently running" 405 retries that power-off. A "never been started"
+// 405 powers the tenant on, waits for the same readiness, holds for a
+// settle period, and posts again inside recipeGuestLimit. Each
+// tenant_node_queries row is deleted after it is read.
 // VergeOS fills tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string

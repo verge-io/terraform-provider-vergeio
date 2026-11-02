@@ -17,11 +17,15 @@ import (
 )
 
 const (
-	// recipeGuestLimit is how long the source tenant stays powered on while
-	// the fixture waits for tenant_status online and a successful
-	// tenant_node_queries tcp_connect.
+	// recipeGuestLimit bounds the whole loop: readiness, extra settle time
+	// after a never-started POST, power-off, and the next POST.
 	recipeGuestLimit = 20 * time.Minute
-	// recipePollGap is the pause between those attempts.
+	// recipeSettle is how long the tenant stays online after readiness on
+	// the first never-started retry. Later retries double it up to
+	// recipeSettleMax.
+	recipeSettle    = 2 * time.Minute
+	recipeSettleMax = 8 * time.Minute
+	// recipePollGap is the pause between readiness attempts.
 	recipePollGap = 15 * time.Second
 	// recipeQueryPoll is the pause while one tenant_node_queries row still
 	// has status running.
@@ -63,6 +67,7 @@ type recipeBootAct interface {
 	nodeDBVersion(ctx context.Context, nodeKey int) (string, error)
 	postNodeQuery(ctx context.Context, nodeKey int) (string, error)
 	readNodeQuery(ctx context.Context, id string) (string, string, error)
+	deleteNodeQuery(ctx context.Context, id string) error
 	postRecipe(ctx context.Context) (string, error)
 }
 
@@ -73,8 +78,11 @@ type recipeBoot struct {
 	act   recipeBootAct
 	log   strings.Builder
 
-	attempt int
-	last    string
+	attempt   int
+	last      string
+	deadline  time.Time
+	sawOnline bool
+	sawDB     string
 }
 
 func newRecipeBoot(now func() time.Time, sleep func(context.Context, time.Duration) error, logf func(string, ...any), act recipeBootAct) *recipeBoot {
@@ -90,13 +98,77 @@ func newRecipeBoot(now func() time.Time, sleep func(context.Context, time.Durati
 }
 
 func (b *recipeBoot) run(ctx context.Context) (string, error) {
+	b.deadline = b.now().Add(recipeGuestLimit)
+	if err := b.powerOn(ctx); err != nil {
+		return "", err
+	}
+	settle := time.Duration(0)
+	for {
+		if err := b.waitForReady(ctx); err != nil {
+			return "", err
+		}
+		if settle > 0 {
+			if err := b.holdSettle(ctx, settle); err != nil {
+				return "", err
+			}
+		}
+		id, kind, err := b.postWhileOff(ctx)
+		if kind == recipePostOK {
+			return id, nil
+		}
+		// tenant_status.started is set when the tenant goes online. The recipe
+		// POST can still say the tenant has never been started. The public
+		// tenant, tenant_status, and tenant_node fields do not name that
+		// check, so this loop waits longer and posts again.
+		if kind != recipePostNeverStarted {
+			return "", err
+		}
+		if !b.now().Before(b.deadline) {
+			return "", b.gaveUp("tenant still reported as never started")
+		}
+		settle = nextSettle(settle)
+		b.write(fmt.Sprintf("never started; power on and settle %s", settle))
+		if err := b.powerOn(ctx); err != nil {
+			return "", err
+		}
+	}
+}
+
+func nextSettle(current time.Duration) time.Duration {
+	if current <= 0 {
+		return recipeSettle
+	}
+	next := current * 2
+	if next > recipeSettleMax {
+		return recipeSettleMax
+	}
+	return next
+}
+
+func (b *recipeBoot) powerOn(ctx context.Context) error {
 	if err := b.act.powerOn(ctx); err != nil {
-		return "", err
+		return err
 	}
-	if err := b.waitForReady(ctx); err != nil {
-		return "", err
+	b.sawOnline = false
+	b.sawDB = ""
+	b.write("power on")
+	return nil
+}
+
+func (b *recipeBoot) holdSettle(ctx context.Context, settle time.Duration) error {
+	if b.deadline.Sub(b.now()) < settle {
+		return b.gaveUp("not enough time left to settle " + settle.String())
 	}
-	return b.postWhileOff(ctx)
+	b.write("settle " + settle.String())
+	if err := b.sleep(ctx, settle); err != nil {
+		return err
+	}
+	b.write("settle elapsed")
+	return nil
+}
+
+func (b *recipeBoot) gaveUp(why string) error {
+	return fmt.Errorf("timed out after %s: %s\nlast: %s\n%s", recipeGuestLimit, why, b.last, b.log.String())
 }
 
 // waitForReady powers nothing. The caller already powered the tenant on.
@@ -105,21 +177,21 @@ func (b *recipeBoot) run(ctx context.Context) (string, error) {
 // this fixture's tenant has no ui_address. Readiness is tenant_status
 // online, then tenant_node_queries tcp_connect to 127.0.0.1:443.
 func (b *recipeBoot) waitForReady(ctx context.Context) error {
-	deadline := b.now().Add(recipeGuestLimit)
 	for {
 		view, err := b.act.observe(ctx)
 		if err != nil {
 			return err
 		}
 		b.write(formatBootView(view))
+		b.noteOnline(view)
 		if tenantBootOnline(view.status) {
-			ready, err := b.readyNode(ctx, firstTenantNodeKey(view), deadline)
+			ready, err := b.readyNode(ctx, firstTenantNodeKey(view))
 			if err != nil || ready {
 				return err
 			}
 		}
-		if !b.now().Before(deadline) {
-			return fmt.Errorf("timed out after %s waiting for tenant_status online and tenant_node_queries tcp_connect to 127.0.0.1:443\nlast: %s\n%s", recipeGuestLimit, b.last, b.log.String())
+		if !b.now().Before(b.deadline) {
+			return b.gaveUp("tenant_status online and tenant_node_queries tcp_connect to 127.0.0.1:443")
 		}
 		if err := b.sleep(ctx, recipePollGap); err != nil {
 			return err
@@ -127,7 +199,19 @@ func (b *recipeBoot) waitForReady(ctx context.Context) error {
 	}
 }
 
-func (b *recipeBoot) readyNode(ctx context.Context, nodeKey int, deadline time.Time) (bool, error) {
+func (b *recipeBoot) noteOnline(view tenantBootView) {
+	if !tenantBootOnline(view.status) {
+		b.sawOnline = false
+		return
+	}
+	if b.sawOnline {
+		return
+	}
+	b.sawOnline = true
+	b.write(fmt.Sprintf("signal tenant_status online started=%d status=%s", view.status.Started, view.status.Status))
+}
+
+func (b *recipeBoot) readyNode(ctx context.Context, nodeKey int) (bool, error) {
 	if nodeKey <= 0 {
 		return false, nil
 	}
@@ -136,17 +220,23 @@ func (b *recipeBoot) readyNode(ctx context.Context, nodeKey int, deadline time.T
 		return false, err
 	}
 	b.write(fmt.Sprintf("tenant_node %d db_version=%q", nodeKey, version))
-	if strings.TrimSpace(version) == "" {
+	version = strings.TrimSpace(version)
+	if version == "" {
 		return false, nil
 	}
-	return b.tcpConnect(ctx, nodeKey, deadline)
+	if version != b.sawDB {
+		b.sawDB = version
+		b.write("signal db_version " + version)
+	}
+	return b.tcpConnect(ctx, nodeKey)
 }
 
-func (b *recipeBoot) tcpConnect(ctx context.Context, nodeKey int, deadline time.Time) (bool, error) {
+func (b *recipeBoot) tcpConnect(ctx context.Context, nodeKey int) (bool, error) {
 	id, err := b.act.postNodeQuery(ctx, nodeKey)
 	if err != nil {
 		return false, err
 	}
+	defer b.deleteQuery(ctx, id)
 	for {
 		status, result, err := b.act.readNodeQuery(ctx, id)
 		if err != nil {
@@ -154,15 +244,27 @@ func (b *recipeBoot) tcpConnect(ctx context.Context, nodeKey int, deadline time.
 		}
 		b.write(fmt.Sprintf("tenant_node_queries %s status=%s result=%s", id, status, result))
 		if status != "running" {
-			return status == "complete" && strings.Contains(result, "Connection successful"), nil
+			ok := status == "complete" && strings.Contains(result, "Connection successful")
+			if ok {
+				b.write("signal tcp_connect 127.0.0.1:443")
+			}
+			return ok, nil
 		}
-		if !b.now().Before(deadline) {
-			return false, fmt.Errorf("timed out after %s waiting for tenant_node_queries %s\nlast: %s\n%s", recipeGuestLimit, id, b.last, b.log.String())
+		if !b.now().Before(b.deadline) {
+			return false, b.gaveUp("tenant_node_queries " + id)
 		}
 		if err := b.sleep(ctx, recipeQueryPoll); err != nil {
 			return false, err
 		}
 	}
+}
+
+func (b *recipeBoot) deleteQuery(ctx context.Context, id string) {
+	if err := b.act.deleteNodeQuery(ctx, id); err != nil {
+		b.write("delete tenant_node_queries " + id + " failed: " + err.Error())
+		return
+	}
+	b.write("deleted tenant_node_queries " + id)
 }
 
 func firstTenantNodeKey(view tenantBootView) int {
@@ -183,22 +285,24 @@ func tenantBootOnline(status *vergeos.TenantStatus) bool {
 	return status.Status == "online"
 }
 
-func (b *recipeBoot) postWhileOff(ctx context.Context) (string, error) {
+func (b *recipeBoot) postWhileOff(ctx context.Context) (string, recipePostKind, error) {
+	offTries := 0
 	for {
 		if err := b.settleOff(ctx); err != nil {
-			return "", err
+			return "", recipePostFatal, err
 		}
 		id, kind, err := b.post(ctx)
-		if kind == recipePostOK {
-			return id, nil
+		offTries++
+		if kind == recipePostOK || kind == recipePostNeverStarted {
+			return id, kind, nil
 		}
-		if kind == recipePostNeedOff && b.attempt < recipeRunningPosts {
+		if kind == recipePostNeedOff && offTries < recipeRunningPosts {
 			continue
 		}
 		if err != nil {
-			return "", err
+			return "", kind, err
 		}
-		return "", fmt.Errorf("tenant still reported as running after %d recipe posts\nlast: %s\n%s", b.attempt, b.last, b.log.String())
+		return "", kind, fmt.Errorf("tenant still reported as running after %d recipe posts\nlast: %s\n%s", b.attempt, b.last, b.log.String())
 	}
 }
 
@@ -207,7 +311,7 @@ func (b *recipeBoot) post(ctx context.Context) (string, recipePostKind, error) {
 	id, err := b.act.postRecipe(ctx)
 	kind, detail := classifyRecipePost(err)
 	b.write(fmt.Sprintf("post %d power=off %s", b.attempt, recipePostLabel(kind, detail)))
-	if kind == recipePostOK || kind == recipePostNeedOff {
+	if kind == recipePostOK || kind == recipePostNeedOff || kind == recipePostNeverStarted {
 		return id, kind, nil
 	}
 	return "", kind, fmt.Errorf("%s\n%s", detail, b.log.String())
@@ -257,6 +361,7 @@ func (b *recipeBoot) waitNetworkStopped(ctx context.Context) error {
 }
 
 func (b *recipeBoot) write(line string) {
+	line = b.now().Format(time.RFC3339) + " " + line
 	b.last = line
 	b.logf("%s", line)
 	b.log.WriteString(line)
@@ -415,6 +520,10 @@ func (p fixtureRecipePost) postNodeQuery(ctx context.Context, nodeKey int) (stri
 
 func (p fixtureRecipePost) readNodeQuery(ctx context.Context, id string) (string, string, error) {
 	return p.f.http.GetTenantNodeQuery(ctx, id)
+}
+
+func (p fixtureRecipePost) deleteNodeQuery(ctx context.Context, id string) error {
+	return p.f.http.DeleteTenantNodeQuery(ctx, id)
 }
 
 func (p fixtureRecipePost) postRecipe(ctx context.Context) (string, error) {

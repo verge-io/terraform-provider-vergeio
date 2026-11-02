@@ -66,14 +66,14 @@ func TestRecipeBootPostsAfterNodeTCP(t *testing.T) {
 	if len(actor.posts) != 1 || actor.posts[0] != "off" {
 		t.Fatalf("posts = %#v", actor.posts)
 	}
-	if actor.powerOns != 1 || actor.powerOffs != 1 || actor.nodeQueries != 1 {
-		t.Fatalf("power on=%d off=%d queries=%d", actor.powerOns, actor.powerOffs, actor.nodeQueries)
+	if actor.powerOns != 1 || actor.powerOffs != 1 || actor.nodeQueries != 1 || actor.deletes != 1 {
+		t.Fatalf("power on=%d off=%d queries=%d deletes=%d", actor.powerOns, actor.powerOffs, actor.nodeQueries, actor.deletes)
 	}
 	if actor.networkStops != 1 || actor.postsWhileNetworkUp != 0 {
 		t.Fatalf("network stops=%d posts while network up=%d", actor.networkStops, actor.postsWhileNetworkUp)
 	}
 	log := strings.Join(lines, "\n")
-	for _, part := range []string{"Connection successful", "db_version=", "power=off", "vnet 84 running=false", "local_time=0", `agent=""`, "ui_address empty"} {
+	for _, part := range []string{"signal tenant_status online", "signal db_version", "signal tcp_connect 127.0.0.1:443", "deleted tenant_node_queries", "Connection successful", "power=off", "vnet 84 running=false", "local_time=0", `agent=""`, "ui_address empty"} {
 		if !strings.Contains(log, part) {
 			t.Fatalf("log = %s\nmissing %s", log, part)
 		}
@@ -83,8 +83,31 @@ func TestRecipeBootPostsAfterNodeTCP(t *testing.T) {
 func TestRecipeBootRetriesTCPUntilConnected(t *testing.T) {
 	actor := &fakeBoot{readyAfter: 1, queryRefusals: 1}
 	_, id, err := runFakeBoot(t, actor)
-	if err != nil || id != "recipe-1" || actor.nodeQueries != 2 || actor.powerOns != 1 {
-		t.Fatalf("id=%s queries=%d powerOns=%d err=%v", id, actor.nodeQueries, actor.powerOns, err)
+	if err != nil || id != "recipe-1" || actor.nodeQueries != 2 || actor.deletes != 2 || actor.powerOns != 1 {
+		t.Fatalf("id=%s queries=%d deletes=%d powerOns=%d err=%v", id, actor.nodeQueries, actor.deletes, actor.powerOns, err)
+	}
+}
+
+func TestRecipeBootRetriesNeverStarted(t *testing.T) {
+	calls := 0
+	actor := &fakeBoot{readyAfter: 1}
+	actor.postErr = func(bool) error {
+		calls++
+		if calls == 1 {
+			return vergeio.Error{StatusCode: 405, Endpoint: "api/v4/tenant_recipes", VergeError: "You cannot create a recipe based on a tenant that has never been started"}
+		}
+		return nil
+	}
+	lines, id, err := runFakeBoot(t, actor)
+	if err != nil || id != "recipe-1" {
+		t.Fatalf("id=%s err=%v", id, err)
+	}
+	if actor.powerOns != 2 || len(actor.posts) != 2 || actor.deletes != actor.nodeQueries {
+		t.Fatalf("power on=%d posts=%#v queries=%d deletes=%d", actor.powerOns, actor.posts, actor.nodeQueries, actor.deletes)
+	}
+	log := strings.Join(lines, "\n")
+	if !strings.Contains(log, "settle "+recipeSettle.String()) || !strings.Contains(log, "signal tcp_connect") {
+		t.Fatalf("log = %s", log)
 	}
 }
 
@@ -120,7 +143,7 @@ func TestTenantBootOnlineRequiresStatusOnline(t *testing.T) {
 	}
 }
 
-func TestRecipeBootNeverStartedAfterOffIsFatal(t *testing.T) {
+func TestRecipeBootNeverStartedStopsAtLimit(t *testing.T) {
 	actor := &fakeBoot{
 		readyAfter: 1,
 		postErr: func(bool) error {
@@ -128,14 +151,11 @@ func TestRecipeBootNeverStartedAfterOffIsFatal(t *testing.T) {
 		},
 	}
 	lines, _, err := runFakeBoot(t, actor)
-	if err == nil || !strings.Contains(err.Error(), "never been started") {
+	if err == nil || !strings.Contains(err.Error(), "timed out") || !strings.Contains(err.Error(), "never been started") {
 		t.Fatalf("err = %v", err)
 	}
-	if actor.powerOns != 1 || actor.powerOffs != 1 || len(actor.posts) != 1 || actor.posts[0] != "off" {
-		t.Fatalf("power on=%d off=%d posts=%#v", actor.powerOns, actor.powerOffs, actor.posts)
-	}
-	if strings.Contains(err.Error(), "timed out after") {
-		t.Fatalf("err = %v", err)
+	if actor.powerOns < 2 || actor.powerOffs < 1 || len(actor.posts) < 2 || actor.deletes != actor.nodeQueries {
+		t.Fatalf("power on=%d off=%d posts=%#v queries=%d deletes=%d", actor.powerOns, actor.powerOffs, actor.posts, actor.nodeQueries, actor.deletes)
 	}
 	if !strings.Contains(strings.Join(lines, "\n"), "power=off") {
 		t.Fatalf("log = %s", strings.Join(lines, "\n"))
@@ -268,6 +288,7 @@ type fakeBoot struct {
 	queryRefusals       int
 	nodeQueries         int
 	queryReads          int
+	deletes             int
 	onlinePolls         int
 	networkRunning      bool
 	networkStops        int
@@ -310,6 +331,11 @@ func (a *fakeBoot) postNodeQuery(context.Context, int) (string, error) {
 	a.nodeQueries++
 	a.queryReads = 0
 	return fmt.Sprintf("%d", a.nodeQueries), nil
+}
+
+func (a *fakeBoot) deleteNodeQuery(context.Context, string) error {
+	a.deletes++
+	return nil
 }
 
 func (a *fakeBoot) readNodeQuery(context.Context, string) (string, string, error) {

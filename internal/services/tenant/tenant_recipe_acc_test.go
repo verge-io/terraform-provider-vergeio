@@ -33,7 +33,11 @@ import (
 // containers and do not report a guest agent. A ui_address is probed only
 // when one is assigned. Setup then powers the tenant off, waits for its
 // network to stop, and posts the recipe once. A 405 that says the tenant is
-// currently running retries that power-off. VergeOS records its own
+// currently running retries that power-off. A 405 that says the tenant has
+// never been started powers it on, waits for the same readiness, holds it
+// online (2 minutes, then 4, then 8), and posts again until 20 minutes from
+// the first power-on. Each tenant_node_queries row is deleted after it is
+// read. VergeOS records its own
 // snapshot of the tenant. TF_ACC_VERGEIO_TENANT_RECIPE_ID is an optional
 // override. It is a 40-character hex key, the same value as
 // vergeio_tenant_recipes recipes[].id.

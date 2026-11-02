@@ -33,6 +33,8 @@ func TestTenantNodeTCPQuery(t *testing.T) {
 			if _, err := w.Write([]byte(`{"$key":15,"status":"complete","result":"Connection successful"}`)); err != nil {
 				t.Errorf("write: %v", err)
 			}
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenant_node_queries/15":
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -53,6 +55,9 @@ func TestTenantNodeTCPQuery(t *testing.T) {
 	if err != nil || status != "complete" || !strings.Contains(result, "Connection successful") {
 		t.Fatalf("query = %s %s %v", status, result, err)
 	}
+	if err := client.DeleteTenantNodeQuery(ctx, id); err != nil {
+		t.Fatal(err)
+	}
 	joined := strings.Join(calls, "\n")
 	for _, part := range []string{
 		"fields=%24key%2Cdb_version",
@@ -61,6 +66,7 @@ func TestTenantNodeTCPQuery(t *testing.T) {
 		`"host":"127.0.0.1"`,
 		`"port":"443"`,
 		"fields=%24key%2Cstatus%2Cresult",
+		"DELETE /api/v4/tenant_node_queries/15",
 	} {
 		if !strings.Contains(joined, part) {
 			t.Fatalf("calls = %s\nmissing %s", joined, part)
