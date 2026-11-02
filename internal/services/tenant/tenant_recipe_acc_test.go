@@ -26,11 +26,14 @@ import (
 // It is skipped unless TF_ACC=1 and lab credentials are set. An unset
 // TF_ACC_VERGEIO_TENANT_RECIPE_ID is not a skip and is not a pass: setup
 // creates a tenant, a node (4 cores, 16 GB RAM, 100 GiB storage), and a
-// catalog, and powers the tenant on once. Setup leaves it running until a
-// node machine reports local_time or agent_version, or an assigned
-// ui_address answers, for up to 20 minutes. It then powers the tenant off,
-// waits for its network to stop, and posts the recipe once. A 405 that says
-// the tenant is currently running retries that power-off. VergeOS records its own
+// catalog, and powers the tenant on once. Setup leaves it running until
+// tenant_status is running, not starting, not stopping, and status online,
+// db_version is set, and tenant_node_queries tcp_connect to 127.0.0.1:443
+// returns Connection successful, for up to 20 minutes. Tenant nodes are LXC
+// containers and do not report a guest agent. A ui_address is probed only
+// when one is assigned. Setup then powers the tenant off, waits for its
+// network to stop, and posts the recipe once. A 405 that says the tenant is
+// currently running retries that power-off. VergeOS records its own
 // snapshot of the tenant. TF_ACC_VERGEIO_TENANT_RECIPE_ID is an optional
 // override. It is a 40-character hex key, the same value as
 // vergeio_tenant_recipes recipes[].id.

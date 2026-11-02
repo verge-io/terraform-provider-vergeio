@@ -22,10 +22,12 @@ const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 // TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
 // The tenant uses govergeos. Catalogs and tenant recipes have no create
 // method there, so those rows are posted over HTTP. The source tenant is
-// powered on once and left running until a node machine reports local_time
-// or agent_version, or its ui_address answers. That wait is recipeGuestLimit.
-// The fixture then powers the tenant off, waits for its network to stop, and
-// posts the recipe once. A "currently running" 405 retries that power-off.
+// powered on once and left running until tenant_status is online and a
+// tenant_node_queries tcp_connect to 127.0.0.1:443 returns Connection
+// successful. That wait is recipeGuestLimit. Tenant nodes are LXC
+// containers and have no guest agent. The fixture then powers the tenant
+// off, waits for its network to stop, and posts the recipe once. A
+// "currently running" 405 retries that power-off.
 // VergeOS fills tenant_snapshot itself. The fixture does not send that field.
 type TenantRecipeFixture struct {
 	RecipeID   string
@@ -40,8 +42,8 @@ type TenantRecipeFixture struct {
 
 // NewTenantRecipeFixture creates the source tenant, gives it a node and
 // storage, posts a private catalog in the local repository, and powers the
-// tenant on. It leaves the tenant running until the guest reports
-// local_time or agent_version, or an assigned ui_address answers, then
+// tenant on. It leaves the tenant running until tenant_status is online
+// and tenant_node_queries tcp_connect to 127.0.0.1:443 succeeds, then
 // powers it off, waits for its network to stop, and posts the recipe once.
 // Required questions the fixture can answer are returned as HCL
 // inside an answers map. A required question it cannot answer is disabled,

@@ -18,11 +18,14 @@ import (
 
 const (
 	// recipeGuestLimit is how long the source tenant stays powered on while
-	// the fixture waits for a guest signal. The lab's short power cycles
-	// never reached first boot.
+	// the fixture waits for tenant_status online and a successful
+	// tenant_node_queries tcp_connect.
 	recipeGuestLimit = 20 * time.Minute
-	// recipePollGap is the pause between status reads during that wait.
+	// recipePollGap is the pause between those attempts.
 	recipePollGap = 15 * time.Second
+	// recipeQueryPoll is the pause while one tenant_node_queries row still
+	// has status running.
+	recipeQueryPoll = 2 * time.Second
 	// recipeOffLimit bounds one power-off and network-stop wait. A
 	// "currently running" POST retries that wait, up to recipeRunningPosts.
 	recipeOffLimit = 2 * time.Minute
@@ -57,6 +60,9 @@ type recipeBootAct interface {
 	powerOff(ctx context.Context) error
 	stopNetwork(ctx context.Context) error
 	observe(ctx context.Context) (tenantBootView, error)
+	nodeDBVersion(ctx context.Context, nodeKey int) (string, error)
+	postNodeQuery(ctx context.Context, nodeKey int) (string, error)
+	readNodeQuery(ctx context.Context, id string) (string, string, error)
 	postRecipe(ctx context.Context) (string, error)
 }
 
@@ -87,13 +93,18 @@ func (b *recipeBoot) run(ctx context.Context) (string, error) {
 	if err := b.act.powerOn(ctx); err != nil {
 		return "", err
 	}
-	if err := b.waitForGuest(ctx); err != nil {
+	if err := b.waitForReady(ctx); err != nil {
 		return "", err
 	}
 	return b.postWhileOff(ctx)
 }
 
-func (b *recipeBoot) waitForGuest(ctx context.Context) error {
+// waitForReady powers nothing. The caller already powered the tenant on.
+// Tenant nodes are LXC containers, so they have no guest agent.
+// machine_status local_time, agent_version, and agent IP stay empty, and
+// this fixture's tenant has no ui_address. Readiness is tenant_status
+// online, then tenant_node_queries tcp_connect to 127.0.0.1:443.
+func (b *recipeBoot) waitForReady(ctx context.Context) error {
 	deadline := b.now().Add(recipeGuestLimit)
 	for {
 		view, err := b.act.observe(ctx)
@@ -101,16 +112,75 @@ func (b *recipeBoot) waitForGuest(ctx context.Context) error {
 			return err
 		}
 		b.write(formatBootView(view))
-		if guestSignaled(view) {
-			return nil
+		if tenantBootOnline(view.status) {
+			ready, err := b.readyNode(ctx, firstTenantNodeKey(view), deadline)
+			if err != nil || ready {
+				return err
+			}
 		}
 		if !b.now().Before(deadline) {
-			return fmt.Errorf("timed out after %s waiting for the guest to report local_time, agent_version, or an answering ui_address\nlast: %s\n%s", recipeGuestLimit, b.last, b.log.String())
+			return fmt.Errorf("timed out after %s waiting for tenant_status online and tenant_node_queries tcp_connect to 127.0.0.1:443\nlast: %s\n%s", recipeGuestLimit, b.last, b.log.String())
 		}
 		if err := b.sleep(ctx, recipePollGap); err != nil {
 			return err
 		}
 	}
+}
+
+func (b *recipeBoot) readyNode(ctx context.Context, nodeKey int, deadline time.Time) (bool, error) {
+	if nodeKey <= 0 {
+		return false, nil
+	}
+	version, err := b.act.nodeDBVersion(ctx, nodeKey)
+	if err != nil {
+		return false, err
+	}
+	b.write(fmt.Sprintf("tenant_node %d db_version=%q", nodeKey, version))
+	if strings.TrimSpace(version) == "" {
+		return false, nil
+	}
+	return b.tcpConnect(ctx, nodeKey, deadline)
+}
+
+func (b *recipeBoot) tcpConnect(ctx context.Context, nodeKey int, deadline time.Time) (bool, error) {
+	id, err := b.act.postNodeQuery(ctx, nodeKey)
+	if err != nil {
+		return false, err
+	}
+	for {
+		status, result, err := b.act.readNodeQuery(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		b.write(fmt.Sprintf("tenant_node_queries %s status=%s result=%s", id, status, result))
+		if status != "running" {
+			return status == "complete" && strings.Contains(result, "Connection successful"), nil
+		}
+		if !b.now().Before(deadline) {
+			return false, fmt.Errorf("timed out after %s waiting for tenant_node_queries %s\nlast: %s\n%s", recipeGuestLimit, id, b.last, b.log.String())
+		}
+		if err := b.sleep(ctx, recipeQueryPoll); err != nil {
+			return false, err
+		}
+	}
+}
+
+func firstTenantNodeKey(view tenantBootView) int {
+	for i := range view.nodes {
+		if id := view.nodes[i].Key.Int(); id > 0 {
+			return id
+		}
+	}
+	return 0
+}
+
+// tenantBootOnline is the first-boot tenant_status check: running, not
+// starting, not stopping, and status online.
+func tenantBootOnline(status *vergeos.TenantStatus) bool {
+	if status == nil || !status.Running || status.Starting || status.Stopping {
+		return false
+	}
+	return status.Status == "online"
 }
 
 func (b *recipeBoot) postWhileOff(ctx context.Context) (string, error) {
@@ -193,32 +263,9 @@ func (b *recipeBoot) write(line string) {
 	b.log.WriteByte('\n')
 }
 
-func guestSignaled(view tenantBootView) bool {
-	if machineGuestReported(view) {
-		return true
-	}
-	return uiAnswers(view.ui)
-}
-
-func machineGuestReported(view tenantBootView) bool {
-	for i := range view.nodes {
-		status := view.machines[view.nodes[i].Machine.Int()]
-		if status == nil {
-			continue
-		}
-		if status.LocalTime > 0 || strings.TrimSpace(status.AgentVersion) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// uiAnswers is the probe text from a ui_address that returned an HTTP status.
-// "ui_address empty" and a connection error do not count.
-func uiAnswers(ui string) bool {
-	return strings.Contains(ui, " status=")
-}
-
+// tenantRowOnline reports whether the tenant row is up. Starting and
+// stopping are not up. reduced, migrating, and restarting are not a
+// finished first boot, so those status strings are not online either.
 func tenantRowOnline(status *vergeos.TenantStatus) bool {
 	if status == nil || status.Starting || status.Stopping {
 		return false
@@ -226,12 +273,7 @@ func tenantRowOnline(status *vergeos.TenantStatus) bool {
 	if status.Running {
 		return true
 	}
-	switch status.Status {
-	case "online", "migrating", "restarting", "reduced":
-		return true
-	default:
-		return false
-	}
+	return status.Status == "online"
 }
 
 func classifyRecipePost(err error) (recipePostKind, string) {
@@ -363,6 +405,18 @@ func (p fixtureRecipePost) stopNetwork(ctx context.Context) error {
 	return nil
 }
 
+func (p fixtureRecipePost) nodeDBVersion(ctx context.Context, nodeKey int) (string, error) {
+	return p.f.http.TenantNodeDBVersion(ctx, nodeKey)
+}
+
+func (p fixtureRecipePost) postNodeQuery(ctx context.Context, nodeKey int) (string, error) {
+	return p.f.http.CreateTenantNodeTCPQuery(ctx, nodeKey)
+}
+
+func (p fixtureRecipePost) readNodeQuery(ctx context.Context, id string) (string, string, error) {
+	return p.f.http.GetTenantNodeQuery(ctx, id)
+}
+
 func (p fixtureRecipePost) postRecipe(ctx context.Context) (string, error) {
 	return p.f.http.CreateTenantRecipe(ctx, vergeio.TenantRecipeCreate{
 		Name:        p.name,
@@ -443,6 +497,9 @@ func (p fixtureRecipePost) tenantNetwork(ctx context.Context) (int, bool, error)
 	return id, network.Running, nil
 }
 
+// probeUI checks an assigned ui_address. A tenant with no public IP has
+// no ui_address, and that is not a failure. The TCP query is the readiness
+// check.
 func (p fixtureRecipePost) probeUI(ctx context.Context) string {
 	row, err := p.f.sdk.Tenants.Get(ctx, p.f.tenantID)
 	if err != nil || row == nil || row.UIAddress.Int() <= 0 {
