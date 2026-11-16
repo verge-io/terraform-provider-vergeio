@@ -77,6 +77,7 @@ type fakeVerge struct {
 	layer2DeleteStatus  int
 	layer2DeleteMessage string
 	nodes               map[int]map[string]any
+	devices             map[int]map[string]any
 	storage             map[int]map[string]any
 	snapshots           map[int]map[string]any
 	vnets               map[int]map[string]any
@@ -104,6 +105,7 @@ func newFake(t *testing.T) *fakeVerge {
 		cidrs:          map[int]map[string]any{},
 		layer2:         map[int]map[string]any{},
 		nodes:          map[int]map[string]any{},
+		devices:        map[int]map[string]any{},
 		storage:        map[int]map[string]any{},
 		snapshots:      map[int]map[string]any{},
 		vnets:          map[int]map[string]any{},
@@ -280,6 +282,8 @@ func (f *fakeVerge) serve(w http.ResponseWriter, r *http.Request) {
 		f.serveTenantAction(w, payload)
 	case "tenant_nodes":
 		f.serveNodes(w, r, id, payload)
+	case "machine_devices":
+		f.serveDevices(w, r, id, payload)
 	case "tenant_node_actions":
 		f.serveNodeAction(w, payload)
 	case "tenant_storage":
@@ -511,6 +515,99 @@ func (f *fakeVerge) setTenantVNetRunning(tenantID int, running bool) {
 		f.vnets[vnetID] = vnet
 	}
 	vnet["running"] = running
+}
+
+func (f *fakeVerge) seedDevice(id int, row map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id >= f.next {
+		f.next = id + 1
+	}
+	row["$key"] = id
+	f.devices[id] = row
+}
+
+func (f *fakeVerge) seedTenantNode(id, tenantID, machineID int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id >= f.next {
+		f.next = id + 1
+	}
+	f.nodes[id] = map[string]any{
+		"$key":        id,
+		"tenant":      tenantID,
+		"name":        fmt.Sprintf("node-%d", id),
+		"machine":     machineID,
+		"is_snapshot": false,
+		"enabled":     true,
+	}
+}
+
+func (f *fakeVerge) serveDevices(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	switch {
+	case r.Method == http.MethodPost && id == 0:
+		id = f.alloc()
+		enabled := true
+		if _, ok := payload["enabled"]; ok {
+			enabled = boolField(payload, "enabled")
+		}
+		obj := map[string]any{
+			"$key":         id,
+			"machine":      intField(payload["machine"]),
+			"machine_type": "tenant",
+			"orderid":      0,
+			"type":         stringField(payload, "type"),
+			"name":         stringField(payload, "name"),
+			"description":  stringField(payload, "description"),
+			"enabled":      enabled,
+			"optional":     boolField(payload, "optional"),
+			"uuid":         fmt.Sprintf("uuid-%d", id),
+			"created":      int64(1700000000),
+			"modified":     int64(1700000001),
+		}
+		if group := stringField(payload, "resource_group"); group != "" {
+			obj["resource_group"] = group
+		}
+		f.devices[id] = obj
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodGet && id == 0:
+		rows := make([]map[string]any, 0, len(f.devices))
+		for _, row := range f.devices {
+			rows = append(rows, row)
+		}
+		writeJSON(f.t, w, http.StatusOK, f.filterMaps(rows, r.URL.Query().Get("filter")))
+	case r.Method == http.MethodGet && id > 0:
+		obj, ok := f.devices[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		writeJSON(f.t, w, http.StatusOK, obj)
+	case r.Method == http.MethodPut && id > 0:
+		obj, ok := f.devices[id]
+		if !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		for key, value := range payload {
+			if key == "machine" || key == "type" {
+				continue
+			}
+			obj[key] = value
+		}
+		obj["modified"] = int64(1700000002)
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+	case r.Method == http.MethodDelete && id > 0:
+		if _, ok := f.devices[id]; !ok {
+			writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+			return
+		}
+		delete(f.devices, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		f.t.Errorf("unexpected machine_devices %s id %d", r.Method, id)
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+	}
 }
 
 func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
