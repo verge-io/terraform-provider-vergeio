@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -51,6 +52,7 @@ type TenantNodeDeviceResourceModel struct {
 	Enabled       types.Bool   `tfsdk:"enabled"`
 	Optional      types.Bool   `tfsdk:"optional"`
 	Count         types.Int32  `tfsdk:"device_count"`
+	DeviceIDs     types.List   `tfsdk:"device_ids"`
 	Machine       types.Int32  `tfsdk:"machine"`
 	MachineType   types.String `tfsdk:"machine_type"`
 	OrderID       types.Int32  `tfsdk:"orderid"`
@@ -124,7 +126,7 @@ func (r *TenantNodeDeviceResource) Schema(ctx context.Context, req resource.Sche
 				Default:             booldefault.StaticBool(false),
 			},
 			"device_count": schema.Int32Attribute{
-				MarkdownDescription: "How many copies VergeOS creates. Sent as count on create only. Defaults to 1. The device row does not store this number, so Terraform keeps the configured value. Changing it replaces the device. A value above 1 creates extra device rows that this resource does not track. Use 1 when each device should be its own resource.",
+				MarkdownDescription: "How many copies VergeOS creates. Sent as count on create only. Defaults to 1. The device row does not store this number, so Terraform keeps the configured value. Changing it replaces the device. Every copy is listed in device_ids, and destroy removes all of them.",
 				Optional:            true,
 				Computed:            true,
 				Default:             int32default.StaticInt32(1),
@@ -133,6 +135,14 @@ func (r *TenantNodeDeviceResource) Schema(ctx context.Context, req resource.Sche
 				},
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.RequiresReplace(),
+				},
+			},
+			"device_ids": schema.ListAttribute{
+				MarkdownDescription: "machine_devices keys created with this device. device_count above 1 adds one key per copy. Destroy removes every key.",
+				ElementType:         types.StringType,
+				Computed:            true,
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"machine": schema.Int32Attribute{

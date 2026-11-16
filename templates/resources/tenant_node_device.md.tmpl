@@ -14,7 +14,7 @@ The device is thick provisioned. The tenant owns it even when no VM inside the t
 
 `resource_group` is the resource group UUID, the same value as an id from [`vergeio_resource_groups`](../data-sources/resource_groups.html). `type` has to be one of `node_usb_devices`, `tpm`, `node_pci_devices`, `node_nvidia_vgpu_devices`, `node_host_gpu_devices`, `node_sriov_nic_devices`, `gpu`, or `nvidia_vgpu`. `gpu` and `nvidia_vgpu` are the older names. Changing `tenant_node_id` or `type` replaces the device.
 
-`device_count` is how many copies VergeOS creates. It is sent as `count`. Terraform reserves `count`, so the argument cannot use that name. It defaults to 1 and is only sent when the device is created. The device row does not store the number, so Terraform keeps the configured value. Changing it replaces the device. A value above 1 creates that many device rows, and this resource tracks only the row VergeOS returns. The extra rows stay in VergeOS. Use one resource per device, with `device_count` left at 1, when each device should be tracked.
+`device_count` is how many copies VergeOS creates. It is sent as `count`. Terraform reserves `count`, so the argument cannot use that name. It defaults to 1 and is only sent when the device is created. The device row does not store the number, so Terraform keeps the configured value. Changing it replaces the device. Every copy is listed in `device_ids`, and destroy removes all of them.
 
 `enabled` defaults to true. `optional` defaults to false. When `optional` is true, the tenant node can start without the device. `name`, `description`, `resource_group`, `enabled`, and `optional` update in place. Omit `description` or `resource_group` to leave the current value unchanged.
 
@@ -36,7 +36,7 @@ The device is thick provisioned. The tenant owns it even when no VM inside the t
 ### Optional
 
 - `description` (String) Device description. Omit to leave the current description unchanged.
-- `device_count` (Number) How many copies VergeOS creates. Sent as `count` on create only. Defaults to 1. The device row does not store this number, so Terraform keeps the configured value. Changing it replaces the device. A value above 1 creates extra device rows that this resource does not track. Use 1 when each device should be its own resource.
+- `device_count` (Number) How many copies VergeOS creates. Sent as `count` on create only. Defaults to 1. The device row does not store this number, so Terraform keeps the configured value. Changing it replaces the device. Every copy is listed in `device_ids`, and destroy removes all of them.
 - `enabled` (Boolean) Whether the device is enabled. Defaults to true.
 - `optional` (Boolean) When true, the tenant node can start without this device. Defaults to false.
 - `resource_group` (String) Resource group UUID, the same value as a `vergeio_resource_groups` id. This is the `resource_group` stored on the device. Omit to leave the current value unchanged.
@@ -44,6 +44,7 @@ The device is thick provisioned. The tenant owns it even when no VM inside the t
 ### Read-Only
 
 - `created` (Number) Creation time as a Unix timestamp.
+- `device_ids` (List of String) `machine_devices` keys created with this device. `device_count` above 1 adds one key per copy. Destroy removes every key.
 - `id` (String) `machine_devices` key assigned by VergeOS.
 - `machine` (Number) Machine key of the tenant node. VergeOS stores the device against this key, not the tenant node key.
 - `machine_type` (String) Machine kind stored on the device. A tenant node device is `tenant`.

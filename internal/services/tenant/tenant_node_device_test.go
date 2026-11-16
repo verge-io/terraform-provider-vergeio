@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -374,6 +375,127 @@ func TestReadTenantNodeDeviceFindsNodeOnImport(t *testing.T) {
 	}
 }
 
+func TestCreateTenantNodeDeviceKeepsDeviceWhenNodeReadFails(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	fake.failNodeGetAfter = 1
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	err := api.createTenantNodeDevice(context.Background(), data)
+	if err == nil {
+		t.Fatal("expected the ownership lookup to fail")
+	}
+	if vergeos.IsNotFoundError(err) {
+		t.Fatalf("lookup error was treated as not found: %v", err)
+	}
+	if data.Id.ValueString() == "" {
+		t.Fatal("id was cleared after a lookup error")
+	}
+	if fake.callCount(http.MethodDelete, "/api/v4/machine_devices/"+data.Id.ValueString()) != 0 {
+		t.Fatal("deleted the device after a lookup error")
+	}
+	if len(fake.devices) != 1 {
+		t.Fatalf("devices left = %d", len(fake.devices))
+	}
+}
+
+func TestCreateTenantNodeDeviceRollsBackWhenNotOwned(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	fake.overrideNodeMachineAfter = 1
+	fake.overrideNodeMachine = 99
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	err := api.createTenantNodeDevice(context.Background(), data)
+	if err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("err = %v", err)
+	}
+	if data.Id.ValueString() != "" {
+		t.Fatalf("id = %s", data.Id)
+	}
+	if len(fake.devices) != 0 {
+		t.Fatalf("devices left = %d", len(fake.devices))
+	}
+}
+
+func TestCreateTenantNodeDeviceTracksCopies(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	data.Count = types.Int32Value(2)
+	if err := api.createTenantNodeDevice(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	ids := deviceIDValues(t, data.DeviceIDs)
+	if len(ids) != 2 || ids[0] != data.Id.ValueString() {
+		t.Fatalf("device_ids = %v, id = %s", ids, data.Id)
+	}
+	if len(fake.devices) != 2 {
+		t.Fatalf("devices stored = %d", len(fake.devices))
+	}
+	if err := api.deleteTenantNodeDevice(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.devices) != 0 {
+		t.Fatalf("devices left = %d", len(fake.devices))
+	}
+}
+
+func TestCreateTenantNodeDeviceRollsBackEveryCopy(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	fake.overrideNodeMachineAfter = 3
+	fake.overrideNodeMachine = 99
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	data.Count = types.Int32Value(2)
+	err := api.createTenantNodeDevice(context.Background(), data)
+	if err == nil || !strings.Contains(err.Error(), "not owned") {
+		t.Fatalf("err = %v", err)
+	}
+	if data.Id.ValueString() != "" {
+		t.Fatalf("id = %s", data.Id)
+	}
+	if len(fake.devices) != 0 {
+		t.Fatalf("devices left = %d, want both copies removed", len(fake.devices))
+	}
+	if deletes := deviceDeleteCalls(fake); deletes != 2 {
+		t.Fatalf("delete calls = %d", deletes)
+	}
+}
+
+func TestCreateTenantNodeDeviceLeavesCopiesWhenListFails(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	fake.failNodeGetAfter = 2
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	data.Count = types.Int32Value(2)
+	err := api.createTenantNodeDevice(context.Background(), data)
+	if err == nil || !strings.Contains(err.Error(), "could not list") {
+		t.Fatalf("err = %v", err)
+	}
+	if data.Id.ValueString() == "" {
+		t.Fatal("id was cleared")
+	}
+	ids := deviceIDValues(t, data.DeviceIDs)
+	if len(ids) != 1 || ids[0] != data.Id.ValueString() {
+		t.Fatalf("device_ids = %v", ids)
+	}
+	if len(fake.devices) != 2 {
+		t.Fatalf("devices stored = %d", len(fake.devices))
+	}
+	if deletes := deviceDeleteCalls(fake); deletes != 0 {
+		t.Fatalf("delete calls = %d", deletes)
+	}
+}
+
 func TestDeleteTenantNodeDevice(t *testing.T) {
 	fake := newFake(t)
 	fake.seedTenantNode(11, 7, 80)
@@ -483,6 +605,27 @@ func TestTenantNodeDevicesDataSource(t *testing.T) {
 	if empty.Devices == nil || len(empty.Devices) != 0 {
 		t.Fatalf("empty list = %#v", empty.Devices)
 	}
+}
+
+func deviceIDValues(t *testing.T, list types.List) []string {
+	t.Helper()
+	var texts []string
+	if diags := list.ElementsAs(context.Background(), &texts, false); diags.HasError() {
+		t.Fatal(diags)
+	}
+	return texts
+}
+
+func deviceDeleteCalls(fake *fakeVerge) int {
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	n := 0
+	for _, call := range fake.calls {
+		if strings.HasPrefix(call, http.MethodDelete+" ") {
+			n++
+		}
+	}
+	return n
 }
 
 func deviceModel() *TenantNodeDeviceResourceModel {

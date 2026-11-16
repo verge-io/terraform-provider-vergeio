@@ -5,8 +5,10 @@ package tenant
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
@@ -195,6 +197,20 @@ func (a *API) createTenantNodeDevice(ctx context.Context, data *TenantNodeDevice
 	if err != nil {
 		return err
 	}
+	copies := 1
+	if req.Count != nil && *req.Count > 1 {
+		copies = *req.Count
+	}
+	var before map[int]struct{}
+	if copies > 1 {
+		// The list is the only way to see the extra rows count creates.
+		// Fail before posting when that list is unavailable, so a create
+		// does not leave copies that cannot be tracked or removed.
+		before, err = a.deviceIDSet(ctx, nodeID)
+		if err != nil {
+			return fmt.Errorf("list devices on tenant node %d before create: %w", nodeID, err)
+		}
+	}
 	created, err := a.sdk.TenantNodeDevices.Create(ctx, nodeID, req)
 	if created != nil && created.Key.Int() > 0 {
 		assignTenantNodeDevice(data, created)
@@ -206,12 +222,48 @@ func (a *API) createTenantNodeDevice(ctx context.Context, data *TenantNodeDevice
 	if created == nil || created.Key.Int() <= 0 {
 		return fmt.Errorf("VergeOS did not return an id for the tenant node device")
 	}
-	if err := a.ensureTenantNodeDeviceOwned(ctx, data, created); err != nil {
-		if delErr := a.sdk.TenantNodeDevices.Delete(ctx, created.Key.Int()); delErr != nil && !vergeos.IsNotFoundError(delErr) {
-			return fmt.Errorf("%w (also failed to delete device %d: %v)", err, created.Key.Int(), delErr)
+	ids := []int{created.Key.Int()}
+	if copies > 1 {
+		after, listErr := a.deviceIDSet(ctx, nodeID)
+		if listErr != nil {
+			// The returned row stays tracked. A failed list is not proof
+			// the copies are someone else's, so they are not deleted.
+			if setErr := setDeviceIDs(ctx, data, ids); setErr != nil {
+				return setErr
+			}
+			return fmt.Errorf("created tenant node device %d, but could not list the other copies: %w", created.Key.Int(), listErr)
 		}
-		data.Id = types.StringNull()
+		ids = newDeviceIDs(before, after, created.Key.Int())
+		if len(ids) < copies {
+			if setErr := setDeviceIDs(ctx, data, ids); setErr != nil {
+				return setErr
+			}
+			return fmt.Errorf("created device %d on tenant node %d, but only %d of %d copies were listed", created.Key.Int(), nodeID, len(ids), copies)
+		}
+	}
+	if err := setDeviceIDs(ctx, data, ids); err != nil {
 		return err
+	}
+	if err := a.ensureTenantNodeDeviceOwned(ctx, data, created); err != nil {
+		if !vergeos.IsNotFoundError(err) {
+			// A timeout or a 500 is not an ownership mismatch. Leave every
+			// row in place and keep the ids in state.
+			return err
+		}
+		left, delErr := a.deleteDeviceIDs(ctx, ids)
+		if len(left) == 0 {
+			data.Id = types.StringNull()
+			data.DeviceIDs = types.ListNull(types.StringType)
+		} else if setErr := setDeviceIDs(ctx, data, left); setErr != nil {
+			delErr = errors.Join(delErr, setErr)
+			data.Id = idString(left[0])
+		} else {
+			data.Id = idString(left[0])
+		}
+		if delErr != nil {
+			return fmt.Errorf("device %d is not owned by tenant node %d, and deleting the new rows failed: %w", created.Key.Int(), nodeID, delErr)
+		}
+		return fmt.Errorf("device %d is not owned by tenant node %d", created.Key.Int(), nodeID)
 	}
 	return nil
 }
@@ -229,7 +281,28 @@ func (a *API) readTenantNodeDevice(ctx context.Context, data *TenantNodeDeviceRe
 		return err
 	}
 	assignTenantNodeDevice(data, device)
-	return nil
+	ids, err := trackedDeviceIDs(ctx, data)
+	if err != nil {
+		return err
+	}
+	kept := []int{device.Key.Int()}
+	for _, id := range ids {
+		if id == device.Key.Int() {
+			continue
+		}
+		sibling, err := a.sdk.TenantNodeDevices.Get(ctx, id)
+		if err != nil {
+			if vergeos.IsNotFoundError(err) {
+				continue
+			}
+			return err
+		}
+		if sibling.Machine != device.Machine || (sibling.MachineType != "" && sibling.MachineType != vergeos.DeviceMachineTypeTenant) {
+			continue
+		}
+		kept = append(kept, id)
+	}
+	return setDeviceIDs(ctx, data, orderedDeviceIDs(kept, device.Key.Int()))
 }
 
 func (a *API) updateTenantNodeDevice(ctx context.Context, plan, state *TenantNodeDeviceResourceModel) error {
@@ -238,31 +311,157 @@ func (a *API) updateTenantNodeDevice(ctx context.Context, plan, state *TenantNod
 		return err
 	}
 	plan.Id = state.Id
+	plan.DeviceIDs = state.DeviceIDs
 	req := tenantNodeDeviceUpdateRequest(plan, state)
 	if req == nil {
 		return nil
 	}
-	updated, err := a.sdk.TenantNodeDevices.Update(ctx, id, req)
+	ids, err := trackedDeviceIDs(ctx, state)
 	if err != nil {
 		return err
+	}
+	var updated *vergeos.VMDevice
+	for _, deviceID := range ids {
+		row, err := a.sdk.TenantNodeDevices.Update(ctx, deviceID, req)
+		if err != nil {
+			return err
+		}
+		if deviceID == id {
+			updated = row
+		}
+	}
+	if updated == nil {
+		updated, err = a.sdk.TenantNodeDevices.Get(ctx, id)
+		if err != nil {
+			return err
+		}
 	}
 	if err := a.ensureTenantNodeDeviceOwned(ctx, plan, updated); err != nil {
 		return err
 	}
 	assignTenantNodeDevice(plan, updated)
+	plan.DeviceIDs = state.DeviceIDs
 	tflog.Debug(ctx, fmt.Sprintf("updated tenant node device %d", id))
 	return nil
 }
 
 func (a *API) deleteTenantNodeDevice(ctx context.Context, data *TenantNodeDeviceResourceModel) error {
-	id, err := parseID(data.Id, "tenant node device")
+	ids, err := trackedDeviceIDs(ctx, data)
 	if err != nil {
 		return err
 	}
-	if err := a.sdk.TenantNodeDevices.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-		return err
+	left, delErr := a.deleteDeviceIDs(ctx, ids)
+	if len(left) == 0 {
+		tflog.Debug(ctx, fmt.Sprintf("deleted tenant node device %s", data.Id.ValueString()))
+		return delErr
 	}
-	tflog.Debug(ctx, fmt.Sprintf("deleted tenant node device %d", id))
+	if setErr := setDeviceIDs(ctx, data, left); setErr != nil {
+		delErr = errors.Join(delErr, setErr)
+	}
+	data.Id = idString(left[0])
+	if delErr != nil {
+		return delErr
+	}
+	return fmt.Errorf("tenant node devices %v are still present", left)
+}
+
+func (a *API) deviceIDSet(ctx context.Context, nodeID int) (map[int]struct{}, error) {
+	devices, err := a.sdk.TenantNodeDevices.List(ctx, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[int]struct{}, len(devices))
+	for i := range devices {
+		if id := devices[i].Key.Int(); id > 0 {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
+func newDeviceIDs(before, after map[int]struct{}, created int) []int {
+	ids := make([]int, 0, len(after))
+	for id := range after {
+		if _, ok := before[id]; ok {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return orderedDeviceIDs(ids, created)
+}
+
+func orderedDeviceIDs(ids []int, primary int) []int {
+	seen := map[int]struct{}{}
+	rest := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 || id == primary {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		rest = append(rest, id)
+	}
+	sort.Ints(rest)
+	if primary <= 0 {
+		return rest
+	}
+	return append([]int{primary}, rest...)
+}
+
+func (a *API) deleteDeviceIDs(ctx context.Context, ids []int) (left []int, err error) {
+	var errs []error
+	for _, id := range ids {
+		delErr := a.sdk.TenantNodeDevices.Delete(ctx, id)
+		if delErr == nil || vergeos.IsNotFoundError(delErr) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("delete device %d: %w", id, delErr))
+		left = append(left, id)
+	}
+	return left, errors.Join(errs...)
+}
+
+func trackedDeviceIDs(ctx context.Context, data *TenantNodeDeviceResourceModel) ([]int, error) {
+	primary, err := parseID(data.Id, "tenant node device")
+	if err != nil && (data.DeviceIDs.IsNull() || data.DeviceIDs.IsUnknown()) {
+		return nil, err
+	}
+	if data.DeviceIDs.IsNull() || data.DeviceIDs.IsUnknown() {
+		return []int{primary}, nil
+	}
+	var texts []string
+	if diags := data.DeviceIDs.ElementsAs(ctx, &texts, false); diags.HasError() {
+		return nil, fmt.Errorf("device_ids: %s", diags)
+	}
+	ids := make([]int, 0, len(texts)+1)
+	if primary > 0 {
+		ids = append(ids, primary)
+	}
+	for _, text := range texts {
+		id, convErr := strconv.Atoi(strings.TrimSpace(text))
+		if convErr != nil || id <= 0 {
+			return nil, fmt.Errorf("device_ids value %q is not a positive integer", text)
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("tenant node device id is empty")
+	}
+	return orderedDeviceIDs(ids, primary), nil
+}
+
+func setDeviceIDs(ctx context.Context, data *TenantNodeDeviceResourceModel, ids []int) error {
+	texts := make([]string, len(ids))
+	for i, id := range ids {
+		texts[i] = strconv.Itoa(id)
+	}
+	list, diags := types.ListValueFrom(ctx, types.StringType, texts)
+	if diags.HasError() {
+		return fmt.Errorf("device_ids: %s", diags)
+	}
+	data.DeviceIDs = list
 	return nil
 }
 

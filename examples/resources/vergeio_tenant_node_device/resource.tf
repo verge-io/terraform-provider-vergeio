@@ -3,8 +3,8 @@
 # The tenant owns the device once it is attached, even when no VM inside
 # the tenant is using it. It cannot be assigned to another VM or tenant
 # until this resource is destroyed.
-# device_count is sent as count. It defaults to 1. A value above 1 creates
-# extra device rows that this resource does not track.
+# device_count is sent as count. It defaults to 1. Every copy is listed in
+# device_ids, and destroy removes all of them.
 
 data "vergeio_resource_groups" "passthrough" {
   filter_name = "GPU"

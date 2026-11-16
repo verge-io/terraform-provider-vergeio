@@ -87,6 +87,13 @@ type fakeVerge struct {
 	actions             []map[string]any
 	vnetActions         []map[string]any
 	nodeActions         []map[string]any
+	// nodeGets counts GET /tenant_nodes/{id}. failNodeGetAfter lets that
+	// many succeed, then returns 500. overrideNodeMachineAfter does the
+	// same and then reports overrideNodeMachine instead of the stored key.
+	nodeGets                 int
+	failNodeGetAfter         int
+	overrideNodeMachineAfter int
+	overrideNodeMachine      int
 	// fwSettleReads is how many vnet GETs after a refresh still report
 	// need_fw_apply. Zero clears the flag inside the refresh handler.
 	fwSettleReads int
@@ -546,30 +553,44 @@ func (f *fakeVerge) seedTenantNode(id, tenantID, machineID int) {
 func (f *fakeVerge) serveDevices(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
 	switch {
 	case r.Method == http.MethodPost && id == 0:
-		id = f.alloc()
+		copies := intField(payload["count"])
+		if copies < 1 {
+			copies = 1
+		}
 		enabled := true
 		if _, ok := payload["enabled"]; ok {
 			enabled = boolField(payload, "enabled")
 		}
-		obj := map[string]any{
-			"$key":         id,
-			"machine":      intField(payload["machine"]),
-			"machine_type": "tenant",
-			"orderid":      0,
-			"type":         stringField(payload, "type"),
-			"name":         stringField(payload, "name"),
-			"description":  stringField(payload, "description"),
-			"enabled":      enabled,
-			"optional":     boolField(payload, "optional"),
-			"uuid":         fmt.Sprintf("uuid-%d", id),
-			"created":      int64(1700000000),
-			"modified":     int64(1700000001),
+		var first int
+		for i := 0; i < copies; i++ {
+			id = f.alloc()
+			if i == 0 {
+				first = id
+			}
+			name := stringField(payload, "name")
+			if i > 0 {
+				name = fmt.Sprintf("%s-%d", name, i+1)
+			}
+			obj := map[string]any{
+				"$key":         id,
+				"machine":      intField(payload["machine"]),
+				"machine_type": "tenant",
+				"orderid":      i,
+				"type":         stringField(payload, "type"),
+				"name":         name,
+				"description":  stringField(payload, "description"),
+				"enabled":      enabled,
+				"optional":     boolField(payload, "optional"),
+				"uuid":         fmt.Sprintf("uuid-%d", id),
+				"created":      int64(1700000000),
+				"modified":     int64(1700000001),
+			}
+			if group := stringField(payload, "resource_group"); group != "" {
+				obj["resource_group"] = group
+			}
+			f.devices[id] = obj
 		}
-		if group := stringField(payload, "resource_group"); group != "" {
-			obj["resource_group"] = group
-		}
-		f.devices[id] = obj
-		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": id})
+		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": first})
 	case r.Method == http.MethodGet && id == 0:
 		rows := make([]map[string]any, 0, len(f.devices))
 		for _, row := range f.devices {
@@ -611,6 +632,27 @@ func (f *fakeVerge) serveDevices(w http.ResponseWriter, r *http.Request, id int,
 }
 
 func (f *fakeVerge) serveNodes(w http.ResponseWriter, r *http.Request, id int, payload map[string]any) {
+	if r.Method == http.MethodGet && id > 0 {
+		f.nodeGets++
+		if f.failNodeGetAfter > 0 && f.nodeGets > f.failNodeGetAfter {
+			writeJSON(f.t, w, http.StatusInternalServerError, map[string]string{"err": "node read failed"})
+			return
+		}
+		if f.overrideNodeMachineAfter > 0 && f.nodeGets > f.overrideNodeMachineAfter && f.overrideNodeMachine > 0 {
+			obj, ok := f.nodes[id]
+			if !ok {
+				writeJSON(f.t, w, http.StatusNotFound, map[string]string{"err": "not found"})
+				return
+			}
+			reported := make(map[string]any, len(obj))
+			for key, value := range obj {
+				reported[key] = value
+			}
+			reported["machine"] = f.overrideNodeMachine
+			writeJSON(f.t, w, http.StatusOK, reported)
+			return
+		}
+	}
 	if r.Method == http.MethodDelete && id > 0 {
 		if node, ok := f.nodes[id]; ok {
 			machineID := intField(node["machine"])
