@@ -201,12 +201,12 @@ func (a *API) createTenantNodeDevice(ctx context.Context, data *TenantNodeDevice
 	if req.Count != nil && *req.Count > 1 {
 		copies = *req.Count
 	}
-	var before map[int]struct{}
+	var before []vergeos.VMDevice
 	if copies > 1 {
 		// The list is the only way to see the extra rows count creates.
 		// Fail before posting when that list is unavailable, so a create
 		// does not leave copies that cannot be tracked or removed.
-		before, err = a.deviceIDSet(ctx, nodeID)
+		before, err = a.sdk.TenantNodeDevices.List(ctx, nodeID)
 		if err != nil {
 			return fmt.Errorf("list devices on tenant node %d before create: %w", nodeID, err)
 		}
@@ -224,7 +224,7 @@ func (a *API) createTenantNodeDevice(ctx context.Context, data *TenantNodeDevice
 	}
 	ids := []int{created.Key.Int()}
 	if copies > 1 {
-		after, listErr := a.deviceIDSet(ctx, nodeID)
+		after, listErr := a.sdk.TenantNodeDevices.List(ctx, nodeID)
 		if listErr != nil {
 			// The returned row stays tracked. A failed list is not proof
 			// the copies are someone else's, so they are not deleted.
@@ -233,13 +233,16 @@ func (a *API) createTenantNodeDevice(ctx context.Context, data *TenantNodeDevice
 			}
 			return fmt.Errorf("created tenant node device %d, but could not list the other copies: %w", created.Key.Int(), listErr)
 		}
-		ids = newDeviceIDs(before, after, created.Key.Int())
-		if len(ids) < copies {
-			if setErr := setDeviceIDs(ctx, data, ids); setErr != nil {
-				return setErr
-			}
-			return fmt.Errorf("created device %d on tenant node %d, but only %d of %d copies were listed", created.Key.Int(), nodeID, len(ids), copies)
+		matched, matchErr := matchingCopyIDs(before, after, created, copies)
+		if setErr := setDeviceIDs(ctx, data, matched); setErr != nil {
+			return setErr
 		}
+		if matchErr != nil {
+			// Too many or too few name matches. Keep only the row VergeOS
+			// returned. Do not adopt or delete the others.
+			return matchErr
+		}
+		ids = matched
 	}
 	if err := setDeviceIDs(ctx, data, ids); err != nil {
 		return err
@@ -365,29 +368,61 @@ func (a *API) deleteTenantNodeDevice(ctx context.Context, data *TenantNodeDevice
 	return fmt.Errorf("tenant node devices %v are still present", left)
 }
 
-func (a *API) deviceIDSet(ctx context.Context, nodeID int) (map[int]struct{}, error) {
-	devices, err := a.sdk.TenantNodeDevices.List(ctx, nodeID)
-	if err != nil {
-		return nil, err
-	}
-	ids := make(map[int]struct{}, len(devices))
-	for i := range devices {
-		if id := devices[i].Key.Int(); id > 0 {
-			ids[id] = struct{}{}
+// matchingCopyIDs returns the new rows that belong to this create.
+// A copy has the created device's type and a name of that device or
+// name-N. Any other new row on the node is left alone. The count has to
+// match, so a second resource created in the same apply is not claimed.
+func matchingCopyIDs(before, after []vergeos.VMDevice, created *vergeos.VMDevice, copies int) ([]int, error) {
+	prior := make(map[int]struct{}, len(before))
+	for i := range before {
+		if id := before[i].Key.Int(); id > 0 {
+			prior[id] = struct{}{}
 		}
+	}
+	matched := make([]int, 0, copies)
+	for i := range after {
+		id := after[i].Key.Int()
+		if id <= 0 {
+			continue
+		}
+		if _, ok := prior[id]; ok {
+			continue
+		}
+		if !deviceIsCopy(after[i], created) {
+			continue
+		}
+		matched = append(matched, id)
+	}
+	ids := orderedDeviceIDs(matched, created.Key.Int())
+	if len(ids) != copies {
+		return []int{created.Key.Int()}, fmt.Errorf("tenant node device %d matched %d of %d copies named %q type %q", created.Key.Int(), len(ids), copies, created.Name, created.Type)
 	}
 	return ids, nil
 }
 
-func newDeviceIDs(before, after map[int]struct{}, created int) []int {
-	ids := make([]int, 0, len(after))
-	for id := range after {
-		if _, ok := before[id]; ok {
-			continue
-		}
-		ids = append(ids, id)
+func deviceIsCopy(device vergeos.VMDevice, created *vergeos.VMDevice) bool {
+	if device.Key.Int() == created.Key.Int() {
+		return true
 	}
-	return orderedDeviceIDs(ids, created)
+	if device.Type != created.Type || device.Machine != created.Machine {
+		return false
+	}
+	if device.MachineType != "" && created.MachineType != "" && device.MachineType != created.MachineType {
+		return false
+	}
+	return copyName(device.Name, created.Name)
+}
+
+func copyName(name, base string) bool {
+	if name == base {
+		return true
+	}
+	rest, ok := strings.CutPrefix(name, base+"-")
+	if !ok || rest == "" {
+		return false
+	}
+	n, err := strconv.Atoi(rest)
+	return err == nil && n > 1
 }
 
 func orderedDeviceIDs(ids []int, primary int) []int {

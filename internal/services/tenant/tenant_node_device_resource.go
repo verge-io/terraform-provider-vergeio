@@ -138,7 +138,7 @@ func (r *TenantNodeDeviceResource) Schema(ctx context.Context, req resource.Sche
 				},
 			},
 			"device_ids": schema.ListAttribute{
-				MarkdownDescription: "machine_devices keys created with this device. device_count above 1 adds one key per copy. Destroy removes every key.",
+				MarkdownDescription: "machine_devices keys created with this device. A copy has the same type and a name of this device or name-N. Destroy removes every key.",
 				ElementType:         types.StringType,
 				Computed:            true,
 				PlanModifiers: []planmodifier.List{

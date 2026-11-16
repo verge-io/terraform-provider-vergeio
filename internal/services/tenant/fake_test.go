@@ -94,6 +94,11 @@ type fakeVerge struct {
 	failNodeGetAfter         int
 	overrideNodeMachineAfter int
 	overrideNodeMachine      int
+	// extraOnCreateName inserts one more device on the same machine during
+	// POST, as if another resource created a row in the same apply.
+	extraOnCreateName string
+	extraOnCreateType string
+	extraOnCreateID   int
 	// fwSettleReads is how many vnet GETs after a refresh still report
 	// need_fw_apply. Zero clears the flag inside the refresh handler.
 	fwSettleReads int
@@ -589,6 +594,23 @@ func (f *fakeVerge) serveDevices(w http.ResponseWriter, r *http.Request, id int,
 				obj["resource_group"] = group
 			}
 			f.devices[id] = obj
+		}
+		if f.extraOnCreateName != "" {
+			id = f.alloc()
+			f.extraOnCreateID = id
+			extraType := f.extraOnCreateType
+			if extraType == "" {
+				extraType = stringField(payload, "type")
+			}
+			f.devices[id] = map[string]any{
+				"$key":         id,
+				"machine":      intField(payload["machine"]),
+				"machine_type": "tenant",
+				"type":         extraType,
+				"name":         f.extraOnCreateName,
+				"enabled":      true,
+				"uuid":         fmt.Sprintf("uuid-%d", id),
+			}
 		}
 		writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": first})
 	case r.Method == http.MethodGet && id == 0:

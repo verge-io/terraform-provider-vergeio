@@ -67,7 +67,7 @@ resource "vergeio_tenant_node_device" "gpu" {
 ### Read-Only
 
 - `created` (Number) Creation time as a Unix timestamp.
-- `device_ids` (List of String) `machine_devices` keys created with this device. `device_count` above 1 adds one key per copy. Destroy removes every key.
+- `device_ids` (List of String) `machine_devices` keys created with this device. A copy has the same type and a name of this device or `name-N`. Destroy removes every key.
 - `id` (String) `machine_devices` key assigned by VergeOS.
 - `machine` (Number) Machine key of the tenant node. VergeOS stores the device against this key, not the tenant node key.
 - `machine_type` (String) Machine kind stored on the device. A tenant node device is `tenant`.

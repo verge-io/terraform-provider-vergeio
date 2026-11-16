@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -442,6 +443,78 @@ func TestCreateTenantNodeDeviceTracksCopies(t *testing.T) {
 	}
 	if len(fake.devices) != 0 {
 		t.Fatalf("devices left = %d", len(fake.devices))
+	}
+}
+
+func TestCreateTenantNodeDeviceIgnoresUnrelatedDevice(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	fake.extraOnCreateName = "pci0-other"
+	fake.extraOnCreateType = vergeos.DeviceTypePCI
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	data.Count = types.Int32Value(2)
+	if err := api.createTenantNodeDevice(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	ids := deviceIDValues(t, data.DeviceIDs)
+	if len(ids) != 2 || ids[0] != data.Id.ValueString() {
+		t.Fatalf("device_ids = %v", ids)
+	}
+	extra := strconv.Itoa(fake.extraOnCreateID)
+	for _, id := range ids {
+		if id == extra {
+			t.Fatalf("claimed unrelated device %s in %v", extra, ids)
+		}
+	}
+	if _, ok := fake.devices[fake.extraOnCreateID]; !ok {
+		t.Fatal("unrelated device was deleted")
+	}
+	if err := api.deleteTenantNodeDevice(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fake.devices[fake.extraOnCreateID]; !ok {
+		t.Fatal("destroy deleted the unrelated device")
+	}
+	if len(fake.devices) != 1 {
+		t.Fatalf("devices left = %d", len(fake.devices))
+	}
+}
+
+func TestCreateTenantNodeDeviceRejectsAmbiguousCopies(t *testing.T) {
+	fake := newFake(t)
+	fake.seedTenantNode(11, 7, 80)
+	fake.extraOnCreateName = "pci0"
+	fake.extraOnCreateType = vergeos.DeviceTypePCI
+	api := fake.api(t)
+	data := deviceModel()
+	data.TenantNodeID = types.StringValue("11")
+	data.Count = types.Int32Value(2)
+	err := api.createTenantNodeDevice(context.Background(), data)
+	if err == nil || !strings.Contains(err.Error(), "matched") {
+		t.Fatalf("err = %v", err)
+	}
+	ids := deviceIDValues(t, data.DeviceIDs)
+	if len(ids) != 1 || ids[0] != data.Id.ValueString() {
+		t.Fatalf("device_ids = %v", ids)
+	}
+	if _, ok := fake.devices[fake.extraOnCreateID]; !ok {
+		t.Fatal("ambiguous device was deleted")
+	}
+	if deletes := deviceDeleteCalls(fake); deletes != 0 {
+		t.Fatalf("delete calls = %d", deletes)
+	}
+}
+
+func TestCopyName(t *testing.T) {
+	if !copyName("pci0", "pci0") || !copyName("pci0-2", "pci0") {
+		t.Fatal("copy names were rejected")
+	}
+	for _, name := range []string{"pci0-other", "pci0-2a", "pci", "other"} {
+		if copyName(name, "pci0") {
+			t.Fatalf("%s was treated as a copy of pci0", name)
+		}
 	}
 }
 
