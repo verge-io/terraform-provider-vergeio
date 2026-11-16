@@ -35,7 +35,6 @@ func (c *Client) DownloadVMRecipe(ctx context.Context, key string) error {
 }
 
 // DeleteVMRecipeInstance removes one recipe instance row.
-// govergeos VMRecipeInstances has no Delete method.
 // A missing row is success.
 func (c *Client) DeleteVMRecipeInstance(ctx context.Context, id int) error {
 	if c == nil {
