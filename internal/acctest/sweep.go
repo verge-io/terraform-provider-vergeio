@@ -950,6 +950,7 @@ func deleteNodesOfTenant(ctx context.Context, sdk *vergeos.Client, tenantID int)
 		}
 		return err
 	}
+	tenant.OrderTenantNodesForDelete(nodes)
 	for _, node := range nodes {
 		id := node.Key.Int()
 		if id <= 0 {

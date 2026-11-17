@@ -2,10 +2,16 @@ package acctest
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
 )
 
 func TestReferencesSweptObject(t *testing.T) {
@@ -74,6 +80,59 @@ func TestSnapshotBelongsToSweep(t *testing.T) {
 	}
 	if snapshotBelongsToSweep("nightly", 0, parents) {
 		t.Fatal("snapshot with no parent must not match")
+	}
+}
+
+func TestDeleteNodesOfTenantDeletesHighestNodeIDFirst(t *testing.T) {
+	var mu sync.Mutex
+	var deleted []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_nodes":
+			// List order is the lower nodeid first. VergeOS still requires
+			// the highest nodeid to be deleted first.
+			_, _ = w.Write([]byte(`[{"$key":7,"tenant":44,"name":"a","machine":0,"enabled":true,"nodeid":1},{"$key":11,"tenant":44,"name":"b","machine":0,"enabled":true,"nodeid":2}]`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/tenant_nodes/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/v4/tenant_nodes/")
+			switch id {
+			case "7":
+				_, _ = w.Write([]byte(`{"$key":7,"tenant":44,"name":"a","machine":0,"enabled":true,"nodeid":1}`))
+			case "11":
+				_, _ = w.Write([]byte(`{"$key":11,"tenant":44,"name":"b","machine":0,"enabled":true,"nodeid":2}`))
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v4/tenant_nodes/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/v4/tenant_nodes/")
+			mu.Lock()
+			deleted = append(deleted, id)
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.RequestURI(), http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	sdk, err := vergeos.NewClient(
+		vergeos.WithBaseURL(server.URL),
+		vergeos.WithCredentials("user", "pass"),
+		vergeos.WithInsecureTLS(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteNodesOfTenant(context.Background(), sdk, 44); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(deleted, ",") != "11,7" {
+		t.Fatalf("delete order = %#v, want highest nodeid first", deleted)
 	}
 }
 

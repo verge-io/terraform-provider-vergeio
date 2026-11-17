@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -208,6 +209,18 @@ func (a *API) deleteTenantNode(ctx context.Context, data *TenantNodeResourceMode
 			return err
 		}
 	}
+}
+
+// OrderTenantNodesForDelete sorts nodes so the highest nodeid is deleted
+// first. VergeOS deletes only that node. Equal nodeids break on the row
+// key, highest first. List order is not that order.
+func OrderTenantNodesForDelete(nodes []vergeos.TenantNode) {
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].NodeID != nodes[j].NodeID {
+			return nodes[i].NodeID > nodes[j].NodeID
+		}
+		return nodes[i].Key.Int() > nodes[j].Key.Int()
+	})
 }
 
 // isLastNodeDeleteError reports whether err is VergeOS refusing a tenant node

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -202,19 +201,22 @@ func (api *TenantRecipeAPI) delete(ctx context.Context, data *TenantRecipeInstan
 		return err
 	}
 	instance, err := api.sdk.TenantRecipeInstances.Get(ctx, id)
-	rowMissing := false
 	if err != nil {
 		if !vergeos.IsNotFoundError(err) {
 			return err
 		}
-		rowMissing = true
 		instance = nil
 	}
+	// The row's tenant link wins. When that link is empty, the row may
+	// still be present: refresh keeps tenant_id from state in that case.
+	// Delete that tenant when it still exists. A missing tenant does not
+	// block deleting the instance row. deleteRecipeTenant powers it off,
+	// removes stamped children, and treats not-found as already gone.
 	tenantID := 0
 	if instance != nil {
 		tenantID = instance.Tenant.Int()
 	}
-	if tenantID <= 0 && rowMissing {
+	if tenantID <= 0 {
 		tenantID = recipeStateTenantID(data)
 	}
 	if tenantID > 0 {
@@ -285,13 +287,7 @@ func (api *TenantRecipeAPI) deleteStampedNodes(ctx context.Context, tenantID int
 	if err != nil {
 		return err
 	}
-	// VergeOS deletes only the highest nodeid. List order is not that order.
-	sort.Slice(nodes, func(i, j int) bool {
-		if nodes[i].NodeID != nodes[j].NodeID {
-			return nodes[i].NodeID > nodes[j].NodeID
-		}
-		return nodes[i].Key.Int() > nodes[j].Key.Int()
-	})
+	OrderTenantNodesForDelete(nodes)
 	for i := range nodes {
 		id := nodes[i].Key.Int()
 		if id <= 0 {

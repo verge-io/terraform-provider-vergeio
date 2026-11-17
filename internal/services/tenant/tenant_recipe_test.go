@@ -532,6 +532,100 @@ func TestTenantRecipeInstanceDeleteMissingRowStopsStateTenant(t *testing.T) {
 	}
 }
 
+func TestTenantRecipeInstanceDeleteUnlinkedStateTenant(t *testing.T) {
+	fake := newTenantRecipeFake()
+	fake.omitTenant = true
+	fake.online = true
+	fake.vnetRunning = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: tenantRecipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.tenantDeletes != 1 || fake.instanceDeletes != 1 {
+		t.Fatalf("tenant deletes = %d instance deletes = %d", fake.tenantDeletes, fake.instanceDeletes)
+	}
+	if !fake.sawAction("poweroff") {
+		t.Fatalf("actions = %#v, want poweroff of the tenant still stored in state", fake.actionBodies())
+	}
+	if !fake.tenantDeletedBeforeInstance {
+		t.Fatal("instance row was deleted before the tenant")
+	}
+}
+
+func TestTenantRecipeInstanceDeleteUnlinkedMissingTenantStillRemovesRow(t *testing.T) {
+	fake := newTenantRecipeFake()
+	fake.omitTenant = true
+	fake.tenantMissing = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: tenantRecipeInstanceState(t, schemaResp.Schema, 44)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.instanceDeletes != 1 {
+		t.Fatalf("instance deletes = %d", fake.instanceDeletes)
+	}
+	if fake.sawAction("poweroff") {
+		t.Fatalf("actions = %#v, a missing state tenant is already gone", fake.actionBodies())
+	}
+}
+
+func TestTenantRecipeInstanceDeleteLinkedTenantIgnoresOtherStateID(t *testing.T) {
+	fake := newTenantRecipeFake()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	resource := configuredTenantRecipeInstance(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	deleted := &fwresource.DeleteResponse{}
+	resource.Delete(ctx, fwresource.DeleteRequest{State: tenantRecipeInstanceState(t, schemaResp.Schema, 99)}, deleted)
+	if deleted.Diagnostics.HasError() {
+		t.Fatal(deleted.Diagnostics)
+	}
+	if fake.tenantDeletes != 1 || fake.instanceDeletes != 1 {
+		t.Fatalf("tenant deletes = %d instance deletes = %d, the linked tenant is 44", fake.tenantDeletes, fake.instanceDeletes)
+	}
+}
+
+func TestOrderTenantNodesForDelete(t *testing.T) {
+	nodes := []vergeos.TenantNode{
+		{Key: vergeos.FlexInt(7), NodeID: 1},
+		{Key: vergeos.FlexInt(11), NodeID: 2},
+		{Key: vergeos.FlexInt(4), NodeID: 2},
+		{Key: vergeos.FlexInt(15), NodeID: 2},
+	}
+	OrderTenantNodesForDelete(nodes)
+	got := make([]int, len(nodes))
+	for i := range nodes {
+		got[i] = nodes[i].Key.Int()
+	}
+	want := []int{15, 11, 4, 7}
+	if len(got) != len(want) {
+		t.Fatalf("order = %#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestTenantRecipeInstanceDeleteRemovesStampedChildrenFirst(t *testing.T) {
 	fake := newTenantRecipeFake()
 	fake.nodePresent = true

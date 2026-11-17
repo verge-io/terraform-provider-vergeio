@@ -22,7 +22,7 @@ The map is stored. It may contain a password. VergeOS does not return every answ
 
 `tenant_id` is the key of the tenant VergeOS created. `vergeio_tenant.id` is that same key as a string. `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, `vergeio_tenant_layer2_network`, and `vergeio_tenant_snapshot` take the string, so pass `tostring(vergeio_tenant_recipe_instance.example.tenant_id)`.
 
-Changing `name`, `recipe_id`, or `answers` replaces the tenant. A name or `recipe_id` changed in VergeOS is stored on refresh, and the next plan replaces the tenant. Destroy powers the tenant off, waits for the tenant network to stop, deletes the tenant, then deletes the recipe instance. A missing tenant does not block that delete. A refresh that finds the tenant gone deletes the recipe instance row and drops the resource. A missing recipe instance still powers off and deletes the tenant stored in `tenant_id`.
+Changing `name`, `recipe_id`, or `answers` replaces the tenant. A name or `recipe_id` changed in VergeOS is stored on refresh, and the next plan replaces the tenant. Destroy powers the tenant off, waits for the tenant network to stop, deletes the tenant, then deletes the recipe instance. A missing tenant does not block that delete. A refresh that finds the tenant gone deletes the recipe instance row and drops the resource. A missing recipe instance, or a row that does not link a tenant, powers off and deletes the tenant stored in `tenant_id` when that tenant still exists.
 
 This resource always deploys. It has no simulate argument. The tenant recipe deploy has no `auto_update` argument.
 
