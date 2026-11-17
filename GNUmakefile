@@ -1,4 +1,5 @@
 TEST?=$$(go list ./... | grep -v 'vendor')
+VERSION=2.7.10
 
 default: install
 
