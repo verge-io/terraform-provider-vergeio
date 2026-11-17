@@ -101,7 +101,11 @@ func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 		http:           httpClient,
 		sourceTenantID: sourceID,
 	}
-	t.Cleanup(func() { fixture.Destroy(t) })
+	t.Cleanup(func() {
+		if err := fixture.Destroy(t); err != nil {
+			t.Error(err)
+		}
+	})
 	fixture.createRecipe(t)
 	fixture.prepareAnswers(t)
 	return fixture
@@ -166,14 +170,18 @@ func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
 
 // Destroy removes the tf-acc- recipe, the tf-acc- catalog, and the snapshot
 // tenant VergeOS created for the recipe. Nodes on that snapshot tenant are
-// deleted highest nodeid first. The source tenant is not powered, edited,
-// or deleted.
-func (f *TenantRecipeFixture) Destroy(t *testing.T) {
+// deleted highest nodeid first. When tenant_snapshot is the source tenant,
+// Destroy returns an error and deletes nothing. The source tenant is not
+// powered, edited, or deleted.
+func (f *TenantRecipeFixture) Destroy(t *testing.T) error {
 	t.Helper()
 	if f == nil {
-		return
+		return nil
 	}
-	copyID := f.recipeSnapshotTenant()
+	copyID, err := f.recipeSnapshotTenant()
+	if err != nil {
+		return err
+	}
 	if f.RecipeID != "" && f.http != nil {
 		if err := f.http.DeleteTenantRecipe(f.ctx, f.RecipeID); err != nil {
 			t.Errorf("delete tenant recipe %s: %v", f.RecipeID, err)
@@ -184,28 +192,28 @@ func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 			t.Errorf("delete catalog %s: %v", f.catalogID, err)
 		}
 	}
-	if copyID == f.sourceTenantID {
-		t.Errorf("recipe snapshot tenant %d is the source tenant", copyID)
-		return
-	}
 	if err := deleteSnapshotTenant(f.ctx, f.sdk, copyID); err != nil {
 		t.Errorf("delete recipe snapshot tenant %d: %v", copyID, err)
 	}
+	return nil
 }
 
-func (f *TenantRecipeFixture) recipeSnapshotTenant() int {
+func (f *TenantRecipeFixture) recipeSnapshotTenant() (int, error) {
 	if f == nil || f.sdk == nil || f.RecipeID == "" {
-		return 0
+		return 0, nil
 	}
 	recipe, err := f.sdk.TenantRecipes.Get(f.ctx, f.RecipeID)
 	if err != nil || recipe == nil || recipe.TenantSnapshot == nil {
-		return 0
+		return 0, nil
 	}
 	id := recipe.TenantSnapshot.Int()
-	if id <= 0 || id == f.sourceTenantID {
-		return 0
+	if id <= 0 {
+		return 0, nil
 	}
-	return id
+	if id == f.sourceTenantID {
+		return 0, fmt.Errorf("recipe snapshot tenant %d is the source tenant", id)
+	}
+	return id, nil
 }
 
 // tenantRecipeFixturePlan returns answers for required questions the fixture

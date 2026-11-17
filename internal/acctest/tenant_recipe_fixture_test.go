@@ -4,11 +4,18 @@
 package acctest
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
 )
 
 func TestTenantRecipeFixturePlan(t *testing.T) {
@@ -47,6 +54,58 @@ func TestTenantRecipeFixturePlan(t *testing.T) {
 		if !strings.Contains(hcl, part) {
 			t.Fatalf("hcl = %s missing %s", hcl, part)
 		}
+	}
+}
+
+func TestDestroyErrorsWhenSnapshotIsSourceTenant(t *testing.T) {
+	const sourceID = 44
+	const recipeID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	var mu sync.Mutex
+	var mutated []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_recipes":
+			body := `[{"$key":"` + recipeID + `","id":"` + recipeID + `","tenant":` + strconv.Itoa(sourceID) + `,"tenant_snapshot":` + strconv.Itoa(sourceID) + `}]`
+			_, _ = w.Write([]byte(body))
+		default:
+			mu.Lock()
+			mutated = append(mutated, r.Method+" "+r.URL.Path)
+			mu.Unlock()
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	sdk, err := vergeos.NewClient(
+		vergeos.WithBaseURL(server.URL),
+		vergeos.WithCredentials("user", "pass"),
+		vergeos.WithInsecureTLS(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := &TenantRecipeFixture{
+		ctx:            context.Background(),
+		sdk:            sdk,
+		http:           vergeio.NewClient(server.URL, "user", "pass", true),
+		sourceTenantID: sourceID,
+		RecipeID:       recipeID,
+		catalogID:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}
+	err = fixture.Destroy(t)
+	if err == nil || !strings.Contains(err.Error(), "source tenant") || !strings.Contains(err.Error(), strconv.Itoa(sourceID)) {
+		t.Fatalf("err = %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(mutated) != 0 {
+		t.Fatalf("destroy changed the lab: %#v", mutated)
 	}
 }
 
