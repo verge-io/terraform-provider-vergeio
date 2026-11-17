@@ -1,7 +1,8 @@
 terraform {
   required_providers {
     vergeio = {
-      source = "verge-io/vergeio"
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
     }
   }
 }

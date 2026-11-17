@@ -4,6 +4,15 @@
 # write-only, so a password or api_key set in a provider block is stored.
 # The ephemeral token is not stored either. Close deletes the key.
 
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 data "terraform_remote_state" "parent" {
   backend = "local"
   config = {

@@ -235,6 +235,85 @@ func TestDocTemplatesUseExampleFiles(t *testing.T) {
 	}
 }
 
+// TestExampleProviderPinsResolveV3 requires every example that configures
+// the provider, and every template with a required_providers block, to name
+// the registry source and a 3.x constraint. ~> 3.0 selects 3.0 and later 3.x.
+// ~> 0.1.0 matches no published release.
+func TestExampleProviderPinsResolveV3(t *testing.T) {
+	root := moduleRoot(t)
+	err := filepath.WalkDir(filepath.Join(root, "examples"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".tf") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(src)
+		if !strings.Contains(text, `provider "vergeio"`) && !strings.Contains(text, "required_providers") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		requireV3ProviderPin(t, rel, text)
+		for _, bad := range []string{"0.1.0", "vergeio/cloud/vergeio", `"vergeio/vergeio"`} {
+			if strings.Contains(text, bad) {
+				t.Errorf("%s contains %q, which does not resolve for 3.x", rel, bad)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = filepath.WalkDir(filepath.Join(root, "templates"), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".tmpl") {
+			return nil
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(src)
+		if !strings.Contains(text, "required_providers") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		requireV3ProviderPin(t, rel, text)
+		for _, bad := range []string{"vergeio/cloud/vergeio", `"vergeio/vergeio"`} {
+			if strings.Contains(text, bad) {
+				t.Errorf("%s contains %q, which does not resolve for 3.x", rel, bad)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func requireV3ProviderPin(t *testing.T, rel, text string) {
+	t.Helper()
+	if !strings.Contains(text, `source  = "verge-io/vergeio"`) && !strings.Contains(text, `source = "verge-io/vergeio"`) {
+		t.Errorf("%s provider source is not verge-io/vergeio", rel)
+	}
+	if !strings.Contains(text, `version = "~> 3.0"`) {
+		t.Errorf("%s is missing a ~> 3.0 provider version pin", rel)
+	}
+}
+
 func TestPublishedNetworkExampleUsesSchemaNames(t *testing.T) {
 	root := moduleRoot(t)
 	src, err := os.ReadFile(filepath.Join(root, "examples", "resources", "vergeio_network", "resource.tf"))

@@ -1,3 +1,12 @@
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 provider "vergeio" {
   host     = "parent.example.com"
   username = "admin"

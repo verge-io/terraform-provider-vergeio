@@ -23,6 +23,15 @@ A long-lived key is the managed [`vergeio_api_key`](../resources/api_key.html) r
 # if Close does not run. name is exclusive: Open deletes an existing
 # key with this name for user_id before creating a new one.
 
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 data "vergeio_users" "admin" {
   filter_name = "admin"
 }

@@ -1,6 +1,15 @@
 # Separate example from image.tf. Provider 3.0 reads VERGEOS_HOST and either
 # VERGEOS_API_KEY or VERGEOS_USERNAME plus VERGEOS_PASSWORD.
 
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 provider "vergeio" {}
 
 data "vergeio_clusters" "compute" {
