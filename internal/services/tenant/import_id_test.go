@@ -70,6 +70,12 @@ func TestTenantImportStateEmptyID(t *testing.T) {
 			summary:  "Invalid Tenant Recipe Instance Import ID",
 			detail:   "Import vergeio_tenant_recipe_instance with the instance key, a positive integer.",
 		},
+		{
+			name:     "node device",
+			resource: NewTenantNodeDeviceResource(),
+			summary:  "Invalid Tenant Node Device Import ID",
+			detail:   "Import vergeio_tenant_node_device with the machine_devices key.",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,6 +93,7 @@ func TestTenantImportStateKeepsNonEmptyID(t *testing.T) {
 		NewTenantExternalIPResource(),
 		NewTenantNetworkBlockResource(),
 		NewTenantLayer2NetworkResource(),
+		NewTenantNodeDeviceResource(),
 	} {
 		resp := importResourceState(t, r, "abc")
 		assertImportIDPassthrough(t, resp, "abc")

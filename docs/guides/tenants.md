@@ -53,6 +53,15 @@ Use two root modules. The parent module creates the tenant and outputs `ui_addre
 The parent module passes `var.tenant_password` to `vergeio_tenant.password_wo`. Terraform stores `password_wo_version`, not the password. Increment that version to change the password. `password` still works through v3.x and is stored in state. It is deprecated and will be removed in v4. Leave the password out of the parent outputs. A `password` set on the parent provider is stored, because provider arguments cannot be write-only. `VERGEOS_PASSWORD` keeps that parent credential out of state.
 
 ```terraform
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 provider "vergeio" {
   host     = "parent.example.com"
   username = "admin"
@@ -144,6 +153,15 @@ The tenant module does not store the admin password or a long-lived API key. The
 # Those values are not written to state. Provider arguments cannot be
 # write-only, so a password or api_key set in a provider block is stored.
 # The ephemeral token is not stored either. Close deletes the key.
+
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
 
 data "terraform_remote_state" "parent" {
   backend = "local"

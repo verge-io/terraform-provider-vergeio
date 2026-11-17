@@ -44,7 +44,8 @@ Put the provider in a normal `.tf` file. Put each query in a file whose name end
 terraform {
   required_providers {
     vergeio = {
-      source = "vergeio/vergeio"
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
     }
   }
 }

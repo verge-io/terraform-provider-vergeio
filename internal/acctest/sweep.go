@@ -740,6 +740,9 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 	if err != nil {
 		return fmt.Errorf("list tenant nodes: %w", err)
 	}
+	if err := sweepTenantNodeDevices(ctx, client, nodes, ids); err != nil {
+		return err
+	}
 	for _, node := range nodes {
 		if _, ok := ids[node.Tenant.Int()]; !ok {
 			continue
@@ -773,6 +776,40 @@ func sweepTenants(ctx context.Context, client *vergeos.Client) error {
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("sweep tenants: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantNodeDevices(ctx context.Context, client *vergeos.Client, nodes []vergeos.TenantNode, tenantIDs map[int]string) error {
+	if len(tenantIDs) == 0 {
+		return nil
+	}
+	var errs []error
+	for _, node := range nodes {
+		if _, ok := tenantIDs[node.Tenant.Int()]; !ok || node.IsSnapshot || node.Machine.Int() <= 0 {
+			continue
+		}
+		devices, err := client.TenantNodeDevices.List(ctx, node.Key.Int())
+		if listEndpointMissing(err) {
+			log.Printf("[SWEEP] tenant node devices unavailable, skipping")
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("list devices on tenant node %d: %w", node.Key.Int(), err)
+		}
+		for _, device := range devices {
+			// The node belongs to an acceptance tenant, so every device on it
+			// was created by a test. Copies from device_count above 1 may not
+			// keep the tf-acc- name.
+			id := device.Key.Int()
+			log.Printf("[SWEEP] deleting tenant node device %d (%s) on node %d", id, device.Name, node.Key.Int())
+			if err := client.TenantNodeDevices.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+				errs = append(errs, fmt.Errorf("delete tenant node device %d: %w", id, err))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant node devices: %w", errorsJoin(errs))
 	}
 	return nil
 }

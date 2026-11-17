@@ -24,13 +24,13 @@ The handoff is the Terraform and Ansible guide (`docs/guides/terraform-ansible.m
 
 ## govergeos
 
-The provider talks to VergeOS through govergeos. The comment on #87 pointed at the SDK index `verge-io/govergeos#67` and said provider v3.0 depended on govergeos v0.4.0, with v3.1 on govergeos v0.5.0. That SDK index is still open. This branch does not pin either of those versions, and this note does not invent a tag for them.
+The provider talks to VergeOS through govergeos. The comment on #87 pointed at the SDK index `verge-io/govergeos#67` and said provider v3.0 depended on govergeos v0.4.0, with v3.1 on govergeos v0.5.0. That SDK index is still open. This branch pins govergeos v0.5.0 (#275).
 
-`go.mod` requires `github.com/verge-io/govergeos v0.3.2-0.20261003022521-6b48c911a35c`. That string is a Go pseudo version for commit `6b48c911` on govergeos main. The 3.0.0 changelog says the commit is not a release tag.
+`go.mod` requires `github.com/verge-io/govergeos v0.5.0`. That tag is commit `3f04250e`.
 
 The same comment named the SDK issues that mattered here. Their state when this note was written:
 
-* `govergeos#41` is closed. It tracked a v0.3.1 that had been merged and not tagged. This provider still pins a commit, not a release tag.
+* `govergeos#41` is closed. It tracked a v0.3.1 that had been merged and not tagged. This provider pins the v0.5.0 release.
 * `govergeos#43` is closed. It tracked `PowerOff` as a hard kill, the same class of bug as #51. Setting `vergeio_vm.powerstate` to false sends one ACPI power off and waits `timeouts.update` (default 2 minutes). It does not cut power. `force_power_off` kills the VM if the guest does not stop. Destroy waits `timeouts.delete` and then follows `shutdown_on_destroy`.
 * `govergeos#42` is closed. It tracked a name filter that could resolve a different object when the name contained braces.
 * `govergeos#55` is closed. It tracked tenant network blocks and external IPs. `vergeio_tenant_external_ip` assigns the external IP (#210). `vergeio_tenant_network_block` assigns the network block (#211).

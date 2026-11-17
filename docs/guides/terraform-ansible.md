@@ -43,6 +43,15 @@ This configuration selects the cluster named Compute, creates a tag named `web`,
 # Separate example from image.tf. Provider 3.0 reads VERGEOS_HOST and either
 # VERGEOS_API_KEY or VERGEOS_USERNAME plus VERGEOS_PASSWORD.
 
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 provider "vergeio" {}
 
 data "vergeio_clusters" "compute" {
@@ -166,6 +175,15 @@ Terraform deploys the copies. `boot_disk.source` is the media source id, sent as
 ```terraform
 # Separate example from vm.tf. Deploy a workload VM from a media image.
 # vergeio_mediasources.id is the value boot_disk.source sends as media_source.
+
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
 
 data "vergeio_mediasources" "golden" {
   filter_name = "golden"
