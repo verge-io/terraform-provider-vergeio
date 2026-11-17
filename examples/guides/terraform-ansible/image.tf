@@ -1,6 +1,15 @@
 # Separate example from vm.tf. Deploy a workload VM from a media image.
 # vergeio_mediasources.id is the value boot_disk.source sends as media_source.
 
+terraform {
+  required_providers {
+    vergeio = {
+      source  = "verge-io/vergeio"
+      version = "~> 3.0"
+    }
+  }
+}
+
 data "vergeio_mediasources" "golden" {
   filter_name = "golden"
 }

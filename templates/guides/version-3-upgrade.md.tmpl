@@ -21,20 +21,13 @@ terraform {
 }
 ```
 
-`~> 0.1.0` does not match any published release. The registry line for 2.x is 1.0.0 through 2.7.8.
+`~> 0.1.0` matches no published release. The registry lists 1.0.0 through 2.7.10. `~> 2.7` selects that 2.7 line. `~> 3.0` selects 3.0 and later 3.x releases.
 
 ## Arguments that were never in the schema
 
-Product pages that show `network_address`, `dhcp_end`, or `dns_server_list` on `vergeio_network` do not match the provider. Both 2.x and 3.0 use `network` for the CIDR and `dhcp_stop` for the end of the DHCP range. 3.0 adds `description`, `domain`, `rate_limit`, and `dnslist`. `dnslist` is the API field for DNS servers handed to clients (a comma-separated list of addresses). It is not `dns_server_list`. 2.x has none of those four arguments. `vergeio_user` creates a user account. It does not manage storage.
+Configurations copied from older pages sometimes set `network_address`, `dhcp_end`, or `dns_server_list` on `vergeio_network`. Those arguments are absent from the 2.7.10 schema and from 3.0. Both use `network` for the CIDR and `dhcp_stop` for the end of the DHCP range. 3.0 adds `description`, `domain`, `rate_limit`, and `dnslist` on the resource. `dnslist` is the API field for DNS servers handed to clients, a comma-separated list of addresses. The 2.7.10 `vergeio_network` resource has none of those four arguments. `vergeio_user` creates a user account.
 
-The 3.0 provider registers these objects:
-
-| Kind | Names |
-| --- | --- |
-| Resources | `vergeio_group`, `vergeio_member`, `vergeio_network`, `vergeio_network_rule`, `vergeio_network_rule_alias`, `vergeio_network_rules`, `vergeio_permission`, `vergeio_snapshot_profile`, `vergeio_tag`, `vergeio_tag_category`, `vergeio_tag_member`, `vergeio_tenant`, `vergeio_tenant_external_ip`, `vergeio_tenant_layer2_network`, `vergeio_tenant_network_block`, `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_user`, `vergeio_vm`, `vergeio_vm_drive`, `vergeio_vm_nic` |
-| Data sources | `vergeio_cloudinit_files`, `vergeio_clusters`, `vergeio_groups`, `vergeio_mediasources`, `vergeio_networks`, `vergeio_nodes`, `vergeio_resource_groups`, `vergeio_tags`, `vergeio_tenants`, `vergeio_users`, `vergeio_version`, `vergeio_vms` |
-
-Devices stay nested on `vergeio_vm`. Drives and NICs do not.
+2.7.10 registers five resources: `vergeio_network`, `vergeio_vm`, `vergeio_user`, `vergeio_member`, and `vergeio_tag_member`. It registers ten data sources: `vergeio_version`, `vergeio_networks`, `vergeio_vms`, `vergeio_clusters`, `vergeio_groups`, `vergeio_mediasources`, `vergeio_nodes`, `vergeio_cloudinitfiles`, `vergeio_resource_groups`, and `vergeio_tags`. 3.0 keeps each of those resource addresses. The only data source address that changes is the cloud-init rename below. Devices stay nested on `vergeio_vm`. The `vergeio_drive` and `vergeio_nic` blocks do not.
 
 ## Renamed data source
 
@@ -96,6 +89,8 @@ Outputs and modules that pass the VM data source `preferred_tier` or NIC `vnet` 
 ## Drives and NICs
 
 `vergeio_drive` and `vergeio_nic` blocks are gone. A VM keeps machine settings, devices, and one optional `boot_disk`. Every other drive is a `vergeio_vm_drive`. Every NIC is a `vergeio_vm_nic`. Each one sets `vm_id` to the VM id and is matched by `name`.
+
+`boot_disk.size` is the old `vergeio_drive.disksize`, in GB. `boot_disk.source` is the old `vergeio_drive.media_source`, a media id. `vergeio_vm_drive` keeps the names `disksize` and `media_source`. `preferred_tier` is a number on `vergeio_vm_drive` only. `boot_disk` also accepts `name` and `media`, and stores `key`. These drive arguments keep their 2.x names on `vergeio_vm_drive`: `machine`, `description`, `interface`, `enabled`, `readonly`, `serial`, `asset`, `orderid`, and `preserve_drive_format`. NIC arguments keep their 2.x names on `vergeio_vm_nic`. `vnet` was already a number on the `vergeio_nic` block. `vm_id` is the VM id on both resources.
 
 The state upgrade rewrites numeric ids, then removes the inline drive and NIC lists from the VM. It does not delete those objects in VergeOS, and it does not put a drive into `boot_disk`. The next apply adopts a `boot_disk`, `vergeio_vm_drive`, or `vergeio_vm_nic` whose name already exists on that VM instead of creating a second device. A drive or NIC you drop from configuration and do not declare again stays in VergeOS until you delete it there.
 
