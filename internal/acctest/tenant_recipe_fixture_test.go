@@ -37,6 +37,7 @@ func TestTenantRecipeFixturePlan(t *testing.T) {
 	if len(disable) != 1 || disable[0] != 4 {
 		t.Fatalf("disable = %#v", disable)
 	}
+
 	hcl := tenantRecipeAnswersHCL(answers)
 	for _, part := range []string{
 		`YB_NODE_1_CPU_CORES = "2"`,
@@ -45,6 +46,18 @@ func TestTenantRecipeFixturePlan(t *testing.T) {
 	} {
 		if !strings.Contains(hcl, part) {
 			t.Fatalf("hcl = %s missing %s", hcl, part)
+		}
+	}
+}
+
+func TestTenantRecipeLabSkipNamesBothVariables(t *testing.T) {
+	for _, name := range []string{
+		"TF_ACC_VERGEIO_TENANT_RECIPE_ID",
+		"TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID",
+		"configured inside the tenant",
+	} {
+		if !strings.Contains(tenantRecipeLabSkip, name) {
+			t.Fatalf("skip message = %q missing %s", tenantRecipeLabSkip, name)
 		}
 	}
 }

@@ -8,7 +8,7 @@ description: |-
 
 # vergeio_tenant_recipe_instance (Resource)
 
-Deploys a tenant from a catalog recipe. Look the recipe up with [`vergeio_tenant_recipes`](../data-sources/tenant_recipes.md). `recipe_id` is that recipe's key.
+Deploys a tenant from a catalog recipe. Look the recipe up with [`vergeio_tenant_recipes`](../data-sources/tenant_recipes.md). `recipe_id` is that recipe's key. VergeOS builds the recipe from a source tenant that was configured inside the tenant. That tenant is dedicated to recipe use and is powered off when the recipe is created.
 
 `answers` is a map of question name to string. `vergeio_tenant_recipes` lists each question's `name` and `type`.
 

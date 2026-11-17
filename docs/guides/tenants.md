@@ -228,7 +228,7 @@ VergeOS refuses to delete the block while a network inside the tenant is still b
 
 ## Recipes
 
-A tenant recipe is a catalog entry built from a tenant snapshot. `vergeio_tenant_recipes` lists those recipes. `vergeio_tenant_recipe_instance` deploys one. Answers, replacement, and destroy are on the [resource page](../resources/tenant_recipe_instance.md).
+A tenant recipe is a catalog entry built from a tenant snapshot. VergeOS takes that snapshot from a source tenant that was configured inside the tenant. The source tenant is dedicated to recipe use and is powered off when the recipe is created. A tenant created and powered on only from the host has not had that inside configuration. `vergeio_tenant_recipes` lists those recipes. `vergeio_tenant_recipe_instance` deploys one. Answers, replacement, and destroy are on the [resource page](../resources/tenant_recipe_instance.md).
 
 `tenant_id` is the key of the tenant VergeOS created. That is the same key `vergeio_tenant` stores in `id`, as a number. Pass `tostring(vergeio_tenant_recipe_instance.customer.tenant_id)` to `vergeio_tenant_node`, `vergeio_tenant_storage`, `vergeio_tenant_external_ip`, `vergeio_tenant_network_block`, `vergeio_tenant_layer2_network`, or `vergeio_tenant_snapshot`.
 

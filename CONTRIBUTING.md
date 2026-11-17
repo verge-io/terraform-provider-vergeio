@@ -57,6 +57,15 @@ TF_ACC_VERGEIO_USERNAME
 TF_ACC_VERGEIO_PASSWORD
 ```
 
+`TestAccTenantRecipeInstance` also needs one of these. VergeOS builds a tenant recipe from a source tenant that was configured inside the tenant. That tenant is dedicated to recipe use and is powered off when the recipe is created. Creating a tenant from the host and powering it on does not do the inside configuration, and no host-side field records it, so the test does not provision a source tenant.
+
+```
+TF_ACC_VERGEIO_TENANT_RECIPE_ID
+TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID
+```
+
+`TF_ACC_VERGEIO_TENANT_RECIPE_ID` is the hex key of a published recipe, the same value as `vergeio_tenant_recipes` `recipes[].id`. When that is unset, `TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID` is the key of an existing tenant that is already configured and powered off. The test posts a `tf-acc-` recipe from that tenant and deletes the recipe, its catalog, and the snapshot tenant VergeOS created. It does not power, edit, or delete the source tenant. `TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS` is optional HCL inside the answers map when the published recipe has required questions. The test skips when neither the recipe id nor the source tenant id is set.
+
 Do not commit credentials. Every object a test creates must use `acctest.Name` so the name starts with `tf-acc-`. `make sweep` (or `TF_ACC=1 TF_ACC_SWEEP=1 go test ./internal/acctest -run TestSweep -count=1`) deletes leftovers with that prefix and then checks that none remain. `TestSweep` does not run when only `TF_ACC=1` is set, so a parallel acceptance run does not delete objects another package still holds. The acceptance workflow runs the sweep before and after `TestAcc`, on `workflow_dispatch`. It skips when the lab secrets are absent. A nightly schedule is commented in that workflow until the secrets exist.
 
 Network, VM, and user acceptance tests cover create, an empty plan, an update, `ImportState` with `ImportStateVerify`, and destroy. Member and tag member acceptance tests are still skipped in code. The unregistered cloud-init file resource was removed; the cloud-init files data source remains. Data sources have read-only acceptance tests and are not part of the sweep. Drives and NICs are `vergeio_vm_drive` and `vergeio_vm_nic`. The VM keeps an optional `boot_disk` and still nests devices.

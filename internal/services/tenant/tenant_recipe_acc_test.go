@@ -20,33 +20,32 @@ import (
 
 // TestAccTenantRecipeInstance deploys a tenant from a catalog recipe, reads
 // it back, imports it, and destroys the tenant and the recipe instance.
-// Names start with tf-acc- so the tenant, recipe, catalog, and recipe
-// instance sweeps can remove a leftover.
+// Names start with tf-acc-. Sweep removes a leftover recipe, catalog, and
+// instance. Destroy of the instance tenant removes its nodes highest
+// nodeid first, the same order as the recipe snapshot copy.
 //
-// It is skipped unless TF_ACC=1 and lab credentials are set. An unset
-// TF_ACC_VERGEIO_TENANT_RECIPE_ID is not a skip and is not a pass: setup
-// creates a tenant, a node (4 cores, 16 GB RAM, 100 GiB storage), and a
-// catalog, and powers the tenant on once. Setup leaves it running until
-// tenant_status is running, not starting, not stopping, and status online,
-// db_version is set, and tenant_node_queries tcp_connect to 127.0.0.1:443
-// returns Connection successful, for up to 20 minutes. Tenant nodes are LXC
-// containers and do not report a guest agent. A ui_address is probed only
-// when one is assigned. Setup then powers the tenant off, waits for its
-// network to stop, and posts the recipe once. A 405 that says the tenant is
-// currently running retries that power-off. A 405 that says the tenant has
-// never been started powers it on, waits for the same readiness, holds it
-// online (2 minutes, then 4, then 8), and posts again until 20 minutes from
-// the first power-on. Each tenant_node_queries row is deleted after it is
-// read. VergeOS records its own
-// snapshot of the tenant. TF_ACC_VERGEIO_TENANT_RECIPE_ID is an optional
-// override. It is a 40-character hex key, the same value as
-// vergeio_tenant_recipes recipes[].id.
+// VergeOS builds a recipe from a source tenant that was configured inside
+// the tenant. That tenant is dedicated to recipe use and is powered off
+// when the recipe is created. Creating a tenant from the host and powering
+// it on does not do the inside configuration, and no host-side field
+// records it, so this test does not provision a source tenant.
+//
+// TF_ACC_VERGEIO_TENANT_RECIPE_ID is a published recipe hex key, the same
+// value as vergeio_tenant_recipes recipes[].id. When it is unset,
+// TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID is the key of an existing
+// tenant that is already configured and powered off. The test posts a
+// tf-acc- recipe from that tenant and deletes the recipe, its catalog, and
+// the snapshot tenant VergeOS created. It does not power, edit, or delete
+// the source tenant. The test skips when neither variable is set.
+//
 // TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS is optional HCL inside the answers
-// map and replaces the answers setup would send. Set it when the override
-// recipe has required questions, for example YB_USER_NAME = "admin".
+// map. Set it when the published recipe has required questions, for example
+// YB_USER_NAME = "admin". When the test creates the recipe, that HCL
+// replaces the answers the fixture would send.
 func TestAccTenantRecipeInstance(t *testing.T) {
 	acctest.PreCheck(t)
-	recipeID := os.Getenv("TF_ACC_VERGEIO_TENANT_RECIPE_ID")
+	acctest.SkipWithoutTenantRecipeLab(t)
+	recipeID := acctest.PublishedTenantRecipeID()
 	answers := os.Getenv("TF_ACC_VERGEIO_TENANT_RECIPE_ANSWERS")
 	if recipeID == "" {
 		fixture := acctest.NewTenantRecipeFixture(t)

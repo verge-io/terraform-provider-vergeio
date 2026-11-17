@@ -7,10 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/verge-io/govergeos"
 
@@ -19,41 +20,72 @@ import (
 
 const fixtureTenantAdmin = "Tf-acc-tenant-password1"
 
-// TenantRecipeFixture is a throwaway tenant, catalog, and tenant recipe.
-// The tenant uses govergeos. Catalogs and tenant recipes have no create
-// method there, so those rows are posted over HTTP. The source tenant is
-// powered on once and left running until tenant_status is online and a
-// tenant_node_queries tcp_connect to 127.0.0.1:443 returns Connection
-// successful. That wait is recipeGuestLimit. Tenant nodes are LXC
-// containers and have no guest agent. The fixture then powers the tenant
-// off, waits for its network to stop, and posts the recipe once. A
-// "currently running" 405 retries that power-off. A "never been started"
-// 405 powers the tenant on, waits for the same readiness, holds for a
-// settle period, and posts again inside recipeGuestLimit. Each
-// tenant_node_queries row is deleted after it is read.
-// VergeOS fills tenant_snapshot itself. The fixture does not send that field.
+const (
+	envTenantRecipeID             = "TF_ACC_VERGEIO_TENANT_RECIPE_ID"
+	envTenantRecipeSourceTenantID = "TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID"
+)
+
+// tenantRecipeLabSkip is the acceptance skip when neither a published recipe
+// nor a configured source tenant is named. VergeOS creates a recipe from a
+// source tenant that was configured inside the tenant. That work is not
+// tenant_status.started, db_version, or a host-side power-on, and no
+// host-side field records it. The source tenant is dedicated to recipe use
+// and is powered off when the recipe is created.
+const tenantRecipeLabSkip = "set TF_ACC_VERGEIO_TENANT_RECIPE_ID to a published tenant recipe, or TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID to an existing tenant that was configured inside the tenant and is powered off"
+
+// TenantRecipeFixture is a throwaway catalog and tenant recipe.
+// The source tenant already exists and is left unchanged: this fixture
+// does not power it, edit it, or delete it. VergeOS copies it into
+// tenant_snapshot. The fixture deletes that snapshot copy, the tf-acc-
+// recipe, and the tf-acc- catalog. The deployed instance tenant belongs
+// to vergeio_tenant_recipe_instance, which removes its nodes highest
+// nodeid first.
 type TenantRecipeFixture struct {
 	RecipeID   string
 	AnswersHCL string
 
-	ctx       context.Context
-	sdk       *vergeos.Client
-	http      *vergeio.Client
-	tenantID  int
-	catalogID string
+	ctx            context.Context
+	sdk            *vergeos.Client
+	http           *vergeio.Client
+	sourceTenantID int
+	catalogID      string
 }
 
-// NewTenantRecipeFixture creates the source tenant, gives it a node and
-// storage, posts a private catalog in the local repository, and powers the
-// tenant on. It leaves the tenant running until tenant_status is online
-// and tenant_node_queries tcp_connect to 127.0.0.1:443 succeeds, then
-// powers it off, waits for its network to stop, and posts the recipe once.
-// Required questions the fixture can answer are returned as HCL
-// inside an answers map. A required question it cannot answer is disabled,
-// and the recipe is republished. An empty TF_ACC_VERGEIO_TENANT_RECIPE_ID
-// uses this fixture. That is not a skip.
+// PublishedTenantRecipeID returns TF_ACC_VERGEIO_TENANT_RECIPE_ID.
+// An empty value means the caller should build a recipe from
+// TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID, or skip.
+func PublishedTenantRecipeID() string {
+	return strings.TrimSpace(os.Getenv(envTenantRecipeID))
+}
+
+// SkipWithoutTenantRecipeLab skips when neither lab variable is set.
+func SkipWithoutTenantRecipeLab(t *testing.T) {
+	t.Helper()
+	if PublishedTenantRecipeID() != "" {
+		return
+	}
+	if strings.TrimSpace(os.Getenv(envTenantRecipeSourceTenantID)) == "" {
+		t.Skip(tenantRecipeLabSkip)
+	}
+}
+
+// NewTenantRecipeFixture posts a tf-acc- catalog and a tf-acc- recipe for
+// the tenant named by TF_ACC_VERGEIO_TENANT_RECIPE_SOURCE_TENANT_ID.
+// That tenant must already be configured inside the tenant and powered off.
+// The fixture does not power, edit, or delete it. A 405 from the recipe
+// POST is returned as the test failure. Required questions the fixture can
+// answer are returned as HCL inside an answers map. A required question it
+// cannot answer is disabled on this recipe, and the recipe is republished.
 func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 	t.Helper()
+	raw := strings.TrimSpace(os.Getenv(envTenantRecipeSourceTenantID))
+	if raw == "" {
+		t.Skip(tenantRecipeLabSkip)
+	}
+	sourceID, err := strconv.Atoi(raw)
+	if err != nil || sourceID <= 0 {
+		t.Fatalf("%s = %q, want a positive integer", envTenantRecipeSourceTenantID, raw)
+	}
 	ctx := context.Background()
 	sdk, err := SDKClient()
 	if err != nil {
@@ -63,7 +95,12 @@ func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := &TenantRecipeFixture{ctx: ctx, sdk: sdk, http: httpClient}
+	fixture := &TenantRecipeFixture{
+		ctx:            ctx,
+		sdk:            sdk,
+		http:           httpClient,
+		sourceTenantID: sourceID,
+	}
 	t.Cleanup(func() { fixture.Destroy(t) })
 	fixture.createRecipe(t)
 	fixture.prepareAnswers(t)
@@ -72,18 +109,13 @@ func NewTenantRecipeFixture(t *testing.T) *TenantRecipeFixture {
 
 func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 	t.Helper()
-	tenantName := Name("tenant-recipe-source")
-	nodeName := Name("tenant-recipe-node")
 	catalogName := Name("tenant-recipe-catalog")
 	recipeName := Name("tenant-recipe-def")
-	for _, name := range []string{tenantName, nodeName, catalogName, recipeName} {
+	for _, name := range []string{catalogName, recipeName} {
 		if err := RequirePrefix(name); err != nil {
 			t.Fatal(err)
 		}
 	}
-	f.createSourceTenant(t, tenantName)
-	f.addSourceCapacity(t, nodeName)
-
 	repository, err := f.http.LocalCatalogRepositoryID(f.ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -99,77 +131,17 @@ func (f *TenantRecipeFixture) createRecipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.catalogID = catalogID
-	f.postRecipeAfterBoot(t, recipeName)
-}
-
-func (f *TenantRecipeFixture) createSourceTenant(t *testing.T, name string) {
-	t.Helper()
-	created, err := f.sdk.Tenants.Create(f.ctx, &vergeos.TenantCreateRequest{
-		Name:        name,
-		Password:    fixtureTenantAdmin,
-		Description: "acceptance tenant recipe source",
+	recipeID, err := f.http.CreateTenantRecipe(f.ctx, vergeio.TenantRecipeCreate{
+		Name:        recipeName,
+		Description: "acceptance tenant recipe",
+		Catalog:     catalogID,
+		Tenant:      f.sourceTenantID,
+		Version:     "1.0.0",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.tenantID = created.Key.Int()
-}
-
-// fixtureNodeCores and fixtureNodeRAM are the documented per-tenant-node
-// defaults: 4 cores and 16 GB. 16 GB is also the VergeOS node RAM minimum.
-// https://docs.verge.io/learn-the-platform/module-7-multi-tenancy/04-resource-allocation
-// https://docs.verge.io/plan-and-deploy/implementation-guide/sizing
-//
-// fixtureNodeStorage is 100 GiB. The multi-tenancy lab is the documented
-// create-and-power-on tenant: 4 cores, 8 GB RAM, 100 GB storage. 100 GiB is
-// that storage size. The lab's 8 GB is below the 16 GB node default and the
-// VergeOS RAM minimum, so this fixture keeps 16 GB. Storage quotas are thin.
-// 1 GiB is only the provisioned alignment unit.
-// https://docs.verge.io/learn-the-platform/module-7-multi-tenancy/lab
-const (
-	fixtureNodeCores         = 4
-	fixtureNodeRAM           = 16384
-	fixtureNodeStorage int64 = 100 * 1073741824
-)
-
-// addSourceCapacity gives the tenant a node and storage. Power-on with no
-// node cannot reach running.
-func (f *TenantRecipeFixture) addSourceCapacity(t *testing.T, nodeName string) {
-	t.Helper()
-	enabled := true
-	if _, err := f.sdk.TenantNodes.Create(f.ctx, &vergeos.TenantNodeCreateRequest{
-		Tenant:   f.tenantID,
-		Name:     nodeName,
-		CPUCores: fixtureNodeCores,
-		RAM:      fixtureNodeRAM,
-		Enabled:  &enabled,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	tiers, err := f.sdk.StorageTiers.List(f.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tiers) == 0 {
-		t.Fatal("no storage tiers on the lab")
-	}
-	if _, err := f.sdk.TenantStorage.Create(f.ctx, &vergeos.TenantStorageCreateRequest{
-		Tenant:      f.tenantID,
-		Tier:        tiers[0].Key,
-		Provisioned: fixtureNodeStorage,
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func (f *TenantRecipeFixture) postRecipeAfterBoot(t *testing.T, name string) {
-	t.Helper()
-	boot := newRecipeBoot(time.Now, sleepCtx, t.Logf, fixtureRecipePost{f: f, name: name})
-	id, err := boot.run(f.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.RecipeID = id
+	f.RecipeID = recipeID
 }
 
 func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
@@ -192,10 +164,10 @@ func (f *TenantRecipeFixture) prepareAnswers(t *testing.T) {
 	f.AnswersHCL = tenantRecipeAnswersHCL(answers)
 }
 
-// Destroy removes the recipe, the catalog, a snapshot tenant VergeOS created
-// for the recipe, and the source tenant. Nodes and storage on those tenants
-// are deleted first. The deployed tenant belongs to
-// vergeio_tenant_recipe_instance.
+// Destroy removes the tf-acc- recipe, the tf-acc- catalog, and the snapshot
+// tenant VergeOS created for the recipe. Nodes on that snapshot tenant are
+// deleted highest nodeid first. The source tenant is not powered, edited,
+// or deleted.
 func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 	t.Helper()
 	if f == nil {
@@ -212,11 +184,12 @@ func (f *TenantRecipeFixture) Destroy(t *testing.T) {
 			t.Errorf("delete catalog %s: %v", f.catalogID, err)
 		}
 	}
+	if copyID == f.sourceTenantID {
+		t.Errorf("recipe snapshot tenant %d is the source tenant", copyID)
+		return
+	}
 	if err := deleteSnapshotTenant(f.ctx, f.sdk, copyID); err != nil {
 		t.Errorf("delete recipe snapshot tenant %d: %v", copyID, err)
-	}
-	if err := removeManagedTenant(f.ctx, f.sdk, f.tenantID); err != nil {
-		t.Errorf("delete tenant %d: %v", f.tenantID, err)
 	}
 }
 
@@ -229,7 +202,7 @@ func (f *TenantRecipeFixture) recipeSnapshotTenant() int {
 		return 0
 	}
 	id := recipe.TenantSnapshot.Int()
-	if id <= 0 || id == f.tenantID {
+	if id <= 0 || id == f.sourceTenantID {
 		return 0
 	}
 	return id
