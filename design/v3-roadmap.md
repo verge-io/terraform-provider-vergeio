@@ -38,7 +38,7 @@ The same comment named the SDK issues that mattered here. Their state when this 
 
 ## v3.0, the foundation release
 
-v3.0 is the only v3 release allowed to break configurations. The breaking list users should read is `BREAKING CHANGES` under `## 3.0.0 (Unreleased)` in `CHANGELOG.md`. The same list is written for operators in `templates/guides/version-3-upgrade.md.tmpl` (rendered to `docs/guides/version-3-upgrade.md`). The 3.0.0 changelog already records the imported machine type alias fix (#237) and the empty import id rejection on twelve resources (#235). Those lines match the tests and were left as written.
+v3.0 is the only v3 release allowed to break configurations. The breaking list users should read is Breaking changes under `## v3.0.0` in `CHANGELOG.md`. The same list is written for operators in `templates/guides/version-3-upgrade.md.tmpl` (rendered to `docs/guides/version-3-upgrade.md`). The 3.0.0 changelog already records the imported machine type alias fix (#237) and the empty import id rejection on twelve resources (#235). Those lines match the tests and were left as written.
 
 ### Blockers
 
