@@ -6,6 +6,7 @@ package acctest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -61,23 +62,33 @@ func TestDestroyErrorsWhenSnapshotIsSourceTenant(t *testing.T) {
 	const sourceID = 44
 	const recipeID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	var mu sync.Mutex
-	var mutated []string
+	var gets []string
+	var deletes []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodDelete {
+			mu.Lock()
+			deletes = append(deletes, r.URL.Path)
+			mu.Unlock()
+			http.Error(w, "unexpected delete", http.StatusInternalServerError)
+			return
+		}
 		switch {
 		case r.URL.Path == "/version.json":
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_recipes":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenant_recipes" &&
+			r.URL.Query().Get("filter") == "id eq '"+recipeID+"'" && r.URL.Query().Get("limit") == "2":
+			// TenantRecipes.Get is this filtered list, and it keeps one row.
+			mu.Lock()
+			gets = append(gets, r.URL.RequestURI())
+			mu.Unlock()
 			body := `[{"$key":"` + recipeID + `","id":"` + recipeID + `","tenant":` + strconv.Itoa(sourceID) + `,"tenant_snapshot":` + strconv.Itoa(sourceID) + `}]`
 			_, _ = w.Write([]byte(body))
 		default:
-			mu.Lock()
-			mutated = append(mutated, r.Method+" "+r.URL.Path)
-			mu.Unlock()
-			http.Error(w, "unexpected", http.StatusInternalServerError)
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.RequestURI(), http.StatusInternalServerError)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -99,13 +110,17 @@ func TestDestroyErrorsWhenSnapshotIsSourceTenant(t *testing.T) {
 		catalogID:      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 	}
 	err = fixture.Destroy(t)
-	if err == nil || !strings.Contains(err.Error(), "source tenant") || !strings.Contains(err.Error(), strconv.Itoa(sourceID)) {
-		t.Fatalf("err = %v", err)
+	want := fmt.Sprintf("recipe snapshot tenant %d is the source tenant", sourceID)
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %s", err, want)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(mutated) != 0 {
-		t.Fatalf("destroy changed the lab: %#v", mutated)
+	if len(gets) != 1 {
+		t.Fatalf("recipe gets = %#v", gets)
+	}
+	if len(deletes) != 0 {
+		t.Fatalf("deletes = %#v", deletes)
 	}
 }
 
