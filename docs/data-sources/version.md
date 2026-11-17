@@ -8,8 +8,11 @@ description: |-
 
 # vergeio_version (Data Source)
 Retrieves the version of the system
-# Example Usage
-```
+## Example Usage
+
+```terraform
+# Version data source fetches the API Version from the VergeIO. 
+
 data "vergeio_version" "all" {
 }
 output "version" {
@@ -19,9 +22,9 @@ output "version" {
 # Example Output
 ```
 {
-id      = "version"
-name    = "v4"
-version = "4.12.6"
+name    = "26.0.0"
+version = "26.0.0"
+hash    = ""
 }
 ```
 
@@ -30,6 +33,6 @@ version = "4.12.6"
 
 ### Read-Only
 
-- `id` (String) The ID of this resource.
-- `name` (String)
-- `version` (String)
+- `name` (String) Name
+- `version` (String) Version
+- `hash` (String) Hash

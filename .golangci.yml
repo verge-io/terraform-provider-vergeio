@@ -1,0 +1,68 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    # Pre-existing findings. New issues in these files still fail unless the
+    # text below matches. Remove a rule when that finding is fixed.
+    rules:
+      - path: internal/client/field_cache.go
+        linters: [errcheck]
+        text: Body.Close
+      - path: internal/services/compute/vm_device.go
+        linters: [errcheck]
+        text: Body.Close
+      - path: internal/services/compute/vm_drive.go
+        linters: [errcheck]
+        text: checkDiskPowerState
+      - path: internal/services/compute/vm_drive.go
+        linters: [errcheck]
+        text: Body.Close
+      - path: internal/services/compute/vm_resource.go
+        linters: [ineffassign]
+        text: ineffectual assignment to i
+      - path: internal/client/field_cache.go
+        linters: [staticcheck]
+        text: S1009
+      - path: internal/services/compute/vm_drive.go
+        linters: [staticcheck]
+        text: omit type string
+      - path: internal/services/compute/vm_nic.go
+        linters: [staticcheck]
+        text: omit type string
+      - path: internal/services/compute/vm_nic.go
+        linters: [errcheck]
+        text: Body.Close
+      - path: internal/services/tags/tags_api.go
+        linters: [errcheck]
+        text: Body.Close
+      - path: internal/services/compute/vm_resource.go
+        linters: [staticcheck]
+        text: SA1019
+      - path: internal/services/compute/vm_resource.go
+        linters: [staticcheck]
+        text: S1009
+      - path: internal/services/tags/tags_api.go
+        linters: [unused]
+        text: getCategoryIDByName
+      - path: internal/services/tags/tags_api.go
+        linters: [unused]
+        text: checkEndpointAvailability
+      - path: internal/services/compute/vm_drive.go
+        linters: [unused]
+        text: getValidDiskInterfaces
+      - path: internal/services/compute/vm_api.go
+        linters: [unused]
+        text: getValidMachineTypes
+
+formatters:
+  enable: []

@@ -1,44 +1,41 @@
 TEST?=$$(go list ./... | grep -v 'vendor')
-HOSTNAME=vergeio
-NAMESPACE=cloud
-NAME=vergeio
-BINARY=terraform-provider-${NAME}
-VERSION=2.7.10
-OS_ARCH=$$(go env GOOS)_$$(go env GOARCH)
+VERSION=3.0.0
 
 default: install
 
 build:
-	go build -o ${BINARY}
+	go build -o terraform-provider-vergeio .
 
+install:
+	go install .
+
+# Local release archives. A published release is the v* tag workflow
+# (.github/workflows/release.yml), which runs goreleaser release --clean.
 release:
-	GOOS=darwin GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_darwin_amd64
-	GOOS=darwin GOARCH=arm64 go build -o ./bin/${BINARY}_${VERSION}_darwin_arm64
-	GOOS=darwin GOARCH=arm go build -o ./bin/${BINARY}_${VERSION}_darwin_arm
-	GOOS=freebsd GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_freebsd_amd64
-	GOOS=freebsd GOARCH=arm64 go build -o ./bin/${BINARY}_${VERSION}_freebsd_arm64
-	GOOS=freebsd GOARCH=arm go build -o ./bin/${BINARY}_${VERSION}_freebsd_arm
-	GOOS=linux GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_linux_amd64
-	GOOS=linux GOARCH=arm64 go build -o ./bin/${BINARY}_${VERSION}_linux_arm64
-	GOOS=linux GOARCH=arm go build -o ./bin/${BINARY}_${VERSION}_linux_arm
-	GOOS=windows GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_windows_amd64
-	GOOS=windows GOARCH=arm64 go build -o ./bin/${BINARY}_${VERSION}_windows_arm64
-	GOOS=windows GOARCH=arm go build -o ./bin/${BINARY}_${VERSION}_windows_arm
-
-install: build
-	mkdir -p ${HOME}/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
-	mv ${BINARY} ${HOME}/.terraform.d/plugins/${HOSTNAME}/${NAMESPACE}/${NAME}/${VERSION}/${OS_ARCH}
+	goreleaser release --snapshot --clean --skip=sign
 
 lint:
-#	brew install golangci-lint
 	golangci-lint run
 
 generate:
-	cd tools; go generate fmt ./...
-	
+	cd tools && go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-dir .. --provider-name vergeio
+
 test:
-	go test -i $(TEST) || exit 1
-	echo $(TEST) | xargs -t -n4 go test $(TESTARGS) -timeout=30s -parallel=4
+	go test $(TEST) -v $(TESTARGS) -timeout=30s -parallel=4
 
 testacc:
-	TF_ACC=1 go test $(TEST) -v $(TESTARGS) -timeout 120m
+	TF_ACC=1 go test $(TEST) -v $(TESTARGS) -timeout 120m -parallel=4
+
+sweep:
+	TF_ACC=1 TF_ACC_SWEEP=1 go test ./internal/acctest -run TestSweep -count=1 -v -timeout 30m
+
+testunit:
+	go test $(TEST) -v $(TESTARGS) -timeout=30s -run='Test[^Acc]'
+
+testrace:
+	go test $(TEST) -v $(TESTARGS) -timeout=60s -race
+
+testclean:
+	go clean -testcache
+
+.PHONY: default build install release lint generate test testacc sweep testunit testrace testclean

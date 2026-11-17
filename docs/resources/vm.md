@@ -10,10 +10,20 @@ description: |-
 
 VM resource in VergeIO
 
+Setting `powerstate` to false on a running VM sends one ACPI `poweroff` and waits for the guest to stop. It does not cut power. The wait is `timeouts.update`, which defaults to 2 minutes. If the guest is still running then, apply fails and names the VM and its last status. Set `force_power_off` to kill the VM instead. Guests without ACPI support need `force_power_off` for that update. Apply sets power back to the configured value when someone changes it in the VergeOS UI, then reads the VM again so state matches the plan.
+
+Destroying or replacing a running VM sends the same ACPI `poweroff` and waits `timeouts.delete`, which also defaults to 2 minutes. VergeOS suggests 60 to 120 seconds for a graceful shutdown. If the guest is still running when that wait ends, destroy sends `kill` and then deletes the VM. A guest that ignores ACPI stays running for the whole `timeouts.delete` wait before that kill. A Debian 12 generic cloud image, for example, logged the power-down event and was still running minutes later. Set `shutdown_on_destroy` to `kill` to cut power immediately, or to `graceful` to fail the destroy instead of killing. Replace, taint, and a change that forces a new VM all use this same delete.
+
+`snapshot_profile` is the key of a [`vergeio_snapshot_profile`](snapshot_profile.html). Set `snapshot_profile = tonumber(vergeio_snapshot_profile.example.id)`.
+
 ## Example Usage
 
+`vergeio_vm` keeps machine settings, devices, and an optional `boot_disk`. Other drives are [`vergeio_vm_drive`](vm_drive.html) resources and NICs are [`vergeio_vm_nic`](vm_nic.html) resources. Guest agent addresses are read from `vergeio_vm.web-server.guest_agent_ips` on this resource.
+
 ```terraform
-# Create a VM
+# Create a VM with a boot disk, devices, and cloud-init files.
+# Extra drives are vergeio_vm_drive resources. NICs are vergeio_vm_nic resources.
+
 resource "vergeio_vm" "web-server" {
   name                 = "my-web-server"
   description          = "Web Server"
@@ -28,62 +38,16 @@ resource "vergeio_vm" "web-server" {
   cloudinit_datasource = "nocloud"
   ha_group             = "web"
 
-  # Blank Drive
-  vergeio_drive {
-    name           = "Web Server OS Disk"
-    description    = "Operating System Disk"
-    disksize       = 100
-    interface      = "virtio-scsi"
-    preferred_tier = 3
-    orderid        = 0
+  boot_disk {
+    name = "Web Server OS Disk"
+    size = 100
   }
-  # CD-Rom Drive
-    vergeio_drive {
-    name           = "CD ROM"
-    description    = "CD ROM"
-    media          = "cdrom"
-    media_source   = 33
-    interface      = "sata"
-  }
-  # Cloned Drive
-    vergeio_drive {
-    name           = "Clone"
-    description    = "Clone"
-    media          = "clone"
-    media_source   = 39
-    preferred_tier = 3
-    interface      = "virtio-scsi"
-  }
-  # Imported Drive From Media Images
-    vergeio_drive {
-    name           = "Import"
-    description    = "Import"
-    media          = "import"
-    media_source   = 59
-    preferred_tier = 3
-    interface      = "virtio-scsi"
-  }
-  # EFI Disk
-    vergeio_drive {
-    name           = "EFI Disk"
-    description    = "EFI Disk"
-    media          = "efidisk"
-  }   
-  # NIC
-  vergeio_nic {
-    name             = "Web Server Network"
-    description      = "NIC for Web Server"
-    interface        = "virtio"
-    enabled          = true
-    vnet             = 6
-    assign_ipaddress = true
-  }
-  # Nvidia vGPU Device
+
   vergeio_device {
-    name                = "my-vgpu"
-    description         = "my-vgpu"
-    type                = "node_nvidia_vgpu_devices"
-    resource_group      = "1aeba871-c293-d325-cc15-188183d13cc3"
+    name           = "my-vgpu"
+    description    = "my-vgpu"
+    type           = "node_nvidia_vgpu_devices"
+    resource_group = "1aeba871-c293-d325-cc15-188183d13cc3"
     nvidia_vgpu_settings = {
       profile_type       = "profile identifier"
       frame_rate_limiter = 60
@@ -93,80 +57,90 @@ resource "vergeio_vm" "web-server" {
       enable_profiling   = true
     }
   }
-  # PCI Device
+
   vergeio_device {
     name           = "my-PCI-device"
     description    = "my-PCI-device"
     type           = "node_pci_devices"
     resource_group = "22c12938-05f0-310f-f00e-df6f109e7364"
   }
-  # TPM Device
+
   vergeio_device {
-    name         = "my-TPM-device"
-    description  = "my-TPM-device"
-    type         = "tpm"
+    name        = "my-TPM-device"
+    description = "my-TPM-device"
+    type        = "tpm"
     tpm_settings = {
       model   = "crb"
-      version = "2.0"
+      version = "2.0" # display label; sent on create as "2". Read-only after create.
     }
   }
-  # USB Device
+
   vergeio_device {
-    name           = "my-USB-device"
-    description    = "my-USB-device"
-    type           = "node_usb_devices"
-    usb_settings   = {
+    name        = "my-USB-device"
+    description = "my-USB-device"
+    type        = "node_usb_devices"
+    usb_settings = {
       guest_reset      = false
       guest_resets_all = false
     }
-  } 
+  }
+
   cloudinit_files = [
     {
-    name     = "user-data"
-    contents = <<-EOT
-    #cloud-config
-    users:
-        - name: ubuntu
-        groups: sudo
-        shell: /bin/bash
-        sudo: ["ALL=(ALL) NOPASSWD:ALL"]
-        ssh_authorized_keys:
-            - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQD...
-    EOT
+      name     = "user-data"
+      contents = <<-EOT
+        #cloud-config
+        users:
+            - name: ubuntu
+            groups: sudo
+            shell: /bin/bash
+            sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+            ssh_authorized_keys:
+                - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQD...
+      EOT
     },
     {
-    name     = "meta-data"
-    contents = <<-EOT
-    instance-id: iid-local01
-    local-hostname: myhost
-    EOT
+      name     = "meta-data"
+      contents = <<-EOT
+        instance-id: iid-local01
+        local-hostname: myhost
+      EOT
     }
-]
+  ]
+}
+```
+
+`console_pass` and cloud-init `contents` are stored in state. They are deprecated and will be removed in v4. `console_pass_wo` and `contents_wo` are not stored. Increment the matching version to send the value again. A console password change updates the VM in place. It does not replace the VM. Write-only attributes require Terraform 1.11 or OpenTofu 1.11.
+
+```terraform
+# console_pass_wo and contents_wo are not stored. Increment the matching
+# version to send the value again. A console password change updates the
+# VM in place. It does not replace the VM.
+
+resource "vergeio_vm" "web-server" {
+  name                    = "my-web-server"
+  os_family               = "linux"
+  cpu_cores               = 2
+  ram                     = 2048
+  console_pass_enabled    = true
+  console_pass_wo         = "console-secret"
+  console_pass_wo_version = 1
+  cloudinit_datasource    = "nocloud"
+
+  cloudinit_files = [
+    {
+      name                = "user-data"
+      contents_wo         = <<-EOT
+        #cloud-config
+        password: secret
+      EOT
+      contents_wo_version = 1
+    }
+  ]
 }
 ```
 
 <!-- schema generated by tfplugindocs -->
-
-
-## Power state
-
-`powerstate` is applied after the VM and its drives, NICs and devices exist. The provider posts the `poweron` action (or `kill` for `powerstate = false`) and then reads the VM's running flag every 5 seconds, up to 25 seconds in total.
-
-If the platform accepts the action but the VM has not reached the requested state inside that window, the apply fails with an error of the form:
-
-```
-timeout waiting for VM 42 power state poweron: still false after 6 checks
-```
-
-When this happens during an update, the VM stays in state and the next `terraform apply` retries the power action.
-
-When it happens during creation, the VM, its drives, NICs and devices already exist on the platform but Terraform has not recorded the resource, because `Create` writes state only after every step succeeds. A second `terraform apply` would try to create the VM again. Import the existing VM first (`terraform import vergeio_vm.<name> <vm id>`) or delete it in the VergeOS UI before re-applying. The same applies to any failure after the VM row is created, such as a drive or NIC error.
-
-Common causes of the timeout are a cluster with no node that can place the VM right now, a node under memory pressure, or a VM whose start was accepted and then stalled; check the VM's status in the VergeOS UI before re-applying.
-
-A power action that the platform refuses outright fails immediately with the HTTP status the platform returned, not with the timeout.
-
-Before v2.7.9 the provider returned success after the same 25 seconds whatever the VM was doing, which could record `powerstate = true` for a VM that never started.
 
 ## Schema
 
@@ -193,7 +167,9 @@ Before v2.7.9 the provider returned success after the same 25 seconds whatever t
     - `spice`  Spice
     - `serial` Serial Console
     - `none`   None
-- `console_pass` (String) - Depends on `console_pass_enabled`
+- `console_pass` (String, Sensitive) - Depends on `console_pass_enabled`. Deprecated. Stored in state through v3.x. Use `console_pass_wo`. Changing it updates the VM in place. It will be removed in v4.
+- `console_pass_wo` (String, Sensitive, Write-Only) - Sent on create and when `console_pass_wo_version` changes. Not stored. The VM is updated in place, not replaced. Requires Terraform 1.11 or OpenTofu 1.11. Do not set `console_pass` as well.
+- `console_pass_wo_version` (Number) - Increment to change `console_pass_wo`. Terraform stores this number, not the password.
 - `console_pass_enabled` (Boolean) - Default = False
 - `cpu_cores` (Number) - Default = 1
 - `cpu_type` (String) -  Default = Cluster CPU type
@@ -245,7 +221,7 @@ Before v2.7.9 the provider returned success after the same 25 seconds whatever t
     - `q35` - Q35 + ICH9, 2009 chipset (alias for latest version)
     - `pc-q35-X.X` - Specific versions of Q35 chipset (e.g., `pc-q35-9.0`)
 
-    **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider
+    **Note:** Machine types are updated with each QEMU version change in VergeOS. The provider automatically fetches the current list from your VergeOS system, so newer machine types will be available without updating the provider. Import stores the expanded type VergeOS returns. `q35` in configuration and `pc-q35-10.0` in state are the same type, and so are `pc` and `pc-i440fx-10.0`. After `boot_disk` is adopted, that pair does not plan a change.
 - `nested_virtualization` (Boolean), Default = False
 - `on_power_loss` (String) - Sets the power state of the VM after a power loss
     - `last_state` Last Power State (**Default**)
@@ -264,7 +240,7 @@ Before v2.7.9 the provider returned success after the same 25 seconds whatever t
     - `localtime` Localtime (Recommended for Widows)
 - `secure_boot` (Boolean) - Depends on `uefi` Default = False
 - `serial_port` (Boolean) - Default = False
-- `snapshot_profile` (Number) - Key of snapshot profile. Default = None
+- `snapshot_profile` (Number) - Key of a snapshot profile. Use `tonumber(vergeio_snapshot_profile.example.id)` so the VM and its protection policy are declared together. See [`vergeio_snapshot_profile`](snapshot_profile.html). Omit to leave the current profile unchanged. Default = None
 - `sound` (String)
     - `none` None (**Default**)
     - `sb16`    Creative Sound Blaster 16
@@ -284,21 +260,32 @@ Before v2.7.9 the provider returned success after the same 25 seconds whatever t
     - `qxl`    QXL paravirtualized graphics (recommended for spice)
     - `virtio` Virtio
     - `none`   None (headless)
-- `powerstate` (Boolean) - Default = False. When true the VM is powered on after creation and kept on by later applies; when false it is powered off (hard stop). The apply waits for the platform to confirm the state and fails if it does not arrive; see [Power state](#power-state) below.
+- `powerstate` (Boolean) - Whether the VM is powered on. Default = False on create, which leaves a new VM stopped. Apply powers the VM on, or sends one ACPI poweroff, when this differs from the VM's current power, including a power change made in the VergeOS UI. The provider reads the VM again after that change so state matches. Powering off waits until the guest stops. It does not hard-kill the VM. If the guest is still running when `timeouts.update` elapses (default 2 minutes), apply fails unless `force_power_off` is true. Omit this attribute to leave the current power unchanged.
+- `force_power_off` (Boolean) - Default = False. When a graceful poweroff from `powerstate = false` times out, kill the VM. Guests without ACPI support need this set to true for that update. Destroy uses `shutdown_on_destroy` instead.
+- `shutdown_on_destroy` (String) - How destroy and replace stop a running VM. Default = `graceful_then_kill`.
+    - `graceful_then_kill` Send one ACPI `poweroff`, wait `timeouts.delete`, then `kill` if the guest is still running.
+    - `graceful` Send one ACPI `poweroff` and wait. Destroy fails if the guest does not stop, and the VM is left in place.
+    - `kill` Send `kill` immediately. This is the previous destroy behavior.
+  A guest without ACPI handling waits out the full `timeouts.delete` before the kill fallback. Shorten that timeout, or set this to `kill`, when the guest will not shut itself down.
+- `timeouts` (Block, Optional)
+  - `update` (String) - How long to wait for a graceful ACPI poweroff when `powerstate` changes to false. A duration such as `90s` or `2m`. Default = 2 minutes.
+  - `delete` (String) - How long destroy and replace wait for a graceful ACPI poweroff before the `shutdown_on_destroy` fallback. A duration such as `90s` or `2m`. Default = 2 minutes. A guest that ignores ACPI uses this whole wait before `kill`. Ignored when `shutdown_on_destroy` is `kill`.
 - `cloudinit_datasource` (String), Default = None  
   Options:  
     - `nocloud`  
     - `config_drive_v2`
 - `cloudinit_files` (List) - A list of objects representing the cloud-init files, Depends on `cloudinit_datasource`
-   - **Required Options**
+   - **Required**
      - `name` (String) - The name of the file (e.g. `"user-data"`, `"meta-data"`, `"vendor-data"`, `"network-data"`)
-     - `contents` (String) - The file content, typically YAML for user-data and JSON for meta-data with
+   - **One of**
+     - `contents` (String) - The file body stored in state. Deprecated when the file holds a secret. Use `contents_wo`. It will be removed in v4.
+     - `contents_wo` (String, Sensitive, Write-Only) - File body sent on create and when `contents_wo_version` changes. Not stored. Requires Terraform 1.11 or OpenTofu 1.11. Do not set `contents` as well.
+     - `contents_wo_version` (Number) - Increment to write `contents_wo` again. Terraform stores this number, not the body.
 - `advanced` (String) - Property and value pairs separated by newlines, e.g. `"tag1=val1\ntag2=val2"`
 - `wait_for_guest_agent_info` (Number) - Wait time in seconds for guest agent to be ready before completing resource creation
 - `wait_for_guest_ip_timeout` (Number) - Wait time in seconds for guest IP address to be available
 - `ignored_guest_ips` (String) - CIDR notation for IP addresses to ignore when waiting for guest IP (e.g., `"169.254.0.0/16"`)
-- `vergeio_drive` (Block List) (see [below for nested schema](#nestedblock--vergeio_drive))
-- `vergeio_nic` (Block List) (see [below for nested schema](#nestedblock--vergeio_nic))
+- `boot_disk` (Block, Optional) (see [below for nested schema](#nestedblock--boot_disk))
 - `vergeio_device` (Block List) (see [below for nested schema](#nestedblock--vergeio_device))
 
 ### Read-Only
@@ -307,56 +294,28 @@ Before v2.7.9 the provider returned success after the same 25 seconds whatever t
 - `machine` (Number) Machine
 - `guest_agent_ips` (List of String) - IP addresses reported by the guest agent
 
-### Nested Schema for `vergeio_drive`
+<a id="nestedblock--boot_disk"></a>
+
+### Nested Schema for `boot_disk`
+
+The boot disk is created before the VM is powered on. The provider adopts an existing drive with the same name instead of creating a second disk. Removing `boot_disk` deletes that one drive and leaves every other drive on the VM alone. Changing `media` or `source` on an owned boot disk replaces the VM. Adding media or source when adopting an existing disk after import or a 2.x upgrade does not.
 
 Optional:
 
-- `asset` (String)
-- `description` (String)
-- `disksize` (Number) - Size in GB (supports fractional values, e.g., 8.5). Formatted in 1024 based GB. Ex: 1024GB = 1TB
-- `enabled` (Boolean) - Default = True
-- `interface` (String)
-	- `virtio`                (Virtio Legacy)
-	- `ide`                   (IDE) Only available on the i440x machine type
-	- `ahci`                  (SATA) Only available on the Q35 machine type
-	- `lsi53c895a`            (LSI53C895A SCSI)
-	- `megasas`               (LSI MegaRAID SAS 1078)
-	- `megasas-gen2`          (LSI MegaRAID SAS 2108)
-	- `mptsas1068`            (LSI SAS 1608)
-	- `virtio-scsi`           (Virtio-SCSI, **Default**)
-	- `virtio-scsi-dedicated` (Virtio-SCSI Dedicated Controller)
-  - `media` (String) - Media type of the resource
+- `name` (String) - Drive name. Defaults to `boot`. Set this to the existing drive name when a single-disk VM moves off the old `vergeio_drive` block.
+- `size` (Number) - Size in GB (supports fractional values, e.g., 8.5).
+- `source` (Number) - Media source id for a clone or import. Changing source on an owned boot disk replaces the VM. Setting source when adopting after import or a 2.x upgrade does not.
+- `media` (String) - Media type. Omit it for a new disk. Changing media on an owned boot disk replaces the VM. Setting media when adopting after import or a 2.x upgrade does not.
 	- `cdrom`   (CD-Rom)
-	- `disk`    (New Disk, **Default**)
+	- `disk`    (New Disk)
 	- `import`  (Import drive from media images)
 	- `clone`   (Clone an existing VM disk)
 	- `efidisk` (Create a new EFI Disk)
-- `media_source` (Number) - ID of the source media used to create a Cloned disk, Imported disk, or attach an image from media images to a CD-Rom.
-- `orderid` (Number) - Sets the ID for the disk order on the Virtual Machine
-- `preferred_tier` (String) - Tier to assign the resource to. If one is not specified the default tier in the system settings will be used.
-- `preserve_drive_format` (Boolean) - Default = False
-- `readonly` (Boolean) Default = False
-- `serial` (String)
-<a id="nestedblock--vergeio_nic"></a>
+	- `nonpersistent` (Non-persistent disk)
 
-### Nested Schema for `vergeio_nic`
+Read-Only:
 
-Optional:
-
-- `asset` (String)
-- `description` (String)
-- `enabled` (Boolean) - Default = True
-- `interface` (String)
-  - `virtio`  (Virtio, **Default**)
-  - `e1000`   (Intel)
-  - `rtl8139` (Realtek 8139)
-  - `pcnet`   (AMD PCNET)
-  - `e1000e`  (Intel e1000e)
-  - `igb`     (Intel 82576)
-  - `vmxnet3` (VMware Paravirtualized Ethernet v3)
-- `macaddress` (String)
-- `vnet` (Number) - Key (ID) of the vNET the resource will attach to.
-- `assign_ipaddress` (Boolean) - To assign an IP address to a NIC, `assign_ipaddress` must be true and `vnet` must point to a vNET with DHCP enabled
+- `key` (String) - Drive key assigned by VergeOS.
 
 <a id="nestedblock--vergeio_device"></a>
 
@@ -385,7 +344,7 @@ Optional:
   - `enable_profiling` (Boolean) - Enable profiling
 - `tpm_settings` (Object) - Settings for TPM devices:
   - `model` (String) - TPM model (e.g., `"crb"`)
-  - `version` (String) - TPM version (e.g., `"2.0"`)
+  - `version` (String) - TPM version. `"2.0"` and `"1.2"` are display labels stored as `"2"` and `"1"`. `"2"` and `"1"` are accepted unchanged. The version is sent when the device is created. VergeOS treats it as read-only afterward, so updates omit it. Changing version on an existing device replaces the VM so create can send the new value. Adding a TPM device is still an in-place update.
 - `usb_settings` (Object) - Settings for USB devices:
   - `guest_reset` (Boolean) - Allow guest to reset device
   - `guest_resets_all` (Boolean) - Guest reset affects all USB devices

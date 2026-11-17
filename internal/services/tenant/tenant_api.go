@@ -1,0 +1,268 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MIT
+
+package tenant
+
+import (
+	"context"
+	"fmt"
+
+	"terraform-provider-vergeio/internal/client"
+
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
+	"github.com/verge-io/govergeos"
+)
+
+var _ vergeio.IClient = &API{}
+
+func tenantCreateRequest(data *TenantResourceModel) *vergeos.TenantCreateRequest {
+	req := &vergeos.TenantCreateRequest{
+		Name: data.Name.ValueString(),
+	}
+	if password := vergeio.KnownString(data.Password); password != nil {
+		req.Password = *password
+	}
+	if description := vergeio.KnownString(data.Description); description != nil {
+		req.Description = *description
+	}
+	if url := vergeio.KnownString(data.URL); url != nil {
+		req.URL = *url
+	}
+	req.OIDCApplication = knownInt(data.OIDCApplication)
+	// A null or unknown ui_address_id leaves the platform default: the first
+	// assigned external IP becomes the tenant UI address.
+	req.UIAddress = knownInt(data.UIAddressID)
+	req.ExposeCloudSnapshots = vergeio.KnownBool(data.ExposeCloudSnapshots)
+	req.AllowBranding = vergeio.KnownBool(data.AllowBranding)
+	req.ChangePassword = vergeio.KnownBool(data.ChangePassword)
+	req.ThemeAccess = vergeio.KnownString(data.ThemeAccess)
+	req.HelpURL = vergeio.KnownString(data.HelpURL)
+	req.Note = vergeio.KnownString(data.Note)
+	return req
+}
+
+func tenantUpdateRequest(plan, state *TenantResourceModel) *vergeos.TenantUpdateRequest {
+	req := &vergeos.TenantUpdateRequest{
+		Name:                 vergeio.ChangedString(plan.Name, state.Name),
+		Password:             vergeio.ChangedString(plan.Password, state.Password),
+		Description:          vergeio.ChangedString(plan.Description, state.Description),
+		URL:                  vergeio.ChangedString(plan.URL, state.URL),
+		OIDCApplication:      changedInt(plan.OIDCApplication, state.OIDCApplication),
+		UIAddress:            changedInt(plan.UIAddressID, state.UIAddressID),
+		ExposeCloudSnapshots: vergeio.ChangedBool(plan.ExposeCloudSnapshots, state.ExposeCloudSnapshots),
+		AllowBranding:        vergeio.ChangedBool(plan.AllowBranding, state.AllowBranding),
+		ThemeAccess:          vergeio.ChangedString(plan.ThemeAccess, state.ThemeAccess),
+		HelpURL:              vergeio.ChangedString(plan.HelpURL, state.HelpURL),
+		Note:                 vergeio.ChangedString(plan.Note, state.Note),
+	}
+	if tenantUpdateEmpty(req) {
+		return nil
+	}
+	return req
+}
+
+func tenantUpdateEmpty(req *vergeos.TenantUpdateRequest) bool {
+	if req == nil {
+		return true
+	}
+	return req.Name == nil &&
+		req.Password == nil &&
+		req.Description == nil &&
+		req.URL == nil &&
+		req.OIDCApplication == nil &&
+		req.UIAddress == nil &&
+		req.ExposeCloudSnapshots == nil &&
+		req.AllowBranding == nil &&
+		req.ThemeAccess == nil &&
+		req.HelpURL == nil &&
+		req.Note == nil
+}
+
+func (a *API) createTenant(ctx context.Context, data *TenantResourceModel) error {
+	created, err := a.sdk.Tenants.Create(ctx, tenantCreateRequest(data))
+	if err != nil {
+		return err
+	}
+	id := created.Key.Int()
+	data.Id = idString(id)
+	tflog.Debug(ctx, fmt.Sprintf("created tenant %d", id))
+	return nil
+}
+
+func (a *API) updateTenant(ctx context.Context, plan, state *TenantResourceModel) (deferred bool, err error) {
+	id, err := parseID(state.Id, "tenant")
+	if err != nil {
+		return false, err
+	}
+	plan.Id = state.Id
+	if req := tenantUpdateRequest(plan, state); req != nil {
+		if _, err := a.sdk.Tenants.Update(ctx, id, req); err != nil {
+			return false, err
+		}
+		tflog.Debug(ctx, fmt.Sprintf("updated tenant %d", id))
+	}
+	// isolate is read-only on the tenants row. isolateon and isolateoff are
+	// the writes. A null or unknown value leaves the current isolation (#213).
+	if err := a.reconcileIsolate(ctx, id, plan.Isolate); err != nil {
+		return false, err
+	}
+	// Same no-nodes defer as create (#219): powerstate=true with an empty
+	// node list must not PowerOn + waitPower(true).
+	return a.reconcilePowerOnCreate(ctx, id, plan.PowerState, plan.PreferredNode)
+}
+
+// reconcileIsolate applies isolate when the plan sets it and the tenant row
+// differs. VergeOS stores the column as read-only. IsolateOn and IsolateOff
+// are the writes. A null or unknown value leaves isolation unchanged, so an
+// omitted argument does not undo a change made in the parent UI. A configured
+// value that differs from the row is drift, and the next apply corrects it.
+func (a *API) reconcileIsolate(ctx context.Context, id int, desired types.Bool) error {
+	if desired.IsNull() || desired.IsUnknown() {
+		return nil
+	}
+	tenant, err := a.sdk.Tenants.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	want := desired.ValueBool()
+	if tenant.Isolate == want {
+		return nil
+	}
+	if want {
+		if err := a.sdk.Tenants.IsolateOn(ctx, id); err != nil {
+			return err
+		}
+		tflog.Debug(ctx, fmt.Sprintf("enabled isolation on tenant %d", id))
+		return nil
+	}
+	if err := a.sdk.Tenants.IsolateOff(ctx, id); err != nil {
+		return err
+	}
+	tflog.Debug(ctx, fmt.Sprintf("disabled isolation on tenant %d", id))
+	return nil
+}
+
+func (a *API) readTenant(ctx context.Context, data *TenantResourceModel) error {
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		return err
+	}
+	tenant, err := a.sdk.Tenants.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	// VergeOS reuses tenant keys after delete. A Get that returns a different
+	// tenant's row must not be adopted into state (#232).
+	if err := ensureTenantOwned(data, tenant); err != nil {
+		return err
+	}
+	assignTenantResource(data, tenant)
+	return a.readTenantRuntime(ctx, data, tenant)
+}
+
+// ensureTenantOwned returns NotFound when the stored key now points at another
+// tenant (UUID mismatch). Skip the check when uuid is unset (import).
+func ensureTenantOwned(data *TenantResourceModel, tenant *vergeos.Tenant) error {
+	if data.UUID.IsNull() || data.UUID.IsUnknown() || data.UUID.ValueString() == "" {
+		return nil
+	}
+	if tenant.UUID != data.UUID.ValueString() {
+		return &vergeos.NotFoundError{Resource: "Tenant", ID: tenant.Key.Int()}
+	}
+	return nil
+}
+
+func assignTenantResource(data *TenantResourceModel, tenant *vergeos.Tenant) {
+	data.Id = idString(tenant.Key.Int())
+	data.Name = types.StringValue(tenant.Name)
+	data.Description = types.StringValue(tenant.Description)
+	data.URL = types.StringValue(tenant.URL)
+	data.OIDCApplication = flexPtr(tenant.OIDCApplication)
+	data.ExposeCloudSnapshots = types.BoolValue(tenant.ExposeCloudSnapshots)
+	data.AllowBranding = types.BoolValue(tenant.AllowBranding)
+	// change_password is create-only. VergeOS clears it after first login.
+	// Refreshing that false would disagree with a configured true and replace the tenant.
+	data.ThemeAccess = enumString(tenant.ThemeAccess)
+	data.HelpURL = types.StringValue(tenant.HelpURL)
+	data.Note = types.StringValue(tenant.Note)
+	data.UUID = types.StringValue(tenant.UUID)
+	data.VNet = flexID(tenant.VNet)
+	data.Isolate = types.BoolValue(tenant.Isolate)
+	data.IsSnapshot = types.BoolValue(tenant.IsSnapshot)
+	data.Creator = types.StringValue(tenant.Creator)
+	data.Created = timestamp(tenant.Created)
+}
+
+func (a *API) readTenantRuntime(ctx context.Context, data *TenantResourceModel, tenant *vergeos.Tenant) error {
+	facts, err := a.tenantFacts(ctx, tenant.Key.Int(), tenant.UIAddress.Int())
+	if err != nil {
+		return err
+	}
+	data.UIAddressID = facts.UIAddressID
+	data.UIAddress = facts.UIAddress
+	data.PowerState = facts.PowerState
+	data.Status = facts.Status
+	data.State = facts.State
+	return nil
+}
+
+type tenantFacts struct {
+	UIAddressID types.Int32
+	UIAddress   types.String
+	PowerState  types.Bool
+	Status      types.String
+	State       types.String
+}
+
+func (a *API) tenantFacts(ctx context.Context, tenantID, uiAddressID int) (tenantFacts, error) {
+	facts := tenantFacts{
+		UIAddressID: types.Int32Null(),
+		UIAddress:   types.StringNull(),
+		PowerState:  types.BoolValue(false),
+		Status:      types.StringNull(),
+		State:       types.StringNull(),
+	}
+	if uiAddressID > 0 {
+		facts.UIAddressID = types.Int32Value(int32(uiAddressID))
+		address, err := a.sdk.VNetAddresses.Get(ctx, uiAddressID)
+		if err != nil && !vergeos.IsNotFoundError(err) {
+			return facts, err
+		}
+		if err == nil && address.IP != "" {
+			facts.UIAddress = types.StringValue(address.IP)
+		}
+	}
+	status, err := a.sdk.TenantStatus.Get(ctx, tenantID)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return facts, nil
+		}
+		return facts, err
+	}
+	facts.PowerState = types.BoolValue(tenantPoweredOn(status))
+	facts.Status = enumString(status.Status)
+	facts.State = enumString(status.State)
+	return facts, nil
+}
+
+// deleteTenant powers the tenant off when it is not yet terminal offline,
+// waits for the tenant vnet to stop, then deletes it. VergeOS rejects
+// deletion of a running tenant and of a tenant whose network is still
+// running (#205). A missing tenant is already gone. ensurePoweredOff waits
+// through starting/stopping so destroy does not race a transitional status
+// (#196).
+func (a *API) deleteTenant(ctx context.Context, data *TenantResourceModel) error {
+	id, err := parseID(data.Id, "tenant")
+	if err != nil {
+		return err
+	}
+	if err := a.ensurePoweredOff(ctx, id); err != nil {
+		return err
+	}
+	if err := a.sdk.Tenants.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		return err
+	}
+	tflog.Debug(ctx, fmt.Sprintf("deleted tenant %d", id))
+	return nil
+}

@@ -9,15 +9,19 @@ description: |-
 # vergeio_vms (Data Source)
 Retrieves information on the virtual machines in the system
 
-# Example Usage
-```
+## Example Usage
+
+Guest agent addresses are on the VM resource (`vergeio_vm.web-server.guest_agent_ips`), not on this data source. Drive and NIC details are on each VM in `vms`.
+
+```terraform
+# VMs data source fetches the VMsfrom the VergeIO. 
+
 data "vergeio_vms" "all" {
 }
 output "Virtual_Machines" {
   value = data.vergeio_vms.all.vms
 }
-```
-```
+
 # Add a filter to see information on a specific virtual machine or ignore VM snapshots
 
 data "vergeio_vms" "all" {
@@ -27,26 +31,9 @@ data "vergeio_vms" "all" {
 output "Virtual_Machines" {
   value = data.vergeio_vms.all.vms
 }
-```
-```
-# View the VM IP via the guest agent on resource creation
 
-output "guest_agent_ip" {
-  value = vergeio_vm.{RESOURCE NAME HERE}.guest_agent_ips
-}
-```
+# VMs and NICs information is also available via the VMs data source
 
-```
-data "vergeio_vms" "all" {
-	filter_name = "Example VM"
-    is_snapshot = false
-}
-output "Virtual_Machines" {
-	value = data.vergeio_vms.all.vms
-}
-```
-Drive and NIC information is also available via the VMs data source
-```
 output "VM_NICs" {
   value = data.vergeio_vms.all.vms[0].nics[0]
 }
@@ -106,7 +93,7 @@ Read-Only:
 - `interface` (String) - Drive interface type (e.g., `virtio-scsi`, `sata`)
 - `media` (String) - Media type (`disk`, `cdrom`, `efidisk`)
 - `description` (String) - Drive description
-- `preferred_tier` (String) - Storage tier (1-5)
+- `preferred_tier` (Number) - Storage tier (1-5)
 - `media_source` (Object) - Media source information (see [below for nested schema](#nestedatt--vms--drives--media_source))
 
 <a id="nestedatt--vms--drives--media_source"></a>
@@ -127,7 +114,7 @@ Read-Only:
 - `key` (Number) - NIC key/ID
 - `name` (String) - NIC name
 - `interface` (String) - NIC interface type (e.g., `virtio`, `e1000`)
-- `vnet` (String) - vNET the NIC is attached to
+- `vnet` (Number) - ID of the vNET the NIC is attached to
 - `status` (String) - NIC status
 - `ipaddress` (String) - IP address assigned to the NIC
 - `macaddress` (String) - MAC address of the NIC

@@ -1,0 +1,1147 @@
+package acctest
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/verge-io/govergeos"
+
+	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/services/nas"
+	"terraform-provider-vergeio/internal/services/network"
+	"terraform-provider-vergeio/internal/services/platform"
+	"terraform-provider-vergeio/internal/services/site"
+)
+
+// Sweep deletes acceptance-test leftovers whose names start with ResourcePrefix.
+// Tag memberships and group memberships are removed when they point at those
+// objects. A tag category with the prefix is deleted last. VergeOS then
+// deletes every tag in that category and every assignment of those tags.
+// Objects outside the prefix are left alone.
+func Sweep(ctx context.Context) error {
+	client, err := SDKClient()
+	if err != nil {
+		return err
+	}
+
+	vms, err := client.VMs.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list vms: %w", err)
+	}
+	networks, err := client.Networks.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list networks: %w", err)
+	}
+	users, err := client.Users.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list users: %w", err)
+	}
+	groups, err := client.Groups.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list groups: %w", err)
+	}
+	files, err := client.CloudInitFiles.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list cloud-init files: %w", err)
+	}
+	members, err := client.Members.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list members: %w", err)
+	}
+	tagMembers, err := client.TagMembers.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tag members endpoint unavailable, skipping")
+		tagMembers = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tag members: %w", err)
+	}
+
+	vmIDs := map[int]string{}
+	vmMachines := map[int]string{}
+	for _, vm := range vms {
+		if vm.IsSnapshot || !HasPrefix(vm.Name) {
+			continue
+		}
+		vmIDs[vm.Key.Int()] = vm.Name
+		if vm.Machine > 0 {
+			vmMachines[vm.Machine] = vm.Name
+		}
+	}
+	networkIDs := map[int]string{}
+	for _, network := range networks {
+		if !HasPrefix(network.Name) {
+			continue
+		}
+		networkIDs[network.Key.Int()] = network.Name
+	}
+	userIDs := map[int]string{}
+	for _, user := range users {
+		if !HasPrefix(user.Name) {
+			continue
+		}
+		userIDs[user.Key.Int()] = user.Name
+	}
+	groupIDs := map[int]string{}
+	for _, group := range groups {
+		if !HasPrefix(group.Name) {
+			continue
+		}
+		groupIDs[group.Key.Int()] = group.Name
+	}
+
+	permissions, err := client.Permissions.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list permissions: %w", err)
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	for _, perm := range permissions {
+		if !permissionBelongsToSweep(perm, userIDs, groupIDs) {
+			continue
+		}
+		id := perm.Key.Int()
+		log.Printf("[SWEEP] deleting permission %d (identity %d %s)", id, perm.Identity.Int(), perm.Table)
+		record(ignoreNotFound(client.Permissions.Delete(ctx, id), "permission", id))
+	}
+
+	for _, tagMember := range tagMembers {
+		if !referencesSweptObject(tagMember.Member, vmIDs, networkIDs, userIDs, groupIDs) && !HasPrefix(tagMember.Member) {
+			continue
+		}
+		id := tagMember.Key.Int()
+		log.Printf("[SWEEP] deleting tag member %d (%s)", id, tagMember.Member)
+		record(ignoreNotFound(client.TagMembers.Delete(ctx, id), "tag member", id))
+	}
+
+	for _, member := range members {
+		if member.System {
+			continue
+		}
+		_, ownedGroup := groupIDs[member.Group.Int()]
+		if !ownedGroup && !HasPrefix(member.Member) && !referencesSweptObject(member.Member, vmIDs, networkIDs, userIDs, groupIDs) {
+			continue
+		}
+		id := member.Key.Int()
+		log.Printf("[SWEEP] deleting member %d (%s)", id, member.Member)
+		record(ignoreNotFound(client.Members.Delete(ctx, id), "member", id))
+	}
+
+	for _, file := range files {
+		ownerVM := ownerVMID(file.Owner)
+		if !HasPrefix(file.Name) {
+			if _, ok := vmIDs[ownerVM]; !ok {
+				continue
+			}
+		}
+		id := file.Key.Int()
+		log.Printf("[SWEEP] deleting cloud-init file %d (%s)", id, file.Name)
+		record(ignoreNotFound(client.CloudInitFiles.Delete(ctx, id), "cloud-init file", id))
+	}
+
+	// NAS rows sit on the test VM. Shares, volumes, and the service have to
+	// go before that VM, or VergeOS refuses the VM delete.
+	record(sweepNAS(ctx, client, vmIDs))
+	record(sweepVMSnapshots(ctx, client, vmMachines))
+	for id, name := range vmIDs {
+		log.Printf("[SWEEP] deleting vm %d (%s)", id, name)
+		record(deleteVM(ctx, client, id))
+	}
+	record(sweepVMRecipeInstances(ctx, client))
+	// Site sync periods reference snapshot profile periods, so sites go
+	// before those profiles. A VM that still references a profile can make
+	// the profile delete fail, which is why profiles stay after VMs.
+	record(sweepSites(ctx, client))
+	record(sweepPlatform(ctx, client))
+	record(sweepSnapshotProfiles(ctx, client))
+	for id, name := range networkIDs {
+		log.Printf("[SWEEP] deleting network %d (%s)", id, name)
+		record(deleteNetwork(ctx, client, id))
+	}
+	for id, name := range groupIDs {
+		log.Printf("[SWEEP] deleting group %d (%s)", id, name)
+		record(ignoreNotFound(client.Groups.Delete(ctx, id), "group", id))
+	}
+	record(sweepAPIKeys(ctx, client, userIDs))
+	for id, name := range userIDs {
+		log.Printf("[SWEEP] deleting user %d (%s)", id, name)
+		record(ignoreNotFound(client.Users.Delete(ctx, id), "user", id))
+	}
+	record(sweepAuthSources(ctx, client))
+
+	record(sweepTenants(ctx, client))
+	record(sweepTags(ctx, client))
+
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep deleted with %d error(s): %w", len(errs), errorsJoin(errs))
+	}
+	return verifySweep(ctx, client)
+}
+
+func verifySweep(ctx context.Context, client *vergeos.Client) error {
+	var left []string
+
+	vms, err := client.VMs.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify vms: %w", err)
+	}
+	for _, vm := range vms {
+		if !vm.IsSnapshot && HasPrefix(vm.Name) {
+			left = append(left, fmt.Sprintf("vm %s (%d)", vm.Name, vm.Key.Int()))
+		}
+	}
+
+	instances, err := client.VMRecipeInstances.List(ctx)
+	if listEndpointMissing(err) {
+		instances = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify vm recipe instances: %w", err)
+	}
+	for _, instance := range instances {
+		if HasPrefix(instance.Name) {
+			left = append(left, fmt.Sprintf("vm recipe instance %s (%d)", instance.Name, instance.Key.Int()))
+		}
+	}
+
+	networks, err := client.Networks.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify networks: %w", err)
+	}
+	for _, network := range networks {
+		if HasPrefix(network.Name) {
+			left = append(left, fmt.Sprintf("network %s (%d)", network.Name, network.Key.Int()))
+		}
+	}
+
+	users, err := client.Users.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify users: %w", err)
+	}
+	for _, user := range users {
+		if HasPrefix(user.Name) {
+			left = append(left, fmt.Sprintf("user %s (%d)", user.Name, user.Key.Int()))
+		}
+	}
+
+	groups, err := client.Groups.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify groups: %w", err)
+	}
+	for _, group := range groups {
+		if HasPrefix(group.Name) {
+			left = append(left, fmt.Sprintf("group %s (%d)", group.Name, group.Key.Int()))
+		}
+	}
+
+	files, err := client.CloudInitFiles.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify cloud-init files: %w", err)
+	}
+	for _, file := range files {
+		if HasPrefix(file.Name) {
+			left = append(left, fmt.Sprintf("cloud-init file %s (%d)", file.Name, file.Key.Int()))
+		}
+	}
+
+	tenants, err := client.Tenants.List(ctx)
+	if err != nil {
+		return fmt.Errorf("verify tenants: %w", err)
+	}
+	for _, tenant := range tenants {
+		if !tenant.IsSnapshot && HasPrefix(tenant.Name) {
+			left = append(left, fmt.Sprintf("tenant %s (%d)", tenant.Name, tenant.Key.Int()))
+		}
+	}
+
+	addresses, err := client.TenantExternalIPs.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		addresses = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tenant external IPs: %w", err)
+	}
+	for _, address := range addresses {
+		if HasPrefix(address.Hostname) {
+			left = append(left, fmt.Sprintf("tenant external IP %s (%d)", address.Hostname, address.Key.Int()))
+		}
+	}
+
+	profiles, err := client.SnapshotProfiles.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		profiles = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify snapshot profiles: %w", err)
+	}
+	for _, profile := range profiles {
+		if HasPrefix(profile.Name) {
+			left = append(left, fmt.Sprintf("snapshot profile %s (%d)", profile.Name, profile.Key.Int()))
+		}
+	}
+
+	vmSnaps, err := client.VMSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		vmSnaps = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify vm snapshots: %w", err)
+	}
+	for _, snap := range vmSnaps {
+		if HasPrefix(snap.Name) {
+			left = append(left, fmt.Sprintf("vm snapshot %s (%d)", snap.Name, snap.Key.Int()))
+		}
+	}
+
+	tenantSnaps, err := client.TenantSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		tenantSnaps = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tenant snapshots: %w", err)
+	}
+	for _, snap := range tenantSnaps {
+		if HasPrefix(snap.Name) {
+			left = append(left, fmt.Sprintf("tenant snapshot %s (%d)", snap.Name, snap.Key.Int()))
+		}
+	}
+
+	tags, err := client.Tags.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		tags = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tags: %w", err)
+	}
+	for _, tag := range tags {
+		if HasPrefix(tag.Name) {
+			left = append(left, fmt.Sprintf("tag %s (%d)", tag.Name, tag.Key.Int()))
+		}
+	}
+
+	categories, err := client.TagCategories.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		categories = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify tag categories: %w", err)
+	}
+	for _, category := range categories {
+		if HasPrefix(category.Name) {
+			left = append(left, fmt.Sprintf("tag category %s (%d)", category.Name, category.Key.Int()))
+		}
+	}
+
+	keys, err := client.UserAPIKeys.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		keys = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify API keys: %w", err)
+	}
+	for _, key := range keys {
+		if HasPrefix(key.Name) {
+			left = append(left, fmt.Sprintf("API key %s (%d)", key.Name, key.Key.Int()))
+		}
+	}
+
+	sources, err := client.AuthSources.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		sources = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("verify auth sources: %w", err)
+	}
+	for _, source := range sources {
+		if HasPrefix(source.Name) {
+			left = append(left, fmt.Sprintf("auth source %s (%d)", source.Name, source.Key.Int()))
+		}
+	}
+
+	left = append(left, verifyNAS(ctx, client)...)
+	left = append(left, verifySites(ctx, client)...)
+	left = append(left, verifyPlatform(ctx, client)...)
+
+	if len(left) > 0 {
+		return fmt.Errorf("prefixed objects remain after sweep: %s", strings.Join(left, ", "))
+	}
+	return nil
+}
+
+func verifyNAS(ctx context.Context, client *vergeos.Client) []string {
+	var left []string
+	services, err := client.NASServices.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		left = append(left, fmt.Sprintf("NAS services: %v", err))
+	}
+	for _, service := range services {
+		if HasPrefix(service.Name) {
+			left = append(left, fmt.Sprintf("NAS service %s (%d)", service.Name, service.Key.Int()))
+		}
+	}
+	volumes, err := client.Volumes.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("volumes: %v", err))
+	}
+	for _, volume := range volumes {
+		if !volume.IsSnapshot && HasPrefix(volume.Name) {
+			left = append(left, fmt.Sprintf("volume %s (%s)", volume.Name, firstID(volume.ID, volume.Key)))
+		}
+	}
+	users, err := client.NASServiceUsers.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("NAS users: %v", err))
+	}
+	for _, user := range users {
+		if HasPrefix(user.Name) {
+			left = append(left, fmt.Sprintf("NAS user %s (%s)", user.Name, firstID(user.ID, user.Key)))
+		}
+	}
+	cifs, err := client.VolumeCIFSShares.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("CIFS shares: %v", err))
+	}
+	for _, share := range cifs {
+		if HasPrefix(share.Name) {
+			left = append(left, fmt.Sprintf("CIFS share %s (%s)", share.Name, firstID(share.ID, share.Key)))
+		}
+	}
+	nfs, err := client.VolumeNFSShares.List(ctx)
+	if err != nil && !listEndpointMissing(err) {
+		return append(left, fmt.Sprintf("NFS shares: %v", err))
+	}
+	for _, share := range nfs {
+		if HasPrefix(share.Name) {
+			left = append(left, fmt.Sprintf("NFS share %s (%s)", share.Name, firstID(share.ID, share.Key)))
+		}
+	}
+	return left
+}
+
+func sweepNAS(ctx context.Context, client *vergeos.Client, vmIDs map[int]string) error {
+	return nas.SweepTestRows(ctx, client, vmIDs, HasPrefix)
+}
+
+func sweepSites(ctx context.Context, client *vergeos.Client) error {
+	return site.SweepTestRows(ctx, client, HasPrefix)
+}
+
+func sweepPlatform(ctx context.Context, client *vergeos.Client) error {
+	return platform.SweepTestRows(ctx, client, HasPrefix)
+}
+
+func verifyPlatform(ctx context.Context, client *vergeos.Client) []string {
+	return platform.Leftovers(ctx, client, HasPrefix)
+}
+
+func verifySites(ctx context.Context, client *vergeos.Client) []string {
+	return site.Leftovers(ctx, client, HasPrefix)
+}
+
+func firstID(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func sweepAPIKeys(ctx context.Context, client *vergeos.Client, userIDs map[int]string) error {
+	keys, err := client.UserAPIKeys.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] API keys endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list API keys: %w", err)
+	}
+	var errs []error
+	for _, key := range keys {
+		_, owned := userIDs[key.User.Int()]
+		if !owned && !HasPrefix(key.Name) {
+			continue
+		}
+		log.Printf("[SWEEP] deleting API key %d (%s)", key.Key.Int(), key.Name)
+		if err := ignoreNotFound(client.UserAPIKeys.Delete(ctx, key.Key.Int()), "API key", key.Key.Int()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return errorsJoin(errs)
+	}
+	return nil
+}
+
+func sweepAuthSources(ctx context.Context, client *vergeos.Client) error {
+	sources, err := client.AuthSources.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] auth sources endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list auth sources: %w", err)
+	}
+	var errs []error
+	for _, source := range sources {
+		if !HasPrefix(source.Name) {
+			continue
+		}
+		log.Printf("[SWEEP] deleting auth source %d (%s)", source.Key.Int(), source.Name)
+		if err := ignoreNotFound(client.AuthSources.Delete(ctx, source.Key.Int()), "auth source", source.Key.Int()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return errorsJoin(errs)
+	}
+	return nil
+}
+
+// sweepSnapshotProfiles removes prefixed snapshot profiles. Periods are
+// deleted first. VMs that reference a profile are removed earlier in Sweep.
+func sweepSnapshotProfiles(ctx context.Context, client *vergeos.Client) error {
+	profiles, err := client.SnapshotProfiles.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] snapshot profiles endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list snapshot profiles: %w", err)
+	}
+	ids := map[int]string{}
+	for _, profile := range profiles {
+		if !HasPrefix(profile.Name) {
+			continue
+		}
+		ids[profile.Key.Int()] = profile.Name
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for id, name := range ids {
+		periods, err := client.SnapshotProfilePeriods.ListByProfile(ctx, id)
+		if vergeos.IsNotFoundError(err) {
+			periods = nil
+			err = nil
+		}
+		if err != nil {
+			return fmt.Errorf("list snapshot profile periods for %d: %w", id, err)
+		}
+		for _, period := range periods {
+			periodID := period.Key.Int()
+			log.Printf("[SWEEP] deleting snapshot profile period %d (%s)", periodID, period.Name)
+			record(ignoreNotFound(client.SnapshotProfilePeriods.Delete(ctx, periodID), "snapshot profile period", periodID))
+		}
+		log.Printf("[SWEEP] deleting snapshot profile %d (%s)", id, name)
+		record(ignoreNotFound(client.SnapshotProfiles.Delete(ctx, id), "snapshot profile", id))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep snapshot profiles: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+// sweepTags removes prefixed tags and tag categories. Members of those tags
+// are removed first. Deleting a prefixed category cascades to any tag still
+// in it and to every assignment of those tags.
+func sweepTags(ctx context.Context, client *vergeos.Client) error {
+	categories, err := client.TagCategories.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tag categories endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tag categories: %w", err)
+	}
+	tags, err := client.Tags.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tags endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tags: %w", err)
+	}
+
+	categoryIDs := map[int]string{}
+	for _, category := range categories {
+		if !HasPrefix(category.Name) {
+			continue
+		}
+		categoryIDs[category.Key.Int()] = category.Name
+	}
+	ownedTags := map[int]string{}
+	prefixedTags := map[int]string{}
+	for _, tag := range tags {
+		id := tag.Key.Int()
+		if HasPrefix(tag.Name) {
+			prefixedTags[id] = tag.Name
+			ownedTags[id] = tag.Name
+		}
+		if _, ok := categoryIDs[tag.Category.Int()]; ok {
+			ownedTags[id] = tag.Name
+		}
+	}
+	if len(categoryIDs) == 0 && len(prefixedTags) == 0 {
+		return nil
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	tagMembers, err := client.TagMembers.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tag members endpoint unavailable, skipping")
+		tagMembers = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tag members: %w", err)
+	}
+	for _, tagMember := range tagMembers {
+		if _, ok := ownedTags[tagMember.Tag.Int()]; !ok {
+			continue
+		}
+		id := tagMember.Key.Int()
+		log.Printf("[SWEEP] deleting tag member %d (tag %d)", id, tagMember.Tag.Int())
+		record(ignoreNotFound(client.TagMembers.Delete(ctx, id), "tag member", id))
+	}
+	for id, name := range prefixedTags {
+		log.Printf("[SWEEP] deleting tag %d (%s)", id, name)
+		record(ignoreNotFound(client.Tags.Delete(ctx, id), "tag", id))
+	}
+	for id, name := range categoryIDs {
+		log.Printf("[SWEEP] deleting tag category %d (%s); this also deletes its tags and their assignments", id, name)
+		record(ignoreNotFound(client.TagCategories.Delete(ctx, id), "tag category", id))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tags: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenants(ctx context.Context, client *vergeos.Client) error {
+	tenants, err := client.Tenants.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list tenants: %w", err)
+	}
+	ids := map[int]string{}
+	for _, tenant := range tenants {
+		if tenant.IsSnapshot || !HasPrefix(tenant.Name) {
+			continue
+		}
+		ids[tenant.Key.Int()] = tenant.Name
+	}
+	if err := sweepTenantExternalIPs(ctx, client, ids); err != nil {
+		return err
+	}
+	if err := sweepTenantLayer2Networks(ctx, client, ids); err != nil {
+		return err
+	}
+	if err := sweepTenantSnapshots(ctx, client, ids); err != nil {
+		return err
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var errs []error
+	record := func(err error) {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	nodes, err := client.TenantNodes.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tenant nodes endpoint unavailable, skipping")
+		nodes = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant nodes: %w", err)
+	}
+	if err := sweepTenantNodeDevices(ctx, client, nodes, ids); err != nil {
+		return err
+	}
+	for _, node := range nodes {
+		if _, ok := ids[node.Tenant.Int()]; !ok {
+			continue
+		}
+		id := node.Key.Int()
+		log.Printf("[SWEEP] deleting tenant node %d (%s)", id, node.Name)
+		record(deleteTenantNode(ctx, client, id))
+	}
+
+	allocations, err := client.TenantStorage.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tenant storage endpoint unavailable, skipping")
+		allocations = nil
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant storage: %w", err)
+	}
+	for _, allocation := range allocations {
+		if _, ok := ids[allocation.Tenant.Int()]; !ok {
+			continue
+		}
+		id := allocation.Key.Int()
+		log.Printf("[SWEEP] deleting tenant storage %d", id)
+		record(ignoreNotFound(client.TenantStorage.Delete(ctx, id), "tenant storage", id))
+	}
+
+	for id, name := range ids {
+		log.Printf("[SWEEP] deleting tenant %d (%s)", id, name)
+		record(deleteTenant(ctx, client, id))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenants: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantNodeDevices(ctx context.Context, client *vergeos.Client, nodes []vergeos.TenantNode, tenantIDs map[int]string) error {
+	if len(tenantIDs) == 0 {
+		return nil
+	}
+	var errs []error
+	for _, node := range nodes {
+		if _, ok := tenantIDs[node.Tenant.Int()]; !ok || node.IsSnapshot || node.Machine.Int() <= 0 {
+			continue
+		}
+		devices, err := client.TenantNodeDevices.List(ctx, node.Key.Int())
+		if listEndpointMissing(err) {
+			log.Printf("[SWEEP] tenant node devices unavailable, skipping")
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("list devices on tenant node %d: %w", node.Key.Int(), err)
+		}
+		for _, device := range devices {
+			// The node belongs to an acceptance tenant, so every device on it
+			// was created by a test. Copies from device_count above 1 may not
+			// keep the tf-acc- name.
+			id := device.Key.Int()
+			log.Printf("[SWEEP] deleting tenant node device %d (%s) on node %d", id, device.Name, node.Key.Int())
+			if err := client.TenantNodeDevices.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+				errs = append(errs, fmt.Errorf("delete tenant node device %d: %w", id, err))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant node devices: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantExternalIPs(ctx context.Context, client *vergeos.Client, tenantIDs map[int]string) error {
+	addresses, err := client.TenantExternalIPs.List(ctx)
+	if vergeos.IsNotFoundError(err) {
+		log.Printf("[SWEEP] tenant external IPs endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant external IPs: %w", err)
+	}
+	var errs []error
+	for _, address := range addresses {
+		_, owned := tenantIDs[address.TenantKey()]
+		if !owned && !HasPrefix(address.Hostname) {
+			continue
+		}
+		id := address.Key.Int()
+		log.Printf("[SWEEP] deleting tenant external IP %d (%s)", id, address.IP)
+		if err := deleteTenantExternalIP(ctx, client, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant external IPs: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantLayer2Networks(ctx context.Context, client *vergeos.Client, tenantIDs map[int]string) error {
+	if len(tenantIDs) == 0 {
+		return nil
+	}
+	rows, err := client.TenantLayer2Networks.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] tenant layer 2 networks endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant layer 2 networks: %w", err)
+	}
+	var errs []error
+	for _, row := range rows {
+		if _, ok := tenantIDs[row.Tenant.Int()]; !ok {
+			continue
+		}
+		id := row.Key.Int()
+		log.Printf("[SWEEP] deleting tenant layer 2 network %d (tenant %d network %d)", id, row.Tenant.Int(), row.VNet.Int())
+		if err := client.TenantLayer2Networks.Disable(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			if _, getErr := client.TenantLayer2Networks.Get(ctx, id); vergeos.IsNotFoundError(getErr) {
+				continue
+			}
+			errs = append(errs, fmt.Errorf("disable tenant layer 2 network %d: %w", id, err))
+			continue
+		}
+		if err := client.TenantLayer2Networks.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			errs = append(errs, fmt.Errorf("delete tenant layer 2 network %d: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant layer 2 networks: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func listEndpointMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	if vergeos.IsNotFoundError(err) {
+		return true
+	}
+	var apiErr *vergeos.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
+}
+
+func deleteTenantExternalIP(ctx context.Context, client *vergeos.Client, id int) error {
+	_, err := client.TenantExternalIPs.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if _, getErr := client.TenantExternalIPs.Get(ctx, id); vergeos.IsNotFoundError(getErr) {
+		log.Printf("[SWEEP] tenant external IP %d removed; firewall follow-up: %v", id, err)
+		return nil
+	}
+	return fmt.Errorf("delete tenant external IP %d: %w", id, err)
+}
+
+func deleteTenant(ctx context.Context, client *vergeos.Client, id int) error {
+	err := client.Tenants.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if offErr := client.Tenants.PowerOff(ctx, id); offErr != nil && !vergeos.IsNotFoundError(offErr) {
+		log.Printf("[SWEEP] tenant %d power off: %v", id, offErr)
+	}
+	if tenant, getErr := client.Tenants.Get(ctx, id); getErr == nil {
+		if vnetID := tenant.VNet.Int(); vnetID > 0 {
+			if killErr := client.Networks.Kill(ctx, vnetID); killErr != nil && !vergeos.IsNotFoundError(killErr) {
+				log.Printf("[SWEEP] tenant %d vnet %d kill: %v", id, vnetID, killErr)
+			}
+			// Brief wait so Tenants.Delete does not race a still-running vnet.
+			deadline := time.Now().Add(30 * time.Second)
+			for time.Now().Before(deadline) {
+				network, netErr := client.Networks.Get(ctx, vnetID)
+				if netErr != nil || !network.Running {
+					break
+				}
+				time.Sleep(time.Second)
+			}
+		}
+	}
+	return ignoreNotFound(client.Tenants.Delete(ctx, id), "tenant", id)
+}
+
+func deleteTenantNode(ctx context.Context, client *vergeos.Client, id int) error {
+	err := client.TenantNodes.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if killErr := client.TenantNodes.Kill(ctx, id); killErr != nil && !vergeos.IsNotFoundError(killErr) {
+		log.Printf("[SWEEP] tenant node %d kill: %v", id, killErr)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		node, getErr := client.TenantNodes.Get(ctx, id)
+		if getErr != nil {
+			if vergeos.IsNotFoundError(getErr) {
+				return nil
+			}
+			break
+		}
+		machineID := node.Machine.Int()
+		if machineID <= 0 {
+			break
+		}
+		status, stErr := client.MachineStatus.Get(ctx, machineID)
+		if stErr != nil || !status.Running {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	return ignoreNotFound(client.TenantNodes.Delete(ctx, id), "tenant node", id)
+}
+
+// snapshotBelongsToSweep reports whether a snapshot was created by an
+// acceptance test. The name prefix is enough on its own. A snapshot of a
+// swept parent is removed even when the name was generated.
+func snapshotBelongsToSweep(name string, parent int, parents map[int]string) bool {
+	if HasPrefix(name) {
+		return true
+	}
+	if parent <= 0 {
+		return false
+	}
+	_, ok := parents[parent]
+	return ok
+}
+
+func sweepVMSnapshots(ctx context.Context, client *vergeos.Client, machines map[int]string) error {
+	snaps, err := client.VMSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] vm snapshots endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list vm snapshots: %w", err)
+	}
+	var errs []error
+	for _, snap := range snaps {
+		if !snapshotBelongsToSweep(snap.Name, snap.Machine.Int(), machines) {
+			continue
+		}
+		id := snap.Key.Int()
+		log.Printf("[SWEEP] deleting vm snapshot %d (%s)", id, snap.Name)
+		if err := ignoreNotFound(client.VMSnapshots.Delete(ctx, id), "vm snapshot", id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep vm snapshots: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func sweepTenantSnapshots(ctx context.Context, client *vergeos.Client, tenants map[int]string) error {
+	snaps, err := client.TenantSnapshots.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] tenant snapshots endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list tenant snapshots: %w", err)
+	}
+	var errs []error
+	for _, snap := range snaps {
+		if !snapshotBelongsToSweep(snap.Name, snap.Tenant.Int(), tenants) {
+			continue
+		}
+		id := snap.Key.Int()
+		log.Printf("[SWEEP] deleting tenant snapshot %d (%s)", id, snap.Name)
+		if err := ignoreNotFound(client.TenantSnapshots.Delete(ctx, id), "tenant snapshot", id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep tenant snapshots: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+// deleteVM removes a test VM. Delete is refused while the VM is running.
+// Empty acceptance VMs have no OS and ignore ACPI, so VMs.PowerOff waits
+// out its timeout and the VM stays running. VMs.Kill stops the machine
+// immediately, then delete is retried.
+func sweepVMRecipeInstances(ctx context.Context, client *vergeos.Client) error {
+	rows, err := client.VMRecipeInstances.List(ctx)
+	if listEndpointMissing(err) {
+		log.Printf("[SWEEP] vm recipe instances endpoint unavailable, skipping")
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("list vm recipe instances: %w", err)
+	}
+	httpClient, err := acceptanceHTTPClient()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range rows {
+		if !HasPrefix(row.Name) {
+			continue
+		}
+		id := row.Key.Int()
+		log.Printf("[SWEEP] deleting vm recipe instance %d (%s)", id, row.Name)
+		if err := httpClient.DeleteVMRecipeInstance(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete vm recipe instance %d: %w", id, err))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("sweep vm recipe instances: %w", errorsJoin(errs))
+	}
+	return nil
+}
+
+func acceptanceHTTPClient() (*vergeio.Client, error) {
+	host := os.Getenv(envAccHost)
+	username := os.Getenv(envAccUsername)
+	password := os.Getenv(envAccPassword)
+	if host == "" || username == "" || password == "" {
+		return nil, fmt.Errorf("%s, %s, and %s are required", envAccHost, envAccUsername, envAccPassword)
+	}
+	return vergeio.NewClient(host, username, password, true), nil
+}
+
+func deleteVM(ctx context.Context, client *vergeos.Client, id int) error {
+	err := client.VMs.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if killErr := client.VMs.Kill(ctx, id); killErr != nil && !vergeos.IsNotFoundError(killErr) {
+		return fmt.Errorf("delete vm %d: %w (kill: %v)", id, err, killErr)
+	}
+	return ignoreNotFound(client.VMs.Delete(ctx, id), "vm", id)
+}
+
+func deleteNetwork(ctx context.Context, client *vergeos.Client, id int) error {
+	// IPsec rows are not removed with the network, and a phase 1 delete
+	// while a phase 2 row remains fails permanently. Peers go before the
+	// WireGuard interface.
+	if err := network.DeleteNetworkDNSRows(ctx, client, id); err != nil {
+		return err
+	}
+	if err := network.DeleteNetworkVPNRows(ctx, client, id); err != nil {
+		return err
+	}
+	err := client.Networks.Delete(ctx, id)
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	if offErr := client.Networks.PowerOff(ctx, id); offErr != nil && !vergeos.IsNotFoundError(offErr) {
+		return fmt.Errorf("delete network %d: %w (power off: %v)", id, err, offErr)
+	}
+	return ignoreNotFound(client.Networks.Delete(ctx, id), "network", id)
+}
+
+func referencesSweptObject(member string, vmIDs, networkIDs, userIDs, groupIDs map[int]string) bool {
+	kind, id, ok := splitRef(member)
+	if !ok {
+		return false
+	}
+	switch kind {
+	case "vms":
+		_, ok = vmIDs[id]
+	case "vnets":
+		_, ok = networkIDs[id]
+	case "users":
+		_, ok = userIDs[id]
+	case "groups":
+		_, ok = groupIDs[id]
+	default:
+		ok = false
+	}
+	return ok
+}
+
+// permissionBelongsToSweep reports whether a grant should be removed with
+// the acceptance-test users and groups. Identity may be the row key or a
+// separate identity whose display name is the object name. A grant on the
+// swept user or group row is removed too.
+func permissionBelongsToSweep(perm vergeos.Permission, userIDs, groupIDs map[int]string) bool {
+	identity := perm.Identity.Int()
+	if _, ok := userIDs[identity]; ok {
+		return true
+	}
+	if _, ok := groupIDs[identity]; ok {
+		return true
+	}
+	if nameIn(perm.IdentityDisplay, userIDs) || nameIn(perm.IdentityDisplay, groupIDs) {
+		return true
+	}
+	switch perm.Table {
+	case "users":
+		_, ok := userIDs[int(perm.Row)]
+		return ok
+	case "groups":
+		_, ok := groupIDs[int(perm.Row)]
+		return ok
+	default:
+		return false
+	}
+}
+
+func nameIn(name string, ids map[int]string) bool {
+	if name == "" {
+		return false
+	}
+	for _, candidate := range ids {
+		if candidate == name {
+			return true
+		}
+	}
+	return false
+}
+
+func ownerVMID(owner string) int {
+	kind, id, ok := splitRef(owner)
+	if !ok || kind != "vms" {
+		return 0
+	}
+	return id
+}
+
+func splitRef(ref string) (string, int, bool) {
+	kind, idText, ok := strings.Cut(ref, "/")
+	if !ok || kind == "" || idText == "" {
+		return "", 0, false
+	}
+	id, err := strconv.Atoi(idText)
+	if err != nil {
+		return "", 0, false
+	}
+	return kind, id, true
+}
+
+func ignoreNotFound(err error, kind string, id int) error {
+	if err == nil || vergeos.IsNotFoundError(err) {
+		return nil
+	}
+	return fmt.Errorf("delete %s %d: %w", kind, id, err)
+}
+
+func errorsJoin(errs []error) error {
+	parts := make([]string, 0, len(errs))
+	for _, err := range errs {
+		parts = append(parts, err.Error())
+	}
+	return fmt.Errorf("%s", strings.Join(parts, "; "))
+}

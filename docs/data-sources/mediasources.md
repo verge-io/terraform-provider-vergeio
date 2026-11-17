@@ -9,21 +9,24 @@ description: |-
 # vergeio_mediasources (Data Source)
 Retrieves information on all available images in Media Images
 
-# Example Usage
-```
+## Example Usage
+
+```terraform
+# Mediasources data source fetches the Media Source from the VergeIO. 
+
 data "vergeio_mediasources" "all" {
 }
 output "Available_Media_Images" {
-	value = data.vergeio_mediasources.all.mediasources
+  value = data.vergeio_mediasources.all.mediasources
 }
-```
-Add a filter to view details about a specific image
-```
+
+# Add a filter to view details about a specific image
+
 data "vergeio_mediasources" "all" {
-	filter_name = "verge.io-clone.iso"
+  filter_name = "verge.io-clone.iso"
 }
 output "cloneiso" {
-	value = data.vergeio_mediasources.all.mediasources
+  value = data.vergeio_mediasources.all.mediasources
 }
 ```
 # Example Output

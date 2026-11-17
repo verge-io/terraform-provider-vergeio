@@ -1,0 +1,11 @@
+- hosts: tag_web
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Record a snapshot before guest configuration
+      vergeio.vergeos.vm_snapshot:
+        host: "{{ vergeos_site_url }}"
+        name: "{{ vergeos_name }}"
+        snapshot_name: before_config
+        state: present
+      delegate_to: localhost

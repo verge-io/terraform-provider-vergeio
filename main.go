@@ -29,7 +29,9 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-
+		// Local builds are served at vergeio/cloud/vergeio so dev_overrides
+		// can load them. Published docs use the registry source verge-io/vergeio.
+		// tools/tools.go passes -provider-name vergeio to tfplugindocs.
 		Address: "vergeio/cloud/vergeio",
 		Debug:   debug,
 	}

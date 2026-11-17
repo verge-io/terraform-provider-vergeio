@@ -20,10 +20,8 @@ data "vergeio_resource_groups" "all" {
 output "resource_groups" {
   value = data.vergeio_resource_groups.all.resource_groups
 }
-```
 
-Filter by name:
-```terraform
+# Filter by name
 data "vergeio_resource_groups" "gpu" {
   filter_name = "GPU Pool"
 }
@@ -33,7 +31,8 @@ output "gpu_groups" {
 }
 ```
 
-Use with VM device configuration:
+Use the group id when attaching a device to a VM.
+
 ```terraform
 data "vergeio_resource_groups" "vgpu" {
   filter_name = "vGPU Pool"

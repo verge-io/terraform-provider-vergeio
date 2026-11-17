@@ -8,26 +8,25 @@ description: |-
 
 # vergeio_tag_member (Resource)
 
-Assign tags to VergeOS objects such as VMs and networks. This resource requires VergeOS v26 or later.
+Assign tags to VergeOS objects such as VMs and networks. This resource requires VergeOS v26 or later. Changing `tag_id` or `member` replaces the assignment, because VergeOS does not allow a tag membership to be updated in place.
 
 ## Example Usage
 
 ```terraform
-# Assign a tag to a VM
+# Create a tag member assignment to assign a tag to an object
+
 resource "vergeio_tag_member" "vm_production" {
   tag_id = 1
   member = "vms/54"
 }
 
-# Assign a tag to a network
+# Assign tag to a network
 resource "vergeio_tag_member" "network_production" {
   tag_id = 2
   member = "vnets/19"
 }
-```
 
-Use with other resources - assign tag to a newly created VM:
-```terraform
+# Use with other resources - assign tag to a newly created VM
 resource "vergeio_vm" "web-server" {
   name         = "example-web-server"
   cpu_cores    = 2
@@ -42,8 +41,11 @@ resource "vergeio_tag_member" "web_server_tag" {
 }
 ```
 
-Use with tags data source to look up tag by name:
+Look up a tag by name, then assign it.
+
 ```terraform
+# Look up a tag by name, then assign it.
+
 data "vergeio_tags" "production" {
   filter = "production"
 }
@@ -59,8 +61,8 @@ resource "vergeio_tag_member" "vm_tag" {
 
 ### Required
 
-- `tag_id` (Number) - ID of the tag to assign
-- `member` (String) - Object to tag in format `object_type/object_id` (e.g., `vms/123`, `vnets/456`)
+- `tag_id` (Number) - ID of the tag to assign. Changing tag_id replaces the tag membership.
+- `member` (String) - Object to tag in format `object_type/object_id` (e.g., `vms/123`, `vnets/456`). Changing member replaces the tag membership.
 
 ### Read-Only
 
