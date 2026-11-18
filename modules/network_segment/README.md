@@ -2,7 +2,7 @@
 
 Creates an internal network with DHCP, DNS, and a firewall policy.
 
-`dns_servers` and `domain` are handed to DHCP clients (`dnslist` and `domain`). `dns` adds a DNS view, a master zone, and records on the same network. Those records use `apply` false. A `tf-dns-apply` TXT record refreshes DNS after them. Its description is a checksum of the records, so any record change reloads DNS once. Omit `ipaddress` to use the first host of `cidr`.
+`dns_servers` and `domain` are handed to DHCP clients (`dnslist` and `domain`). `dns` adds a DNS view, a master zone, and records on the same network. Those records use `apply` false. A `tf-dns-apply` TXT record refreshes DNS after them. Its description is a checksum of the records, so any record change reloads DNS once. Omit `ipaddress` to use the first host of `cidr` as a bare address, such as `192.168.16.1`. `dhcp_start` and `dhcp_stop` are bare addresses too. `external_network_id` is a network key, not an IP.
 
 `firewall_rules` is the whole non-system policy, in order (`vergeio_network_rules`). Rules left off the list are deleted. System rules stay. `action` `translate` writes `target_ip` and `target_ports` for a port forward.
 
@@ -14,7 +14,7 @@ module "app" {
 
   name                 = "app"
   cidr                 = "192.168.16.0/24"
-  ipaddress            = "192.168.16.1/24"
+  ipaddress            = "192.168.16.1"
   dhcp_start           = "192.168.16.10"
   dhcp_stop            = "192.168.16.200"
   dns_servers          = ["192.168.16.1"]

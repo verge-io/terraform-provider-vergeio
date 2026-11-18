@@ -102,9 +102,9 @@ resource "vergeio_vm_nic" "this" {
 }
 
 resource "vergeio_tag_member" "this" {
-  for_each = toset([for id in var.tag_ids : tostring(id)])
+  for_each = var.tag_ids
 
-  tag_id = tonumber(each.value)
+  tag_id = each.value
   member = local.vm_member
 }
 

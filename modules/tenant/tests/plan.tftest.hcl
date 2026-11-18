@@ -3,13 +3,13 @@ mock_provider "vergeio" {}
 variables {
   name                       = "customer-a"
   description                = "Customer A virtual data center"
-  tenant_password_wo         = "tenant-admin-password"
+  tenant_password_wo         = "Tenant-admin-password1"
   tenant_password_wo_version = 1
   change_password            = true
   powerstate                 = true
   isolate                    = false
   admin_group_id             = 1
-  admin_password_wo          = "parent-admin-password"
+  admin_password_wo          = "Parent-admin-password1"
   admin_password_wo_version  = 1
 
   admin_user = {

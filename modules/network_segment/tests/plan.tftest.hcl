@@ -4,7 +4,7 @@ variables {
   name                = "app"
   description         = "Application segment"
   cidr                = "192.168.16.0/24"
-  ipaddress           = "192.168.16.1/24"
+  ipaddress           = "192.168.16.1"
   enabled             = true
   powerstate          = true
   dhcp_enabled        = true
@@ -64,7 +64,7 @@ run "plan" {
   command = plan
 
   assert {
-    condition     = vergeio_network.this.name == "app" && vergeio_network.this.type == "internal" && vergeio_network.this.network == "192.168.16.0/24" && vergeio_network.this.ipaddress == "192.168.16.1/24"
+    condition     = vergeio_network.this.name == "app" && vergeio_network.this.type == "internal" && vergeio_network.this.network == "192.168.16.0/24" && vergeio_network.this.ipaddress == "192.168.16.1"
     error_message = "The internal network CIDR was not planned."
   }
 
@@ -118,7 +118,7 @@ run "derived_ipaddress" {
   }
 
   assert {
-    condition     = vergeio_network.this.network == "10.20.0.0/24" && vergeio_network.this.ipaddress == "10.20.0.1/24"
+    condition     = vergeio_network.this.network == "10.20.0.0/24" && vergeio_network.this.ipaddress == "10.20.0.1" && !strcontains(vergeio_network.this.ipaddress, "/")
     error_message = "The router address was not derived from cidr."
   }
 }

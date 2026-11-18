@@ -26,8 +26,13 @@ variable "cidr" {
 
 variable "ipaddress" {
   type        = string
-  description = "Address of this network, such as 192.168.16.1/24. Omit to use the first host of cidr, for example 192.168.16.1/24 from 192.168.16.0/24."
+  description = "Bare IP address of this network, such as 192.168.16.1. VergeOS rejects a prefix on this field. Omit to use the first host of cidr. The CIDR stays on network."
   default     = null
+
+  validation {
+    condition     = var.ipaddress == null || can(cidrhost("${var.ipaddress}/32", 0))
+    error_message = "ipaddress must be a bare IP address, such as 192.168.16.1."
+  }
 }
 
 variable "enabled" {

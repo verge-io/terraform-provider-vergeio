@@ -189,13 +189,13 @@ variable "nics" {
 }
 
 variable "tag_ids" {
-  type        = list(number)
-  description = "Existing tag keys to assign to this VM. Create the category and tag outside this module. vergeio_tag.id passed through tonumber."
-  default     = []
+  type        = map(number)
+  description = "Tag keys to assign to this VM. Each key is a name you choose and must be known at plan time. Each value is an existing vergeio_tag key and may be unknown until apply."
+  default     = {}
 
   validation {
-    condition     = length(var.tag_ids) == length(distinct(var.tag_ids))
-    error_message = "tag_ids must be unique."
+    condition     = length(var.tag_ids) == length(distinct([for id in values(var.tag_ids) : tostring(id)]))
+    error_message = "tag_ids values must be unique."
   }
 }
 

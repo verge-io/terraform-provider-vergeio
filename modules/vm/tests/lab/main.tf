@@ -16,7 +16,7 @@ resource "vergeio_network" "lan" {
   description = "tf-acc-vm-lan"
   type        = "internal"
   network     = "192.168.88.0/24"
-  ipaddress   = "192.168.88.1/24"
+  ipaddress   = "192.168.88.1"
   powerstate  = false
 }
 
@@ -49,7 +49,9 @@ module "vm" {
     interface = "virtio"
   }]
 
-  tag_ids = [tonumber(vergeio_tag.web.id)]
+  tag_ids = {
+    web = tonumber(vergeio_tag.web.id)
+  }
 }
 
 output "vm_id" {

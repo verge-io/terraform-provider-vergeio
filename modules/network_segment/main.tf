@@ -3,7 +3,7 @@ locals {
     for record in try(var.dns.records, []) :
     "${coalesce(record.host, "@")}/${record.type}/${record.value}" => record
   }
-  ipaddress = var.ipaddress != null ? var.ipaddress : "${cidrhost(var.cidr, 1)}/${split("/", var.cidr)[1]}"
+  ipaddress = var.ipaddress != null ? var.ipaddress : cidrhost(var.cidr, 1)
 }
 
 resource "vergeio_network" "this" {

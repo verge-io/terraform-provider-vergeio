@@ -2,6 +2,10 @@ terraform {
   required_version = ">= 1.11.0"
 
   required_providers {
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
     vergeio = {
       source  = "verge-io/vergeio"
       version = "~> 3.0"
@@ -9,16 +13,34 @@ terraform {
   }
 }
 
+provider "random" {}
+
 provider "vergeio" {}
 
-variable "tenant_password" {
-  type      = string
-  sensitive = true
+resource "random_password" "tenant" {
+  length           = 24
+  upper            = true
+  lower            = true
+  numeric          = true
+  special          = true
+  override_special = "!@#%^*-_"
+  min_upper        = 1
+  min_lower        = 1
+  min_numeric      = 1
+  min_special      = 1
 }
 
-variable "admin_password" {
-  type      = string
-  sensitive = true
+resource "random_password" "admin" {
+  length           = 24
+  upper            = true
+  lower            = true
+  numeric          = true
+  special          = true
+  override_special = "!@#%^*-_"
+  min_upper        = 1
+  min_lower        = 1
+  min_numeric      = 1
+  min_special      = 1
 }
 
 resource "vergeio_group" "admins" {
@@ -32,11 +54,11 @@ module "tenant" {
 
   name                       = "tf-acc-tenant"
   description                = "tf-acc-tenant"
-  tenant_password_wo         = var.tenant_password
+  tenant_password_wo         = random_password.tenant.result
   tenant_password_wo_version = 1
   powerstate                 = false
   admin_group_id             = tonumber(vergeio_group.admins.id)
-  admin_password_wo          = var.admin_password
+  admin_password_wo          = random_password.admin.result
   admin_password_wo_version  = 1
 
   admin_user = {

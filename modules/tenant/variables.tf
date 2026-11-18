@@ -16,12 +16,17 @@ variable "description" {
 
 variable "tenant_password_wo" {
   type        = string
-  description = "Password of the tenant's built-in admin user. Sent as vergeio_tenant.password_wo and not stored."
+  description = "Password of the tenant's built-in admin user. Sent as vergeio_tenant.password_wo and not stored. VergeOS requires an uppercase letter, a lowercase letter, and a digit."
   sensitive   = true
 
   validation {
-    condition     = length(var.tenant_password_wo) > 0
-    error_message = "tenant_password_wo must not be empty."
+    condition = (
+      length(var.tenant_password_wo) > 0 &&
+      can(regex("[A-Z]", var.tenant_password_wo)) &&
+      can(regex("[a-z]", var.tenant_password_wo)) &&
+      can(regex("[0-9]", var.tenant_password_wo))
+    )
+    error_message = "tenant_password_wo must include an uppercase letter, a lowercase letter, and a digit."
   }
 }
 
@@ -181,12 +186,17 @@ variable "admin_group_id" {
 
 variable "admin_password_wo" {
   type        = string
-  description = "Password of the parent-system admin user. Sent as vergeio_user.password_wo and not stored."
+  description = "Password of the parent-system admin user. Sent as vergeio_user.password_wo and not stored. VergeOS requires an uppercase letter, a lowercase letter, and a digit."
   sensitive   = true
 
   validation {
-    condition     = length(var.admin_password_wo) > 0
-    error_message = "admin_password_wo must not be empty."
+    condition = (
+      length(var.admin_password_wo) > 0 &&
+      can(regex("[A-Z]", var.admin_password_wo)) &&
+      can(regex("[a-z]", var.admin_password_wo)) &&
+      can(regex("[0-9]", var.admin_password_wo))
+    )
+    error_message = "admin_password_wo must include an uppercase letter, a lowercase letter, and a digit."
   }
 }
 

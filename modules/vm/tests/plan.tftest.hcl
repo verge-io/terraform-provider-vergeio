@@ -25,7 +25,9 @@ variables {
     assign_ipaddress = true
   }]
 
-  tag_ids = [9]
+  tag_ids = {
+    web = 9
+  }
 
   snapshot_profile = {
     name        = "nightly"
@@ -66,7 +68,7 @@ run "image" {
   }
 
   assert {
-    condition     = vergeio_tag_member.this["9"].tag_id == 9 && length(vergeio_tag_member.this) == 1
+    condition     = vergeio_tag_member.this["web"].tag_id == 9 && length(vergeio_tag_member.this) == 1
     error_message = "Ansible inventory tags were not planned."
   }
 
@@ -82,7 +84,7 @@ run "create_without_cloudinit" {
   variables {
     cloudinit_user_data = null
     snapshot_profile    = null
-    tag_ids             = []
+    tag_ids             = {}
     nics                = []
   }
 
@@ -98,7 +100,7 @@ run "enable_cloudinit" {
   variables {
     cloudinit_user_data = "#cloud-config\nhostname: web1\n"
     snapshot_profile    = null
-    tag_ids             = []
+    tag_ids             = {}
     nics                = []
   }
 

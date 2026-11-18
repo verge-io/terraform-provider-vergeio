@@ -35,6 +35,18 @@ run "firewall_action" {
   ]
 }
 
+run "ipaddress_must_be_bare" {
+  command = plan
+
+  variables {
+    ipaddress = "192.168.16.1/24"
+  }
+
+  expect_failures = [
+    var.ipaddress,
+  ]
+}
+
 run "dhcp_range_required" {
   command = plan
 

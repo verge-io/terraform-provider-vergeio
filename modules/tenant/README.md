@@ -2,7 +2,7 @@
 
 Creates a VergeOS tenant on the parent system, with nodes, storage, an admin user, and optional routed network blocks and external IPs.
 
-`tenant_password_wo` is the built-in tenant admin password (`vergeio_tenant.password_wo`). It is not stored. Increment `tenant_password_wo_version` to change it. `admin_user` is a separate `vergeio_user` on the parent, added to `admin_group_id` with `vergeio_member`. `admin_password_wo` is that user's password and is not stored.
+`tenant_password_wo` is the built-in tenant admin password (`vergeio_tenant.password_wo`). It is not stored. Increment `tenant_password_wo_version` to change it. `admin_user` is a separate `vergeio_user` on the parent, added to `admin_group_id` with `vergeio_member`. `admin_password_wo` is that user's password and is not stored. Both passwords need an uppercase letter, a lowercase letter, and a digit.
 
 The first external IP becomes `ui_address`. A stack that manages the inside of the tenant uses that address as the provider host. This module configures the parent system. A second configuration, with its host set to `ui_address`, manages the inside of the tenant.
 

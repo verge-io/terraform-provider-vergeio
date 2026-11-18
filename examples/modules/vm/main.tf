@@ -70,7 +70,9 @@ module "web" {
     assign_ipaddress = true
   }]
 
-  tag_ids = [tonumber(vergeio_tag.web.id)]
+  tag_ids = {
+    web = tonumber(vergeio_tag.web.id)
+  }
 
   snapshot_profile = {
     name        = "web-nightly"

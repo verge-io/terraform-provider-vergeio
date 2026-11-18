@@ -6,7 +6,7 @@ Creates a VM from a media image or a catalog recipe, with cloud-init, Ansible in
 
 `source_type` `recipe` creates `vergeio_vm_recipe_instance`. `recipe_id` is the 40-character key from `vergeio_vm_recipes`. Guest hostname, disk size, and network answers go in `recipe_answers`. That resource has no `cloudinit_files`, NIC, or `snapshot_profile` attribute, so those inputs stay on image VMs.
 
-`tag_ids` assigns tags that already exist. Create the category and the tag outside this module so two VMs can share them. Deleting a category deletes its tags and every assignment of those tags.
+`tag_ids` assigns tags that already exist. The map key is a name you choose and must be known at plan time. The value is the tag key and may be unknown until apply. Create the category and the tag outside this module so two VMs can share them. Deleting a category deletes its tags and every assignment of those tags.
 
 `snapshot_profile` creates a `vergeio_snapshot_profile` and sets `vergeio_vm.snapshot_profile` to its key. `retention` is seconds and is required on every period. `snapshot_profile_id` attaches a profile that already exists.
 
@@ -22,7 +22,9 @@ module "web" {
   guest_agent     = true
 
   cloudinit_user_data = "#cloud-config\nhostname: web1\n"
-  tag_ids             = [tonumber(vergeio_tag.web.id)]
+  tag_ids = {
+    web = tonumber(vergeio_tag.web.id)
+  }
 
   nics = [{
     name             = "lan"

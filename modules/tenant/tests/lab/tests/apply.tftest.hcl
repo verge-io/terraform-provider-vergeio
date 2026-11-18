@@ -8,11 +8,6 @@ provider "vergeio" {}
 run "apply" {
   command = apply
 
-  variables {
-    tenant_password = "tf-acc-tenant-password"
-    admin_password  = "tf-acc-admin-password"
-  }
-
   assert {
     condition     = output.tenant_id != "" && output.admin_user_id != ""
     error_message = "Lab apply did not store the tf-acc-tenant id and admin user id."

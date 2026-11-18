@@ -29,7 +29,7 @@ module "app" {
   name                = "app"
   description         = "Application segment"
   cidr                = "192.168.16.0/24"
-  ipaddress           = "192.168.16.1/24"
+  ipaddress           = "192.168.16.1"
   powerstate          = true
   dhcp_start          = "192.168.16.10"
   dhcp_stop           = "192.168.16.200"

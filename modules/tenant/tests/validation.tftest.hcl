@@ -2,9 +2,9 @@ mock_provider "vergeio" {}
 
 variables {
   name               = "customer-a"
-  tenant_password_wo = "tenant-admin-password"
+  tenant_password_wo = "Tenant-admin-password1"
   admin_group_id     = 1
-  admin_password_wo  = "parent-admin-password"
+  admin_password_wo  = "Parent-admin-password1"
 
   admin_user = {
     name = "customer-a-admin"
@@ -75,6 +75,18 @@ run "block_must_be_network_address" {
 
   expect_failures = [
     var.network_blocks,
+  ]
+}
+
+run "password_needs_uppercase" {
+  command = plan
+
+  variables {
+    tenant_password_wo = "tenant-admin-password1"
+  }
+
+  expect_failures = [
+    var.tenant_password_wo,
   ]
 }
 
