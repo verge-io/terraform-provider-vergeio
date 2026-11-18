@@ -83,7 +83,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 
 ## Modules
 
-`modules/tenant`, `modules/network_segment`, `modules/vm`, `modules/baseline`, and `modules/fleet` are the patterns published in this repository. Each module pins `verge-io/vergeio` `~> 3.0`. Runnable examples are under `examples/modules/`. `terraform test` in a module directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of CI.
+`modules/tenant`, `modules/network_segment`, `modules/vm`, `modules/baseline`, `modules/fleet`, and `modules/vergeos_lab` are the patterns published in this repository. Each module pins `verge-io/vergeio` `~> 3.0`. Runnable examples are under `examples/modules/`. `terraform test` in a module directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of CI.
 
 ## Resources
 

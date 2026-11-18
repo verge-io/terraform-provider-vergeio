@@ -1,0 +1,487 @@
+# vergeos_version=${vergeos_version}
+%{ if role == "controller" && number == "1" ~}
+YC_INSTALL=basic
+YC_INSTALL_TYPE=controller
+YC_VSAN_NEW=1
+YC_CLOUD_NAME='${system_name}'
+YC_USER_NAME='${admin_username}'
+YC_TIMEZONE='${timezone}'
+YC_NTP_SERVERS='time.nist.gov 0.pool.ntp.org 1.pool.ntp.org 2.pool.ntp.org'
+YC_USER_PASSWORD='${admin_password}'
+YC_USER_EMAIL='${admin_email}'
+
+YC_NET_CORE_ADDR='100.96.0.1/24'
+YC_NET_CORE_ADVMSS=1460
+YC_NET_CORE_GATEWAY='100.96.0.1'
+YC_NET_CORE_MTU=9000
+YC_NET_CORE_MULTICAST='239.0.0.1'
+YC_NET_CORE_NODE_ADDR='${core_addr}'
+YC_NET_CORE_NICS='enp1s2 enp1s3'
+YC_NET_CORE_SWITCHES=2
+
+YC_NET_DMZ_NICS='enp1s2 enp1s3'
+YC_NET_DMZ_SWITCHES=2
+YC_NET_DMZ_MTU=9000
+YC_NET_DMZ_MULTICAST=239.0.0.1
+
+YC_NET_EXTERNAL1_NICS=enp1s1
+YC_NET_EXTERNAL1_ADDR=${external_ip}/${external_prefix}
+YC_NET_EXTERNAL1_GATEWAY=${external_gateway}
+YC_NET_EXTERNAL1_DNS=${external_dns}
+YC_NET_EXTERNAL1_NAME=External
+YC_NET_EXTERNAL1_SWITCHES=1
+YC_NET_EXTERNAL1_SWITCHES_SKIP=1
+YC_NET_EXTERNAL1_VLAN=0
+YC_NET_EXTERNAL2_NICS=
+YC_NET_EXTERNAL2_SWITCHES_SKIP=1
+
+YC_NET_NIC1_NAME=enp1s1
+YC_NET_NIC1_SWITCH='External Switch'
+YC_NET_NIC1_VLAN=0
+YC_NET_NIC1_MTU=1500
+YC_NET_NIC1_MULTICAST=
+
+YC_NET_NIC2_NAME=enp1s2
+YC_NET_NIC2_SWITCH='Core 1'
+YC_NET_NIC2_VLAN=0
+YC_NET_NIC2_MTU=9142
+YC_NET_NIC2_MULTICAST=239.0.0.1
+YC_NET_NIC2_ADDR=${fabric1_addr}
+
+YC_NET_NIC3_NAME=enp1s3
+YC_NET_NIC3_SWITCH='Core 2'
+YC_NET_NIC3_VLAN=0
+YC_NET_NIC3_MTU=9142
+YC_NET_NIC3_MULTICAST=239.0.0.1
+YC_NET_NIC3_ADDR=${fabric2_addr}
+
+YC_NET_SWITCH1_NAME=External
+YC_NET_SWITCH1_NICS=enp1s1
+YC_NET_SWITCH1_VLAN=0
+YC_NET_SWITCH1_DONE=1
+YC_NET_SWITCH1_MTU=1500
+YC_NET_SWITCH1_MULTICAST=
+
+YC_NET_SWITCH2_NAME='Core 1'
+YC_NET_SWITCH2_NICS=enp1s2
+YC_NET_SWITCH2_VLAN=0
+YC_NET_SWITCH2_DONE=1
+YC_NET_SWITCH2_MTU=9142
+YC_NET_SWITCH2_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH3_NAME='Core 2'
+YC_NET_SWITCH3_NICS=enp1s3
+YC_NET_SWITCH3_VLAN=0
+YC_NET_SWITCH3_DONE=1
+YC_NET_SWITCH3_MTU=9142
+YC_NET_SWITCH3_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH_COUNT=3
+
+YC_VSAN_ENCRYPTION=0
+YC_DRIVE_LIST='${drive_list}'
+YC_VSAN_TIER_LIST='${tier_list}'
+YC_CLUSTER_SWAP_PER_DRIVE=0
+YC_CLUSTER_SWAP_TIER=-1
+
+YC_UPDATES_PASSWORD_SKIP=1
+YC_UPDATES_USER_SKIP=1
+YC_LICENSE_TYPE=trial
+
+YC_NET_AUTODETECT=0
+YC_NET_AUTODETECT_ALL=0
+YC_INSTALL_EFI_BOOT=1
+
+YC_NO_TIME=1
+YC_SKIP_IPMI_CONFIG=1
+YC_SPLIT_LOCK_DETECTION=0
+
+# create_storage=${create_storage}
+# create_compute=${create_compute}
+
+touch /etc/yottabyte/reboot
+sed -i 's/within 10 seconds." 15 60 10/within 3 seconds." 15 60 3/g' /usr/lib/ybos/install/9999-finish
+
+cat <<'EOF' > /etc/yottabyte/run-with-appserver
+#!/usr/bin/env bash
+# These calls run on the nested system after it installs. They do not call the host.
+
+# Enable SSH on the nested core network.
+root-yb-api /v4/vnet_rules/2 -P '{
+  "enabled":"true"
+}'
+
+# Enable SSH on the nested external network.
+root-yb-api /v4/vnet_rules/5 -P '{
+  "enabled":"true"
+}'
+
+root-yb-api /v4/vnets/2 -P '{
+  "apply_fw_on_start":"true"
+}'
+
+root-yb-api /v4/vnets/3 -P '{
+  "apply_fw_on_start":"true"
+}'
+
+if [[ "${create_storage}" == "true" ]]; then
+  root-yb-api /v4/clusters -p '{
+    "name":"storage",
+    "storage":"true"
+  }'
+fi
+
+if [[ "${create_compute}" == "true" ]]; then
+  root-yb-api /v4/clusters -p '{
+    "name":"compute",
+    "compute":"true"
+  }'
+
+  root-yb-api /v4/clusters/1 -P '{
+    "name":"controller-storage",
+    "compute":"false"
+  }'
+fi
+
+if [[ "${create_storage}" == "true" && "${create_compute}" == "true" ]]; then
+  root-yb-api /v4/clusters/1 -P '{
+    "name":"controller",
+    "compute":"false"
+  }'
+fi
+EOF
+
+chmod +x /etc/yottabyte/run-with-appserver
+%{ endif ~}
+%{ if role == "controller" && number == "2" ~}
+YC_INSTALL_TYPE=controller
+YC_VSAN_NEW=0
+YC_USER_NAME='${admin_username}'
+YC_USER_PASSWORD='${admin_password}'
+
+YC_NET_CORE_DNS='100.96.0.1'
+
+YC_NET_CORE_ADDR='100.96.0.1/24'
+YC_NET_CORE_ADVMSS=1460
+YC_NET_CORE_GATEWAY='100.96.0.1'
+YC_NET_CORE_MTU=9000
+YC_NET_CORE_MULTICAST='239.0.0.1'
+YC_NET_CORE_NODE_ADDR='${core_addr}'
+YC_NET_CORE_NICS='enp1s2 enp1s3'
+YC_NET_CORE_SWITCHES=2
+
+YC_NET_DMZ_NICS='enp1s2 enp1s3'
+YC_NET_DMZ_SWITCHES=2
+YC_NET_DMZ_MTU=9000
+YC_NET_DMZ_MULTICAST=239.0.0.1
+
+YC_NET_NIC1_NAME=enp1s1
+YC_NET_NIC1_SWITCH='External Switch'
+YC_NET_NIC1_VLAN=0
+YC_NET_NIC1_MTU=1500
+YC_NET_NIC1_MULTICAST=
+
+YC_NET_NIC2_NAME=enp1s2
+YC_NET_NIC2_SWITCH='Core 1'
+YC_NET_NIC2_VLAN=0
+YC_NET_NIC2_MTU=9142
+YC_NET_NIC2_MULTICAST=239.0.0.1
+YC_NET_NIC2_ADDR=${fabric1_addr}
+
+YC_NET_NIC3_NAME=enp1s3
+YC_NET_NIC3_SWITCH='Core 2'
+YC_NET_NIC3_VLAN=0
+YC_NET_NIC3_MTU=9142
+YC_NET_NIC3_MULTICAST=239.0.0.1
+YC_NET_NIC3_ADDR=${fabric2_addr}
+
+YC_NET_SWITCH1_NAME=External
+YC_NET_SWITCH1_NICS=enp1s1
+YC_NET_SWITCH1_VLAN=0
+YC_NET_SWITCH1_DONE=1
+YC_NET_SWITCH1_MTU=1500
+YC_NET_SWITCH1_MULTICAST=
+
+YC_NET_SWITCH2_NAME='Core 1'
+YC_NET_SWITCH2_NICS=enp1s2
+YC_NET_SWITCH2_VLAN=0
+YC_NET_SWITCH2_DONE=1
+YC_NET_SWITCH2_MTU=9142
+YC_NET_SWITCH2_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH3_NAME='Core 2'
+YC_NET_SWITCH3_NICS=enp1s3
+YC_NET_SWITCH3_VLAN=0
+YC_NET_SWITCH3_DONE=1
+YC_NET_SWITCH3_MTU=9142
+YC_NET_SWITCH3_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH_COUNT=3
+
+YC_VSAN_ENCRYPTION=0
+YC_DRIVE_LIST='${drive_list}'
+YC_VSAN_TIER_LIST='${tier_list}'
+YC_CLUSTER_SWAP_PER_DRIVE=0
+YC_CLUSTER_SWAP_TIER=-1
+
+YC_NET_AUTODETECT=0
+YC_NET_AUTODETECT_ALL=0
+YC_INSTALL_EFI_BOOT=1
+
+YC_NO_TIME=1
+YC_SKIP_IPMI_CONFIG=1
+YC_SPLIT_LOCK_DETECTION=0
+
+YC_CLUSTER=1
+
+touch /etc/yottabyte/reboot
+sed -i 's/within 10 seconds." 15 60 10/within 3 seconds." 15 60 3/g' /usr/lib/ybos/install/9999-finish
+truncate -s 0 /usr/lib/ybos/install/0040-quick-install
+sed -i 's_ntpd -g -c /tmp/ntp.conf_return 0_' /usr/lib/ybos/install/0050-network
+%{ endif ~}
+%{ if role == "scale" ~}
+YC_INSTALL_TYPE=scale-out
+YC_VSAN_NEW=0
+YC_USER_NAME='${admin_username}'
+YC_USER_PASSWORD='${admin_password}'
+
+YC_NET_CORE_NICS='enp1s2 enp1s3'
+YC_NET_CORE_SWITCHES=2
+YC_NET_DMZ_NICS='enp1s2 enp1s3'
+YC_NET_DMZ_SWITCHES=2
+YC_NET_DMZ_MTU=9000
+YC_NET_DMZ_MULTICAST=239.0.0.1
+
+YC_NET_EXTERNAL1_NICS=enp1s1
+YC_NET_EXTERNAL1_ADDR=dhcp
+YC_NET_EXTERNAL1_HOSTNAME=
+YC_NET_EXTERNAL1_NAME=External
+YC_NET_EXTERNAL1_SWITCHES=1
+YC_NET_EXTERNAL1_SWITCHES_SKIP=1
+YC_NET_EXTERNAL1_VLAN=0
+YC_NET_EXTERNAL2_NICS=
+YC_NET_EXTERNAL2_SWITCHES_SKIP=1
+
+YC_NET_NIC1_NAME=enp1s1
+YC_NET_NIC1_SWITCH='External Switch'
+YC_NET_NIC1_VLAN=0
+YC_NET_NIC1_MTU=1500
+
+YC_NET_NIC2_NAME=enp1s2
+YC_NET_NIC2_SWITCH='Core 1'
+YC_NET_NIC2_VLAN=0
+YC_NET_NIC2_MTU=9142
+
+YC_NET_NIC3_NAME=enp1s3
+YC_NET_NIC3_SWITCH='Core 2'
+YC_NET_NIC3_VLAN=0
+YC_NET_NIC3_MTU=9142
+
+YC_NET_SWITCH1_NAME=External
+YC_NET_SWITCH1_NICS=enp1s1
+YC_NET_SWITCH1_VLAN=0
+YC_NET_SWITCH1_DONE=1
+YC_NET_SWITCH1_MTU=1500
+
+YC_NET_SWITCH2_NAME='Core 1'
+YC_NET_SWITCH2_NICS=enp1s2
+YC_NET_SWITCH2_VLAN=0
+YC_NET_SWITCH2_DONE=1
+YC_NET_SWITCH2_MTU=9142
+
+YC_NET_SWITCH3_NAME='Core 2'
+YC_NET_SWITCH3_NICS=enp1s3
+YC_NET_SWITCH3_VLAN=0
+YC_NET_SWITCH3_DONE=1
+YC_NET_SWITCH3_MTU=9142
+
+YC_NET_SWITCH_COUNT=3
+YC_VSAN_ENCRYPTION=0
+YC_DRIVE_LIST='${drive_list}'
+YC_VSAN_TIER_LIST='${tier_list}'
+YC_CLUSTER_SWAP_PER_DRIVE=0
+YC_CLUSTER_SWAP_TIER=-1
+
+YC_NET_AUTODETECT=1
+YC_NET_AUTODETECT_ALL=1
+YC_INSTALL_EFI_BOOT=1
+
+YC_NO_TIME=1
+YC_SKIP_IPMI_CONFIG=1
+YC_SPLIT_LOCK_DETECTION=0
+
+touch /etc/yottabyte/reboot
+sed -i 's/within 10 seconds." 15 60 10/within 3 seconds." 15 60 3/g' /usr/lib/ybos/install/9999-finish
+%{ endif ~}
+%{ if role == "storage" ~}
+YC_INSTALL_TYPE=scale-out
+YC_VSAN_NEW=0
+YC_USER_NAME='${admin_username}'
+YC_USER_PASSWORD='${admin_password}'
+
+YC_NET_CORE_DNS='100.96.0.1'
+YC_NET_CORE_ADDR='100.96.0.1/24'
+YC_NET_CORE_ADVMSS=1460
+YC_NET_CORE_GATEWAY='100.96.0.1'
+YC_NET_CORE_MTU=9000
+YC_NET_CORE_MULTICAST='239.0.0.1'
+YC_NET_CORE_NODE_ADDR='${core_addr}'
+YC_NET_CORE_NICS='enp1s2 enp1s3'
+YC_NET_CORE_SWITCHES=2
+
+YC_NET_DMZ_NICS='enp1s2 enp1s3'
+YC_NET_DMZ_SWITCHES=2
+YC_NET_DMZ_MTU=9000
+YC_NET_DMZ_MULTICAST=239.0.0.1
+
+YC_NET_NIC1_NAME=enp1s1
+YC_NET_NIC1_SWITCH='External Switch'
+YC_NET_NIC1_VLAN=0
+YC_NET_NIC1_MTU=1500
+YC_NET_NIC1_MULTICAST=
+
+YC_NET_NIC2_NAME=enp1s2
+YC_NET_NIC2_SWITCH='Core 1'
+YC_NET_NIC2_VLAN=0
+YC_NET_NIC2_MTU=9142
+YC_NET_NIC2_MULTICAST=239.0.0.1
+YC_NET_NIC2_ADDR=${fabric1_addr}
+
+YC_NET_NIC3_NAME=enp1s3
+YC_NET_NIC3_SWITCH='Core 2'
+YC_NET_NIC3_VLAN=0
+YC_NET_NIC3_MTU=9142
+YC_NET_NIC3_MULTICAST=239.0.0.1
+YC_NET_NIC3_ADDR=${fabric2_addr}
+
+YC_NET_SWITCH1_NAME=External
+YC_NET_SWITCH1_NICS=enp1s1
+YC_NET_SWITCH1_VLAN=0
+YC_NET_SWITCH1_DONE=1
+YC_NET_SWITCH1_MTU=1500
+YC_NET_SWITCH1_MULTICAST=
+
+YC_NET_SWITCH2_NAME='Core 1'
+YC_NET_SWITCH2_NICS=enp1s2
+YC_NET_SWITCH2_VLAN=0
+YC_NET_SWITCH2_DONE=1
+YC_NET_SWITCH2_MTU=9142
+YC_NET_SWITCH2_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH3_NAME='Core 2'
+YC_NET_SWITCH3_NICS=enp1s3
+YC_NET_SWITCH3_VLAN=0
+YC_NET_SWITCH3_DONE=1
+YC_NET_SWITCH3_MTU=9142
+YC_NET_SWITCH3_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH_COUNT=3
+YC_VSAN_ENCRYPTION=0
+YC_DRIVE_LIST='${drive_list}'
+YC_VSAN_TIER_LIST='${tier_list}'
+YC_CLUSTER_SWAP_PER_DRIVE=0
+YC_CLUSTER_SWAP_TIER=-1
+
+YC_NET_AUTODETECT=1
+YC_NET_AUTODETECT_ALL=1
+YC_INSTALL_EFI_BOOT=1
+
+YC_NO_TIME=1
+YC_SKIP_IPMI_CONFIG=1
+YC_SPLIT_LOCK_DETECTION=0
+
+YC_CLUSTER=2
+YC_LIKE_NODE=1
+
+touch /etc/yottabyte/reboot
+sed -i 's/within 10 seconds." 15 60 10/within 3 seconds." 15 60 3/g' /usr/lib/ybos/install/9999-finish
+sed -i -e 's/.*Would you like to use the remainder of these drives for swap.*/false/g' /lib/ybos/install/0100-format-drives
+truncate -s 0 /usr/lib/ybos/install/0040-quick-install
+sed -i 's_ntpd -g -c /tmp/ntp.conf_return 0_' /usr/lib/ybos/install/0050-network
+%{ endif ~}
+%{ if role == "compute" ~}
+YC_INSTALL_TYPE=compute
+YC_VSAN_NEW=0
+YC_USER_NAME='${admin_username}'
+YC_USER_PASSWORD='${admin_password}'
+
+YC_NET_CORE_DNS='100.96.0.1'
+YC_NET_CORE_ADDR='100.96.0.1/24'
+YC_NET_CORE_ADVMSS=1460
+YC_NET_CORE_GATEWAY='100.96.0.1'
+YC_NET_CORE_MTU=9000
+YC_NET_CORE_MULTICAST='239.0.0.1'
+YC_NET_CORE_NODE_ADDR='${core_addr}'
+YC_NET_CORE_NICS='enp1s2 enp1s3'
+YC_NET_CORE_SWITCHES=2
+
+YC_NET_DMZ_NICS='enp1s2 enp1s3'
+YC_NET_DMZ_SWITCHES=2
+YC_NET_DMZ_MTU=9000
+YC_NET_DMZ_MULTICAST=239.0.0.1
+
+YC_NET_NIC1_NAME=enp1s1
+YC_NET_NIC1_SWITCH='External Switch'
+YC_NET_NIC1_VLAN=0
+YC_NET_NIC1_MTU=1500
+YC_NET_NIC1_MULTICAST=
+
+YC_NET_NIC2_NAME=enp1s2
+YC_NET_NIC2_SWITCH='Core 1'
+YC_NET_NIC2_VLAN=0
+YC_NET_NIC2_MTU=9142
+YC_NET_NIC2_MULTICAST=239.0.0.1
+YC_NET_NIC2_ADDR=${fabric1_addr}
+
+YC_NET_NIC3_NAME=enp1s3
+YC_NET_NIC3_SWITCH='Core 2'
+YC_NET_NIC3_VLAN=0
+YC_NET_NIC3_MTU=9142
+YC_NET_NIC3_MULTICAST=239.0.0.1
+YC_NET_NIC3_ADDR=${fabric2_addr}
+
+YC_NET_SWITCH1_NAME=External
+YC_NET_SWITCH1_NICS=enp1s1
+YC_NET_SWITCH1_VLAN=0
+YC_NET_SWITCH1_DONE=1
+YC_NET_SWITCH1_MTU=1500
+YC_NET_SWITCH1_MULTICAST=
+
+YC_NET_SWITCH2_NAME='Core 1'
+YC_NET_SWITCH2_NICS=enp1s2
+YC_NET_SWITCH2_VLAN=0
+YC_NET_SWITCH2_DONE=1
+YC_NET_SWITCH2_MTU=9142
+YC_NET_SWITCH2_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH3_NAME='Core 2'
+YC_NET_SWITCH3_NICS=enp1s3
+YC_NET_SWITCH3_VLAN=0
+YC_NET_SWITCH3_DONE=1
+YC_NET_SWITCH3_MTU=9142
+YC_NET_SWITCH3_MULTICAST=239.0.0.1
+
+YC_NET_SWITCH_COUNT=3
+
+YC_DRIVE_LIST='${drive_list}'
+YC_CLUSTER_SWAP_PER_DRIVE=0
+YC_CLUSTER_SWAP_TIER=-1
+YC_CLUSTER_SWAP_PER_DRIVE_CONFIRM=0
+
+YC_NET_AUTODETECT=0
+YC_NET_AUTODETECT_ALL=0
+YC_INSTALL_EFI_BOOT=1
+
+YC_NO_TIME=1
+YC_SKIP_IPMI_CONFIG=1
+YC_SPLIT_LOCK_DETECTION=0
+
+YC_CLUSTER=${compute_cluster}
+YC_LIKE_NODE=1
+
+touch /etc/yottabyte/reboot
+sed -i 's/within 10 seconds." 15 60 10/within 3 seconds." 15 60 3/g' /usr/lib/ybos/install/9999-finish
+sed -i -e 's/.*Would you like to use the remainder of these drives for swap.*/false/g' /lib/ybos/install/0100-format-drives
+truncate -s 0 /usr/lib/ybos/install/0040-quick-install
+sed -i 's_ntpd -g -c /tmp/ntp.conf_return 0_' /usr/lib/ybos/install/0050-network
+%{ endif ~}
