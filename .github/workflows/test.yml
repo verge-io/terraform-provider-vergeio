@@ -63,3 +63,57 @@ jobs:
           tofu version
           echo "TF_ACC_TERRAFORM_PATH=$(command -v tofu)" >> "$GITHUB_ENV"
           go test ./...
+
+  # Plans the modules with a mocked provider. The binary built here is the
+  # provider under test. Lab apply files live in modules/*/tests/lab and are
+  # outside the default test directory, so this job does not apply them.
+  modules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build provider
+        run: |
+          mkdir -p "$RUNNER_TEMP/providers"
+          go build -o "$RUNNER_TEMP/providers/terraform-provider-vergeio" .
+      - name: Install Terraform
+        run: |
+          curl -fsSL -o /tmp/terraform.zip "https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip"
+          echo "dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df  /tmp/terraform.zip" | sha256sum -c
+          sudo unzip -o /tmp/terraform.zip -d /usr/local/bin
+          terraform version
+      - name: Provider override
+        run: |
+          cat > "$RUNNER_TEMP/terraformrc" <<EOF
+          provider_installation {
+            dev_overrides {
+              "verge-io/vergeio" = "$RUNNER_TEMP/providers"
+            }
+            direct {}
+          }
+          EOF
+          echo "TF_CLI_CONFIG_FILE=$RUNNER_TEMP/terraformrc" >> "$GITHUB_ENV"
+          echo "TF_IN_AUTOMATION=1" >> "$GITHUB_ENV"
+      - name: Format
+        run: terraform fmt -check -recursive -diff modules examples/modules
+      - name: Validate and test modules
+        run: |
+          set -eu
+          for module in modules/tenant modules/network_segment modules/vm; do
+            terraform -chdir="$module" init -backend=false
+            terraform -chdir="$module" validate
+            # tests/lab is not loaded. terraform test does not recurse.
+            terraform -chdir="$module" test
+          done
+      - name: Validate examples
+        run: |
+          set -eu
+          for example in examples/modules/tenant examples/modules/network_segment examples/modules/vm; do
+            terraform -chdir="$example" init -backend=false
+            terraform -chdir="$example" validate
+          done
