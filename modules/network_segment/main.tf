@@ -3,9 +3,7 @@ locals {
     for record in try(var.dns.records, []) :
     "${coalesce(record.host, "@")}/${record.type}/${record.value}" => record
   }
-  dns_record_keys = sort(keys(local.dns_records))
-  dns_refresh_key = length(local.dns_record_keys) == 0 ? null : local.dns_record_keys[0]
-  ipaddress       = var.ipaddress != null ? var.ipaddress : "${cidrhost(var.cidr, 1)}/${split("/", var.cidr)[1]}"
+  ipaddress = var.ipaddress != null ? var.ipaddress : "${cidrhost(var.cidr, 1)}/${split("/", var.cidr)[1]}"
 }
 
 resource "vergeio_network" "this" {
@@ -67,11 +65,8 @@ resource "vergeio_network_dns_zone" "this" {
   apply   = length(local.dns_records) == 0
 }
 
-resource "vergeio_network_dns_record" "staged" {
-  for_each = {
-    for key, record in local.dns_records : key => record
-    if local.dns_refresh_key != null && key != local.dns_refresh_key
-  }
+resource "vergeio_network_dns_record" "this" {
+  for_each = local.dns_records
 
   zone_id       = one(vergeio_network_dns_zone.this[*].id)
   host          = each.value.host
@@ -90,27 +85,23 @@ resource "vergeio_network_dns_record" "staged" {
   ]
 }
 
-resource "vergeio_network_dns_record" "refresh" {
-  for_each = {
-    for key, record in local.dns_records : key => record
-    if key == local.dns_refresh_key
-  }
+# User records stay staged. This record's description is a checksum of those
+# records, so any add, change, or delete updates it and refreshes DNS once
+# after the user records exist. Their addresses do not move.
+resource "vergeio_network_dns_record" "apply" {
+  count = length(local.dns_records) == 0 ? 0 : 1
 
-  zone_id       = one(vergeio_network_dns_zone.this[*].id)
-  host          = each.value.host
-  type          = each.value.type
-  value         = each.value.value
-  ttl           = each.value.ttl
-  description   = each.value.description
-  mx_preference = each.value.mx_preference
-  port          = each.value.port
-  weight        = each.value.weight
-  apply         = true
+  zone_id     = coalesce(one(vergeio_network_dns_zone.this[*].id), "0")
+  host        = "tf-dns-apply"
+  type        = "TXT"
+  value       = "1"
+  description = sha256(jsonencode(local.dns_records))
+  apply       = true
 
   depends_on = [
     vergeio_network_dns_view.this,
     vergeio_network_dns_zone.this,
-    vergeio_network_dns_record.staged,
+    vergeio_network_dns_record.this,
   ]
 }
 

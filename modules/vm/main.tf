@@ -58,7 +58,7 @@ resource "vergeio_vm" "image" {
   cluster              = var.cluster
   powerstate           = var.powerstate
   guest_agent          = var.guest_agent
-  cloudinit_datasource = var.cloudinit_user_data == null ? var.cloudinit_datasource : coalesce(var.cloudinit_datasource, "nocloud")
+  cloudinit_datasource = coalesce(var.cloudinit_datasource, "nocloud")
   snapshot_profile     = try(tonumber(vergeio_snapshot_profile.this[0].id), var.snapshot_profile_id)
 
   cloudinit_files = [

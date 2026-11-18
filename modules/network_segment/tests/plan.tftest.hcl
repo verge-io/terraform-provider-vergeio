@@ -89,7 +89,7 @@ run "plan" {
   }
 
   assert {
-    condition     = vergeio_network_dns_view.this[0].name == "internal" && vergeio_network_dns_view.this[0].apply == false && vergeio_network_dns_zone.this[0].domain == "app.example.com" && vergeio_network_dns_zone.this[0].type == "master" && vergeio_network_dns_zone.this[0].apply == false && vergeio_network_dns_record.staged["www/A/192.168.16.10"].apply == false && vergeio_network_dns_record.refresh["db/A/192.168.16.11"].apply == true && vergeio_network_dns_record.refresh["db/A/192.168.16.11"].value == "192.168.16.11"
+    condition     = vergeio_network_dns_view.this[0].name == "internal" && vergeio_network_dns_view.this[0].apply == false && vergeio_network_dns_zone.this[0].domain == "app.example.com" && vergeio_network_dns_zone.this[0].type == "master" && vergeio_network_dns_zone.this[0].apply == false && vergeio_network_dns_record.this["www/A/192.168.16.10"].apply == false && vergeio_network_dns_record.this["www/A/192.168.16.10"].value == "192.168.16.10" && vergeio_network_dns_record.this["db/A/192.168.16.11"].apply == false && vergeio_network_dns_record.apply[0].apply == true && vergeio_network_dns_record.apply[0].host == "tf-dns-apply" && vergeio_network_dns_record.apply[0].type == "TXT" && length(vergeio_network_dns_record.apply[0].description) == 64
     error_message = "The DNS view, zone, or record was not planned."
   }
 }

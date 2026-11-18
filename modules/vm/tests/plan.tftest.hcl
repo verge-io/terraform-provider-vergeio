@@ -85,6 +85,11 @@ run "create_without_cloudinit" {
     tag_ids             = []
     nics                = []
   }
+
+  assert {
+    condition     = vergeio_vm.image[0].cloudinit_datasource == "nocloud" && vergeio_vm.image[0].cloudinit_files[0].contents == "#cloud-config\n"
+    error_message = "An image VM without cloudinit_user_data did not enable nocloud for the empty cloud-config."
+  }
 }
 
 run "enable_cloudinit" {

@@ -135,7 +135,7 @@ variable "guest_agent" {
 
 variable "cloudinit_datasource" {
   type        = string
-  description = "Cloud-init datasource for an image VM: nocloud or config_drive_v2. Defaults to nocloud when cloudinit_files is set."
+  description = "Cloud-init datasource for an image VM: nocloud or config_drive_v2. Image VMs always write cloud-init files, so this defaults to nocloud."
   default     = null
 }
 
