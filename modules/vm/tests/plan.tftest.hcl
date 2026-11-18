@@ -25,12 +25,6 @@ variables {
     assign_ipaddress = true
   }]
 
-  tags = [{
-    category    = "role"
-    name        = "web"
-    description = "Web servers"
-  }]
-
   tag_ids = [9]
 
   snapshot_profile = {
@@ -52,17 +46,17 @@ run "image" {
   command = plan
 
   assert {
-    condition     = vergeio_vm.image_cloudinit[0].name == "web1" && vergeio_vm.image_cloudinit[0].os_family == "linux" && vergeio_vm.image_cloudinit[0].cpu_cores == 2 && vergeio_vm.image_cloudinit[0].ram == 2048 && vergeio_vm.image_cloudinit[0].machine_type == "q35" && vergeio_vm.image_cloudinit[0].guest_agent == true && length(vergeio_vm.image) == 0
+    condition     = length(vergeio_vm.image) == 1 && vergeio_vm.image[0].name == "web1" && vergeio_vm.image[0].os_family == "linux" && vergeio_vm.image[0].cpu_cores == 2 && vergeio_vm.image[0].ram == 2048 && vergeio_vm.image[0].machine_type == "q35" && vergeio_vm.image[0].guest_agent == true
     error_message = "The image VM was not planned from the module inputs."
   }
 
   assert {
-    condition     = vergeio_vm.image_cloudinit[0].boot_disk.name == "os" && vergeio_vm.image_cloudinit[0].boot_disk.media == "import" && vergeio_vm.image_cloudinit[0].boot_disk.source == 25 && vergeio_vm.image_cloudinit[0].boot_disk.size == 40
+    condition     = vergeio_vm.image[0].boot_disk.name == "os" && vergeio_vm.image[0].boot_disk.media == "import" && vergeio_vm.image[0].boot_disk.source == 25 && vergeio_vm.image[0].boot_disk.size == 40
     error_message = "The boot disk was not planned as an import of the media image."
   }
 
   assert {
-    condition     = vergeio_vm.image_cloudinit[0].cloudinit_datasource == "nocloud" && vergeio_vm.image_cloudinit[0].cloudinit_files[0].name == "user-data" && vergeio_vm.image_cloudinit[0].cloudinit_files[0].contents == "#cloud-config\nhostname: web1\n" && vergeio_vm.image_cloudinit[0].cloudinit_files[1].name == "meta-data"
+    condition     = vergeio_vm.image[0].cloudinit_datasource == "nocloud" && vergeio_vm.image[0].cloudinit_files[0].name == "user-data" && vergeio_vm.image[0].cloudinit_files[0].contents == "#cloud-config\nhostname: web1\n" && vergeio_vm.image[0].cloudinit_files[1].name == "meta-data"
     error_message = "Cloud-init was not planned."
   }
 
@@ -72,13 +66,40 @@ run "image" {
   }
 
   assert {
-    condition     = vergeio_tag_category.this["role"].name == "role" && vergeio_tag_category.this["role"].taggable_vms == true && vergeio_tag.this["role/web"].name == "web" && vergeio_tag_member.existing["9"].tag_id == 9
+    condition     = vergeio_tag_member.this["9"].tag_id == 9 && length(vergeio_tag_member.this) == 1
     error_message = "Ansible inventory tags were not planned."
   }
 
   assert {
     condition     = vergeio_snapshot_profile.this[0].name == "nightly" && vergeio_snapshot_profile.this[0].period[0].frequency == "daily" && vergeio_snapshot_profile.this[0].period[0].retention == 604800 && length(vergeio_vm_recipe_instance.this) == 0
     error_message = "The snapshot profile was not planned, or a recipe instance was planned for an image VM."
+  }
+}
+
+run "create_without_cloudinit" {
+  command = apply
+
+  variables {
+    cloudinit_user_data = null
+    snapshot_profile    = null
+    tag_ids             = []
+    nics                = []
+  }
+}
+
+run "enable_cloudinit" {
+  command = plan
+
+  variables {
+    cloudinit_user_data = "#cloud-config\nhostname: web1\n"
+    snapshot_profile    = null
+    tag_ids             = []
+    nics                = []
+  }
+
+  assert {
+    condition     = output.id == run.create_without_cloudinit.id && length(vergeio_vm.image) == 1 && vergeio_vm.image[0].cloudinit_files[0].contents == "#cloud-config\nhostname: web1\n"
+    error_message = "Adding cloud-init replaced the VM."
   }
 }
 

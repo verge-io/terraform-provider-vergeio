@@ -2,7 +2,7 @@
 
 Creates an internal network with DHCP, DNS, and a firewall policy.
 
-`dns_servers` and `domain` are handed to DHCP clients (`dnslist` and `domain`). `dns` adds a DNS view, a master zone, and records on the same network. The view and zone are staged with `apply` false. The zone refreshes DNS when it has no records. Each record refreshes DNS after the view and zone.
+`dns_servers` and `domain` are handed to DHCP clients (`dnslist` and `domain`). `dns` adds a DNS view, a master zone, and records on the same network. The view, the zone, and every record except one are staged with `apply` false. One record refreshes DNS after the others exist. Omit `ipaddress` to use the first host of `cidr`.
 
 `firewall_rules` is the whole non-system policy, in order (`vergeio_network_rules`). Rules left off the list are deleted. System rules stay. `action` `translate` writes `target_ip` and `target_ports` for a port forward.
 

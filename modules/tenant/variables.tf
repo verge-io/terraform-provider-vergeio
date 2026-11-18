@@ -127,12 +127,8 @@ variable "network_blocks" {
     description           = optional(string)
     apply_parent_firewall = optional(bool, true)
   }))
-  description = "Routed CIDRs from a parent network. cidr must be the network address. network_id is vergeio_network.id."
-
-  validation {
-    condition     = length(var.network_blocks) > 0
-    error_message = "network_blocks must contain at least one block."
-  }
+  description = "Routed CIDRs from a parent network. cidr must be the network address. network_id is vergeio_network.id. Omit to assign none."
+  default     = []
 
   validation {
     condition     = length(var.network_blocks) == length(distinct([for block in var.network_blocks : block.cidr]))
@@ -156,12 +152,8 @@ variable "external_ips" {
     description           = optional(string)
     apply_parent_firewall = optional(bool, true)
   }))
-  description = "Virtual IPs on a parent network. The first assigned IP becomes the tenant UI address."
-
-  validation {
-    condition     = length(var.external_ips) > 0
-    error_message = "external_ips must contain at least one address."
-  }
+  description = "Virtual IPs on a parent network. The first assigned IP becomes the tenant UI address. Omit to assign none."
+  default     = []
 
   validation {
     condition     = length(var.external_ips) == length(distinct([for addr in var.external_ips : addr.ip]))

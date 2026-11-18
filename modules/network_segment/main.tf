@@ -3,6 +3,9 @@ locals {
     for record in try(var.dns.records, []) :
     "${coalesce(record.host, "@")}/${record.type}/${record.value}" => record
   }
+  dns_record_keys = sort(keys(local.dns_records))
+  dns_refresh_key = length(local.dns_record_keys) == 0 ? null : local.dns_record_keys[0]
+  ipaddress       = var.ipaddress != null ? var.ipaddress : "${cidrhost(var.cidr, 1)}/${split("/", var.cidr)[1]}"
 }
 
 resource "vergeio_network" "this" {
@@ -11,7 +14,7 @@ resource "vergeio_network" "this" {
   enabled              = var.enabled
   type                 = "internal"
   network              = var.cidr
-  ipaddress            = var.ipaddress
+  ipaddress            = local.ipaddress
   vnet_default_gateway = var.external_network_id
   dhcp_enabled         = var.dhcp_enabled
   dynamic_dhcp         = var.dhcp_enabled && var.dynamic_dhcp
@@ -64,8 +67,11 @@ resource "vergeio_network_dns_zone" "this" {
   apply   = length(local.dns_records) == 0
 }
 
-resource "vergeio_network_dns_record" "this" {
-  for_each = local.dns_records
+resource "vergeio_network_dns_record" "staged" {
+  for_each = {
+    for key, record in local.dns_records : key => record
+    if local.dns_refresh_key != null && key != local.dns_refresh_key
+  }
 
   zone_id       = one(vergeio_network_dns_zone.this[*].id)
   host          = each.value.host
@@ -76,10 +82,35 @@ resource "vergeio_network_dns_record" "this" {
   mx_preference = each.value.mx_preference
   port          = each.value.port
   weight        = each.value.weight
+  apply         = false
 
   depends_on = [
     vergeio_network_dns_view.this,
     vergeio_network_dns_zone.this,
+  ]
+}
+
+resource "vergeio_network_dns_record" "refresh" {
+  for_each = {
+    for key, record in local.dns_records : key => record
+    if key == local.dns_refresh_key
+  }
+
+  zone_id       = one(vergeio_network_dns_zone.this[*].id)
+  host          = each.value.host
+  type          = each.value.type
+  value         = each.value.value
+  ttl           = each.value.ttl
+  description   = each.value.description
+  mx_preference = each.value.mx_preference
+  port          = each.value.port
+  weight        = each.value.weight
+  apply         = true
+
+  depends_on = [
+    vergeio_network_dns_view.this,
+    vergeio_network_dns_zone.this,
+    vergeio_network_dns_record.staged,
   ]
 }
 
@@ -88,6 +119,11 @@ resource "terraform_data" "check" {
     precondition {
       condition     = !var.dhcp_enabled || (var.dhcp_start != null && var.dhcp_stop != null)
       error_message = "dhcp_start and dhcp_stop are required when dhcp_enabled is true."
+    }
+
+    precondition {
+      condition     = var.ipaddress != null || can(cidrhost(var.cidr, 1))
+      error_message = "cidr must include a host address for the router, or set ipaddress."
     }
   }
 }

@@ -25,7 +25,7 @@ output "snapshot_profile_id" {
 
 output "guest_agent_ips" {
   description = "IP addresses reported by the guest agent on an image VM."
-  value       = try(coalesce(one(vergeio_vm.image[*].guest_agent_ips), one(vergeio_vm.image_cloudinit[*].guest_agent_ips)), null)
+  value       = one(vergeio_vm.image[*].guest_agent_ips)
 }
 
 output "nic_ids" {
@@ -33,7 +33,7 @@ output "nic_ids" {
   value       = { for name, nic in vergeio_vm_nic.this : name => nic.id }
 }
 
-output "tag_ids" {
-  description = "Keys of tags created by this module, keyed by category/name."
-  value       = { for key, tag in vergeio_tag.this : key => tag.id }
+output "tag_member_ids" {
+  description = "Tag membership keys for this VM, keyed by tag id."
+  value       = { for key, member in vergeio_tag_member.this : key => member.id }
 }

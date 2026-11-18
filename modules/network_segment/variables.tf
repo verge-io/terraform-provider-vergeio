@@ -26,7 +26,7 @@ variable "cidr" {
 
 variable "ipaddress" {
   type        = string
-  description = "Address of this network, separate from cidr, such as 192.168.16.1/24. Omit to leave the provider default."
+  description = "Address of this network, such as 192.168.16.1/24. Omit to use the first host of cidr, for example 192.168.16.1/24 from 192.168.16.0/24."
   default     = null
 }
 

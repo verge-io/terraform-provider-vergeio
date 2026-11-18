@@ -26,7 +26,7 @@ variable "source_type" {
 
 variable "media_source_id" {
   type        = number
-  description = "Media image key for an image VM. vergeio_mediasources.mediasources[].id. Written to boot_disk.source with media import."
+  description = "Media image key for an image VM. vergeio_mediasources.mediasources[].id. Written to boot_disk.source with media import. Omit it and set boot_disk_size to create a blank disk."
   default     = null
 }
 
@@ -141,7 +141,7 @@ variable "cloudinit_datasource" {
 
 variable "cloudinit_user_data" {
   type        = string
-  description = "user-data cloud-init body for an image VM. Stored in state. Null leaves cloud-init unset. A list variable cannot be passed to vergeio_vm.cloudinit_files, because an unknown list fails provider planning."
+  description = "user-data cloud-init body for an image VM. Stored in state. Null writes an empty cloud-config on the same VM. Setting or clearing it updates that file in place."
   default     = null
 
   validation {
@@ -188,31 +188,9 @@ variable "nics" {
   }
 }
 
-variable "tags" {
-  type = list(object({
-    category    = string
-    name        = string
-    description = optional(string)
-  }))
-  description = "Tags created and assigned to this VM for an Ansible inventory. The category is created with taggable_vms set. Deleting the category deletes its tags and every assignment of those tags."
-  default     = []
-
-  validation {
-    condition = alltrue([
-      for tag in var.tags : length(tag.category) > 0 && length(tag.name) > 0
-    ])
-    error_message = "Each tag needs a category and a name."
-  }
-
-  validation {
-    condition     = length(var.tags) == length(distinct([for tag in var.tags : "${tag.category}/${tag.name}"]))
-    error_message = "Tag category and name must be unique."
-  }
-}
-
 variable "tag_ids" {
   type        = list(number)
-  description = "Existing tag keys to assign to this VM. vergeio_tag.id passed through tonumber."
+  description = "Existing tag keys to assign to this VM. Create the category and tag outside this module. vergeio_tag.id passed through tonumber."
   default     = []
 
   validation {

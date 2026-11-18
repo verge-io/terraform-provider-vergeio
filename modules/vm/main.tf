@@ -2,31 +2,20 @@ locals {
   recipe_id_valid = var.recipe_id != null && can(regex("(?i)^[0-9a-f]{40}$", var.recipe_id))
   recipe_id       = local.recipe_id_valid ? var.recipe_id : "0000000000000000000000000000000000000000"
 
-  tag_categories = toset([for tag in var.tags : tag.category])
-  tag_map        = { for tag in var.tags : "${tag.category}/${tag.name}" => tag }
-
-  image_vm_id           = one(vergeio_vm.image[*].id)
-  cloudinit_image_vm_id = one(vergeio_vm.image_cloudinit[*].id)
-  recipe_vm_id          = one(vergeio_vm_recipe_instance.this[*].vm_id)
+  image_vm_id  = one(vergeio_vm.image[*].id)
+  recipe_vm_id = one(vergeio_vm_recipe_instance.this[*].vm_id)
   vm_id = try(coalesce(
     local.image_vm_id,
-    local.cloudinit_image_vm_id,
     local.recipe_vm_id == null ? null : tostring(local.recipe_vm_id),
   ), null)
   vm_member = local.vm_id == null ? null : "vms/${local.vm_id}"
 
-  # A known-length list. Assigning a list variable makes the whole value
-  # unknown, and vergeio_vm.cloudinit_files rejects an unknown list.
-  cloudinit_files = [
-    {
-      name     = "user-data"
-      contents = var.cloudinit_user_data == null ? "unused" : var.cloudinit_user_data
-    },
-    {
-      name     = "meta-data"
-      contents = coalesce(var.cloudinit_meta_data, "instance-id: ${var.name}\nlocal-hostname: ${var.name}\n")
-    },
-  ]
+  # Fixed length. A conditional list is unknown while variables are unknown,
+  # and vergeio_vm.cloudinit_files rejects an unknown list. The bodies change
+  # on this same VM, so adding or clearing cloudinit_user_data does not
+  # replace it. An omitted user-data body is an empty cloud-config.
+  cloudinit_user_data = var.cloudinit_user_data == null ? "#cloud-config\n" : var.cloudinit_user_data
+  cloudinit_meta_data = coalesce(var.cloudinit_meta_data, "instance-id: ${var.name}\nlocal-hostname: ${var.name}\n")
 }
 
 resource "vergeio_snapshot_profile" "this" {
@@ -57,7 +46,7 @@ resource "vergeio_snapshot_profile" "this" {
 }
 
 resource "vergeio_vm" "image" {
-  count = var.source_type == "image" && var.cloudinit_user_data == null ? 1 : 0
+  count = var.source_type == "image" ? 1 : 0
 
   name                 = var.name
   description          = var.description
@@ -69,39 +58,25 @@ resource "vergeio_vm" "image" {
   cluster              = var.cluster
   powerstate           = var.powerstate
   guest_agent          = var.guest_agent
-  cloudinit_datasource = var.cloudinit_datasource
+  cloudinit_datasource = var.cloudinit_user_data == null ? var.cloudinit_datasource : coalesce(var.cloudinit_datasource, "nocloud")
   snapshot_profile     = try(tonumber(vergeio_snapshot_profile.this[0].id), var.snapshot_profile_id)
+
+  cloudinit_files = [
+    {
+      name     = "user-data"
+      contents = local.cloudinit_user_data
+    },
+    {
+      name     = "meta-data"
+      contents = local.cloudinit_meta_data
+    },
+  ]
 
   boot_disk {
     name   = var.boot_disk_name
-    media  = "import"
-    source = coalesce(var.media_source_id, 0)
     size   = var.boot_disk_size
-  }
-}
-
-resource "vergeio_vm" "image_cloudinit" {
-  count = var.source_type == "image" && var.cloudinit_user_data != null ? 1 : 0
-
-  name                 = var.name
-  description          = var.description
-  enabled              = var.enabled
-  os_family            = var.os_family
-  cpu_cores            = var.cpu_cores
-  ram                  = var.ram
-  machine_type         = var.machine_type
-  cluster              = var.cluster
-  powerstate           = var.powerstate
-  guest_agent          = var.guest_agent
-  cloudinit_datasource = coalesce(var.cloudinit_datasource, "nocloud")
-  snapshot_profile     = try(tonumber(vergeio_snapshot_profile.this[0].id), var.snapshot_profile_id)
-  cloudinit_files      = local.cloudinit_files
-
-  boot_disk {
-    name   = var.boot_disk_name
-    media  = "import"
-    source = coalesce(var.media_source_id, 0)
-    size   = var.boot_disk_size
+    media  = var.media_source_id == null ? "disk" : "import"
+    source = var.media_source_id
   }
 }
 
@@ -126,29 +101,7 @@ resource "vergeio_vm_nic" "this" {
   ipaddress        = each.value.ipaddress
 }
 
-resource "vergeio_tag_category" "this" {
-  for_each = local.tag_categories
-
-  name         = each.value
-  taggable_vms = true
-}
-
-resource "vergeio_tag" "this" {
-  for_each = local.tag_map
-
-  category    = tonumber(vergeio_tag_category.this[each.value.category].id)
-  name        = each.value.name
-  description = each.value.description
-}
-
-resource "vergeio_tag_member" "created" {
-  for_each = vergeio_tag.this
-
-  tag_id = tonumber(each.value.id)
-  member = local.vm_member
-}
-
-resource "vergeio_tag_member" "existing" {
+resource "vergeio_tag_member" "this" {
   for_each = toset([for id in var.tag_ids : tostring(id)])
 
   tag_id = tonumber(each.value)
@@ -158,8 +111,8 @@ resource "vergeio_tag_member" "existing" {
 resource "terraform_data" "check" {
   lifecycle {
     precondition {
-      condition     = var.source_type != "image" || var.media_source_id != null
-      error_message = "media_source_id is required when source_type is image."
+      condition     = var.source_type != "image" || var.media_source_id != null || var.boot_disk_size != null
+      error_message = "An image VM needs media_source_id or boot_disk_size."
     }
 
     precondition {

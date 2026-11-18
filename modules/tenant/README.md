@@ -1,6 +1,6 @@
 # tenant
 
-Creates a VergeOS tenant on the parent system, with nodes, storage, routed network blocks, external IPs, and a parent-system admin user.
+Creates a VergeOS tenant on the parent system, with nodes, storage, an admin user, and optional routed network blocks and external IPs.
 
 `tenant_password_wo` is the built-in tenant admin password (`vergeio_tenant.password_wo`). It is not stored. Increment `tenant_password_wo_version` to change it. `admin_user` is a separate `vergeio_user` on the parent, added to `admin_group_id` with `vergeio_member`. `admin_password_wo` is that user's password and is not stored.
 
@@ -49,8 +49,9 @@ module "tenant" {
 
 A runnable root module is in `examples/modules/tenant`.
 
-`terraform test` in this directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of that run:
+`terraform test` in this directory plans with a mocked provider. The lab apply test is a separate root in `tests/lab` and is not part of that run:
 
 ```bash
-terraform test -test-directory=tests/lab
+terraform -chdir=tests/lab init -backend=false
+terraform -chdir=tests/lab test
 ```

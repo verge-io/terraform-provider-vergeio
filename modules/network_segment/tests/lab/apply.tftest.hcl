@@ -5,23 +5,28 @@
 provider "vergeio" {}
 
 variables {
-  name                = "tf-mod-segment"
-  cidr                = "192.168.16.0/24"
-  ipaddress           = "192.168.16.1/24"
-  dhcp_start          = "192.168.16.10"
-  dhcp_stop           = "192.168.16.200"
-  dns_servers         = ["192.168.16.1"]
-  domain              = "app.example.com"
-  external_network_id = 3
-  powerstate          = false
+  name        = "tf-acc-segment"
+  description = "tf-acc-segment"
+  cidr        = "192.168.77.0/24"
+  dhcp_start  = "192.168.77.10"
+  dhcp_stop   = "192.168.77.200"
+  dns_servers = ["192.168.77.1"]
+  domain      = "tf-acc.example.com"
+  powerstate  = false
 
   dns = {
-    zone_domain = "app.example.com"
+    view_name   = "tf-acc-view"
+    zone_domain = "tf-acc.example.com"
     email       = "hostmaster@example.com"
+    records = [{
+      host  = "tf-acc-www"
+      type  = "A"
+      value = "192.168.77.10"
+    }]
   }
 
   firewall_rules = [{
-    name              = "allow-ssh"
+    name              = "tf-acc-allow-ssh"
     protocol          = "tcp"
     destination_ports = "22"
   }]
@@ -31,7 +36,7 @@ run "apply" {
   command = apply
 
   assert {
-    condition     = vergeio_network.this.id != ""
-    error_message = "Lab apply did not store a network id."
+    condition     = vergeio_network.this.id != "" && vergeio_network.this.name == "tf-acc-segment"
+    error_message = "Lab apply did not store the tf-acc-segment network."
   }
 }

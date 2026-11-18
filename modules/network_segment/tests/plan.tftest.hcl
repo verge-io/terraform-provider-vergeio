@@ -22,13 +22,21 @@ variables {
     match_clients = "192.168.16.0/24;"
     recursion     = true
     email         = "hostmaster@example.com"
-    records = [{
-      host        = "www"
-      type        = "A"
-      value       = "192.168.16.10"
-      ttl         = "1h"
-      description = "Application"
-    }]
+    records = [
+      {
+        host        = "db"
+        type        = "A"
+        value       = "192.168.16.11"
+        description = "Database"
+      },
+      {
+        host        = "www"
+        type        = "A"
+        value       = "192.168.16.10"
+        ttl         = "1h"
+        description = "Application"
+      },
+    ]
   }
 
   firewall_rules = [
@@ -56,7 +64,7 @@ run "plan" {
   command = plan
 
   assert {
-    condition     = vergeio_network.this.name == "app" && vergeio_network.this.type == "internal" && vergeio_network.this.network == "192.168.16.0/24"
+    condition     = vergeio_network.this.name == "app" && vergeio_network.this.type == "internal" && vergeio_network.this.network == "192.168.16.0/24" && vergeio_network.this.ipaddress == "192.168.16.1/24"
     error_message = "The internal network CIDR was not planned."
   }
 
@@ -81,7 +89,7 @@ run "plan" {
   }
 
   assert {
-    condition     = vergeio_network_dns_view.this[0].name == "internal" && vergeio_network_dns_view.this[0].apply == false && vergeio_network_dns_zone.this[0].domain == "app.example.com" && vergeio_network_dns_zone.this[0].type == "master" && vergeio_network_dns_record.this["www/A/192.168.16.10"].value == "192.168.16.10"
+    condition     = vergeio_network_dns_view.this[0].name == "internal" && vergeio_network_dns_view.this[0].apply == false && vergeio_network_dns_zone.this[0].domain == "app.example.com" && vergeio_network_dns_zone.this[0].type == "master" && vergeio_network_dns_zone.this[0].apply == false && vergeio_network_dns_record.staged["www/A/192.168.16.10"].apply == false && vergeio_network_dns_record.refresh["db/A/192.168.16.11"].apply == true && vergeio_network_dns_record.refresh["db/A/192.168.16.11"].value == "192.168.16.11"
     error_message = "The DNS view, zone, or record was not planned."
   }
 }
@@ -96,6 +104,22 @@ run "no_outbound_gateway" {
   assert {
     condition     = vergeio_network.this.vnet_default_gateway == null
     error_message = "vnet_default_gateway should stay unset when external_network_id is omitted."
+  }
+}
+
+run "derived_ipaddress" {
+  command = plan
+
+  variables {
+    cidr       = "10.20.0.0/24"
+    ipaddress  = null
+    dhcp_start = "10.20.0.10"
+    dhcp_stop  = "10.20.0.200"
+  }
+
+  assert {
+    condition     = vergeio_network.this.network == "10.20.0.0/24" && vergeio_network.this.ipaddress == "10.20.0.1/24"
+    error_message = "The router address was not derived from cidr."
   }
 }
 
