@@ -147,6 +147,9 @@ locals {
       tier_list        = local.tier_list[key]
       create_storage   = local.create_storage
       create_compute   = local.create_compute
+      # Hybrid creates only the compute cluster, which is 2. UCI creates
+      # storage first, so storage is 2 and compute is 3.
+      compute_cluster = var.shape == "uci" ? "3" : "2"
     })
   }
 }
@@ -195,10 +198,12 @@ resource "vergeio_vm" "node" {
   guest_agent           = true
   nested_virtualization = true
   disable_hypervisor    = true
-  shutdown_on_destroy   = "kill"
-  cloudinit_datasource  = "nocloud"
-  cluster               = var.cluster_id
-  boot_order            = var.media_source_id == null ? null : "dc"
+  # The seed installs an EFI bootloader. The VM firmware has to match.
+  uefi                 = true
+  shutdown_on_destroy  = "kill"
+  cloudinit_datasource = "nocloud"
+  cluster              = var.cluster_id
+  boot_order           = var.media_source_id == null ? null : "dc"
   # A null timeout is left unset. The provider waits the full timeout even
   # when the guest never reports an address, including when the VM is off.
   wait_for_guest_ip_timeout = var.powerstate ? var.wait_for_guest_ip_timeout : null
@@ -261,6 +266,8 @@ resource "vergeio_vm_drive" "cdrom" {
   orderid      = 20
 }
 
+# Created in guest PCI order. enp1s1 is external, enp1s2 is core 1, and
+# enp1s3 is core 2. The edges keep that order when apply runs in parallel.
 resource "vergeio_vm_nic" "external" {
   for_each = local.nodes
 
@@ -273,7 +280,8 @@ resource "vergeio_vm_nic" "external" {
 }
 
 resource "vergeio_vm_nic" "core_1" {
-  for_each = local.nodes
+  for_each   = local.nodes
+  depends_on = [vergeio_vm_nic.external]
 
   vm_id            = vergeio_vm.node[each.key].id
   name             = "core-1"
@@ -284,7 +292,8 @@ resource "vergeio_vm_nic" "core_1" {
 }
 
 resource "vergeio_vm_nic" "core_2" {
-  for_each = local.nodes
+  for_each   = local.nodes
+  depends_on = [vergeio_vm_nic.core_1]
 
   vm_id            = vergeio_vm.node[each.key].id
   name             = "core-2"

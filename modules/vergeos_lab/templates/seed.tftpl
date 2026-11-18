@@ -467,11 +467,17 @@ YC_DRIVE_LIST='${drive_list}'
 YC_CLUSTER_SWAP_PER_DRIVE=0
 YC_CLUSTER_SWAP_TIER=-1
 YC_CLUSTER_SWAP_PER_DRIVE_CONFIRM=0
-YC_LIKE_NODE=1
 
 YC_NET_AUTODETECT=0
 YC_NET_AUTODETECT_ALL=0
 YC_INSTALL_EFI_BOOT=1
+
+YC_NO_TIME=1
+YC_SKIP_IPMI_CONFIG=1
+YC_SPLIT_LOCK_DETECTION=0
+
+YC_CLUSTER=${compute_cluster}
+YC_LIKE_NODE=1
 
 touch /etc/yottabyte/reboot
 sed -i 's/within 10 seconds." 15 60 10/within 3 seconds." 15 60 3/g' /usr/lib/ybos/install/9999-finish
