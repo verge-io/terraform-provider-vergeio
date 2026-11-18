@@ -81,6 +81,10 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 
 Terraform keeps tenants, networks, firewall policy, VM configuration, identity, and snapshot profiles. Ansible runs procedures and configures the guest. See [Terraform and Ansible](docs/guides/terraform-ansible.md).
 
+## Modules
+
+`modules/tenant`, `modules/network_segment`, and `modules/vm` are the first patterns published in this repository. Each module pins `verge-io/vergeio` `~> 3.0`. Runnable examples are under `examples/modules/`. `terraform test` in a module directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of CI.
+
 ## Resources
 
 - vergeio_api_key
