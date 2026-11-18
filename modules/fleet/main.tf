@@ -29,6 +29,16 @@ locals {
       if contains(keys(var.networks), network_key)
     ]
   ])
+
+  # The for_each address is tenant key / network key. The VergeOS name joins
+  # the tenant name and the network key with a hyphen, and both may contain
+  # hyphens, so the name is checked on its own.
+  network_names = flatten([
+    for _, tenant in var.tenants : [
+      for network_key, _ in tenant.networks : "${tenant.name}-${network_key}"
+      if contains(keys(var.networks), network_key)
+    ]
+  ])
 }
 
 resource "vergeio_group" "tenant_admins" {
@@ -142,6 +152,11 @@ resource "terraform_data" "check" {
     precondition {
       condition     = length(local.inventory_cidrs) == length(distinct(local.inventory_cidrs))
       error_message = "Tenant network CIDRs must be unique across the inventory. Two tenants cannot share a CIDR on this system."
+    }
+
+    precondition {
+      condition     = length(local.network_names) == length(distinct(local.network_names))
+      error_message = "Each VergeOS network name is the tenant name, a hyphen, and the network key. Those names must be unique. A tenant named west-net with network key app and a tenant named west with network key net-app both produce west-net-app."
     }
 
     precondition {

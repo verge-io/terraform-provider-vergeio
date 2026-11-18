@@ -509,6 +509,86 @@ run "group_collision" {
   ]
 }
 
+run "network_name_collision" {
+  command = plan
+
+  variables {
+    networks = {
+      app = {
+        powerstate   = false
+        dhcp_enabled = true
+      }
+      "net-app" = {
+        powerstate   = false
+        dhcp_enabled = true
+      }
+    }
+
+    tenants = {
+      canary = {
+        wave = "canary"
+        name = "west-net"
+        nodes = [{
+          name      = "canary-node1"
+          cpu_cores = 2
+          ram       = 2048
+        }]
+        storage = [{
+          tier        = 1
+          provisioned = 1073741824
+        }]
+        admin_user = {
+          name = "canary-admin"
+        }
+        networks = {
+          app = {
+            cidr       = "10.83.10.0/24"
+            dhcp_start = "10.83.10.10"
+            dhcp_stop  = "10.83.10.50"
+          }
+          "net-app" = {
+            cidr       = "10.83.12.0/24"
+            dhcp_start = "10.83.12.10"
+            dhcp_stop  = "10.83.12.50"
+          }
+        }
+      }
+      later = {
+        wave = "rest"
+        name = "west"
+        nodes = [{
+          name      = "later-node1"
+          cpu_cores = 2
+          ram       = 2048
+        }]
+        storage = [{
+          tier        = 1
+          provisioned = 1073741824
+        }]
+        admin_user = {
+          name = "later-admin"
+        }
+        networks = {
+          app = {
+            cidr       = "10.83.11.0/24"
+            dhcp_start = "10.83.11.10"
+            dhcp_stop  = "10.83.11.50"
+          }
+          "net-app" = {
+            cidr       = "10.83.13.0/24"
+            dhcp_start = "10.83.13.10"
+            dhcp_stop  = "10.83.13.50"
+          }
+        }
+      }
+    }
+  }
+
+  expect_failures = [
+    terraform_data.check,
+  ]
+}
+
 run "version_key" {
   command = plan
 
