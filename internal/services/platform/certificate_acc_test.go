@@ -57,6 +57,8 @@ func TestAccCertificate_SelfSigned(t *testing.T) {
 				Config: created,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_name", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_list", domain),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "type", "self_signed"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "key_type", "ecdsa"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "description", "UI certificate"),
@@ -74,6 +76,8 @@ func TestAccCertificate_SelfSigned(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "description", "Replacement UI certificate"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_name", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_list", domain),
 				),
 			},
 			{
@@ -114,6 +118,8 @@ func TestAccCertificate_Manual(t *testing.T) {
 				Config: created,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_name", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_list", domain),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "type", "manual"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "description", "uploaded"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "private_key_wo_version", "1"),

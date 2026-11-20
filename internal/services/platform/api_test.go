@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -174,6 +175,9 @@ func TestCertificateCreateKeepsPrivateKeyOutOfState(t *testing.T) {
 	if created.Private != priv || created.Public != pub {
 		t.Fatalf("create body = %s", fake.certCreateBody)
 	}
+	if strings.Contains(fake.certCreateBody, "domainname") || !strings.Contains(fake.certCreateBody, `"domainlist":"tf-acc.example"`) {
+		t.Fatalf("manual body = %s", fake.certCreateBody)
+	}
 	if fake.privateReads != 0 {
 		t.Fatalf("private key was read %d times", fake.privateReads)
 	}
@@ -194,7 +198,7 @@ func TestCertificateCreateKeepsPrivateKeyOutOfState(t *testing.T) {
 	if err := api.createCertificate(ctx, lets, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(fake.certCreateBody, "PRIVATE KEY") || !strings.Contains(fake.certCreateBody, `"agree_tos":true`) || !strings.Contains(fake.certCreateBody, `"contact":9`) {
+	if strings.Contains(fake.certCreateBody, "PRIVATE KEY") || strings.Contains(fake.certCreateBody, "domainname") || !strings.Contains(fake.certCreateBody, `"domainlist":"ui.example.com"`) || !strings.Contains(fake.certCreateBody, `"agree_tos":true`) || !strings.Contains(fake.certCreateBody, `"contact":9`) {
 		t.Fatalf("letsencrypt body = %s", fake.certCreateBody)
 	}
 
@@ -207,7 +211,7 @@ func TestCertificateCreateKeepsPrivateKeyOutOfState(t *testing.T) {
 	if err := api.createCertificate(ctx, self, "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fake.certCreateBody, `"domainname":"tf-acc-ui.local"`) || !strings.Contains(fake.certCreateBody, `"type":"self_signed"`) {
+	if strings.Contains(fake.certCreateBody, "domainname") || !strings.Contains(fake.certCreateBody, `"domainlist":"tf-acc-ui.local"`) || !strings.Contains(fake.certCreateBody, `"type":"self_signed"`) {
 		t.Fatalf("self signed body = %s", fake.certCreateBody)
 	}
 	if self.DomainName.ValueString() != "tf-acc-ui.local" || self.Domain.ValueString() != "tf-acc-ui.local" {
@@ -216,11 +220,322 @@ func TestCertificateCreateKeepsPrivateKeyOutOfState(t *testing.T) {
 
 	updated := *manual
 	updated.Description = types.StringValue("replaced text")
-	if err := api.updateCertificate(ctx, &updated, manual, "", ""); err != nil {
+	if err := api.updateCertificate(ctx, &updated, manual, "", "", "tf-acc.example"); err != nil {
 		t.Fatal(err)
 	}
 	if updated.Description.ValueString() != "replaced text" || !strings.Contains(fake.certUpdateBody, `"description":"replaced text"`) || strings.Contains(fake.certUpdateBody, "PRIVATE KEY") {
 		t.Fatalf("update body = %s", fake.certUpdateBody)
+	}
+}
+
+func TestCertificateCreateSendsDomainNameFirst(t *testing.T) {
+	fake := newPlatformFake()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	both := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue(" primary.example "),
+		DomainList: types.StringValue("alt.example, primary.example, extra.example, ,primary.example"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	if err := api.createCertificate(context.Background(), both, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fake.certCreateBody, "domainname") || !strings.Contains(fake.certCreateBody, `"domainlist":"primary.example,alt.example,extra.example"`) {
+		t.Fatalf("create body = %s", fake.certCreateBody)
+	}
+	if both.DomainName.ValueString() != " primary.example " || both.DomainList.ValueString() != "alt.example, primary.example, extra.example, ,primary.example" {
+		t.Fatalf("state rewrote the configured names: domain_name=%q domain_list=%q", both.DomainName.ValueString(), both.DomainList.ValueString())
+	}
+	if both.Domain.ValueString() != "primary.example" {
+		t.Fatalf("domain = %q", both.Domain.ValueString())
+	}
+
+	listOnly := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeLetsEncrypt),
+		DomainList: types.StringValue("example.com, www.example.com"),
+		Contact:    types.Int64Value(3),
+		AgreeTOS:   types.BoolValue(true),
+	}
+	fake.certCreateBody = ""
+	if err := api.createCertificate(context.Background(), listOnly, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fake.certCreateBody, "domainname") || !strings.Contains(fake.certCreateBody, `"domainlist":"example.com, www.example.com"`) {
+		t.Fatalf("list body = %s", fake.certCreateBody)
+	}
+}
+
+func TestCertificateCreateWaitsForNames(t *testing.T) {
+	fake := newPlatformFake()
+	fake.delayNameReads = 2
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	self := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	if err := api.createCertificate(context.Background(), self, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if self.Domain.ValueString() != "tf-acc-ui.local" || self.DomainList.ValueString() != "tf-acc-ui.local" || self.DomainName.ValueString() != "tf-acc-ui.local" {
+		t.Fatalf("domain=%q domain_name=%q domain_list=%q", self.Domain.ValueString(), self.DomainName.ValueString(), self.DomainList.ValueString())
+	}
+	if fake.certGets < 4 {
+		t.Fatalf("certificate reads = %d, want a re-read after the empty response", fake.certGets)
+	}
+}
+
+func TestCertificateReadWaitsForNames(t *testing.T) {
+	fake := newPlatformFake()
+	id := fake.seedCertificate(vergeos.Certificate{
+		Type:    vergeos.CertificateTypeSelfSigned,
+		Created: time.Now().Unix(),
+		Public:  "self",
+	})
+	fake.settledNames = map[int]settledCertificateNames{
+		id: {domain: "tf-acc-ui.local", domainName: "tf-acc-ui.local", domainList: "tf-acc-ui.local"},
+	}
+	fake.delayNameReads = 2
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	data := &certificateModel{
+		ID:   types.StringValue(strconv.Itoa(id)),
+		Type: types.StringValue(vergeos.CertificateTypeSelfSigned),
+	}
+	if err := api.readCertificate(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Domain.ValueString() != "tf-acc-ui.local" || data.DomainName.ValueString() != "tf-acc-ui.local" || data.DomainList.ValueString() != "tf-acc-ui.local" {
+		t.Fatalf("domain=%q domain_name=%q domain_list=%q", data.Domain.ValueString(), data.DomainName.ValueString(), data.DomainList.ValueString())
+	}
+	if fake.certGets < 4 {
+		t.Fatalf("certificate reads = %d, want a re-read after the empty response", fake.certGets)
+	}
+}
+
+func TestCertificateCreateNameTimeout(t *testing.T) {
+	fake := newPlatformFake()
+	fake.blankNames = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	api.certificateNameTimeout = 30 * time.Millisecond
+	api.certificateNameInterval = time.Millisecond
+
+	self := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	err := api.createCertificate(context.Background(), self, "", "")
+	if err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("error = %v", err)
+	}
+	if self.ID.ValueString() != "1" {
+		t.Fatalf("id = %q", self.ID.ValueString())
+	}
+}
+
+func TestCertificateReadNameTimeout(t *testing.T) {
+	fake := newPlatformFake()
+	id := fake.seedCertificate(vergeos.Certificate{
+		Type:    vergeos.CertificateTypeSelfSigned,
+		Created: time.Now().Unix(),
+		Public:  "self",
+	})
+	fake.blankNames = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	api.certificateNameTimeout = 30 * time.Millisecond
+	api.certificateNameInterval = time.Millisecond
+
+	data := &certificateModel{
+		ID:   types.StringValue(strconv.Itoa(id)),
+		Type: types.StringValue(vergeos.CertificateTypeSelfSigned),
+	}
+	err := api.readCertificate(context.Background(), data)
+	if err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCertificateNameWaitHonorsContext(t *testing.T) {
+	fake := newPlatformFake()
+	fake.blankNames = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	api.certificateNameTimeout = 5 * time.Second
+	api.certificateNameInterval = 100 * time.Millisecond
+
+	self := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := api.createCertificate(ctx, self, "", "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestCertificateCreateRejectsDefaultNames(t *testing.T) {
+	fake := newPlatformFake()
+	fake.issueDefaults = true
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	self := &certificateModel{
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	err := api.createCertificate(context.Background(), self, "", "")
+	if err == nil || !strings.Contains(err.Error(), "verge-api") || !strings.Contains(err.Error(), "tf-acc-ui.local") {
+		t.Fatalf("error = %v", err)
+	}
+	if self.ID.ValueString() != "1" {
+		t.Fatalf("id = %q", self.ID.ValueString())
+	}
+	if fake.certGets != 2 {
+		t.Fatalf("certificate reads = %d, want the contradicting row returned once", fake.certGets)
+	}
+}
+
+func TestCertificateReadStoresIssuedNameWhenSelfSignedDiffers(t *testing.T) {
+	fake := newPlatformFake()
+	id := fake.seedCertificate(vergeos.Certificate{
+		Type:       vergeos.CertificateTypeSelfSigned,
+		Domain:     "verge-api",
+		DomainList: "verge-api,yb-api,localhost",
+		Created:    1700000000,
+		Public:     "self",
+	})
+	fake.setDomainName(id, "verge-api")
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+
+	data := &certificateModel{
+		ID:         types.StringValue(strconv.Itoa(id)),
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+	}
+	if err := api.readCertificate(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.DomainName.ValueString() != "verge-api" {
+		t.Fatalf("domain_name = %q", data.DomainName.ValueString())
+	}
+	if data.DomainList.ValueString() != "verge-api,yb-api,localhost" {
+		t.Fatalf("domain_list = %q", data.DomainList.ValueString())
+	}
+
+	manual := newPlatformFake()
+	manualID := manual.seedCertificate(vergeos.Certificate{
+		Type:       vergeos.CertificateTypeManual,
+		Domain:     "tf-acc-manual.local",
+		DomainList: "tf-acc-manual.local",
+		Public:     testCertificatePEM(t, "other.example", ""),
+		Created:    1700000000,
+	})
+	manual.setDomainName(manualID, "other.example")
+	manualServer := httptest.NewServer(manual)
+	t.Cleanup(manualServer.Close)
+	manualAPI := testAPI(t, manualServer.URL)
+	kept := &certificateModel{
+		ID:         types.StringValue(strconv.Itoa(manualID)),
+		Type:       types.StringValue(vergeos.CertificateTypeManual),
+		DomainName: types.StringValue("tf-acc-manual.local"),
+		DomainList: types.StringValue("tf-acc-manual.local"),
+	}
+	if err := manualAPI.readCertificate(context.Background(), kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept.DomainName.ValueString() != "tf-acc-manual.local" {
+		t.Fatalf("manual domain_name = %q", kept.DomainName.ValueString())
+	}
+}
+
+func TestCertificateUpdatePutsDomainNameFirst(t *testing.T) {
+	fake := newPlatformFake()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	state := &certificateModel{
+		ID:         types.StringValue("1"),
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		DomainList: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+	}
+	fake.seedCertificate(vergeos.Certificate{
+		Domain:      "tf-acc-ui.local",
+		DomainList:  "tf-acc-ui.local",
+		Type:        vergeos.CertificateTypeSelfSigned,
+		KeyType:     vergeos.CertificateKeyTypeECDSA,
+		Description: "UI certificate",
+		Created:     1700000000,
+	})
+	fake.setDomainName(1, "tf-acc-ui.local")
+	plan := *state
+	plan.DomainList = types.StringValue("alt.example, tf-acc-ui.local")
+	if err := api.updateCertificate(context.Background(), &plan, state, "", "", "tf-acc-ui.local"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fake.certUpdateBody, "domainname") || !strings.Contains(fake.certUpdateBody, `"domainlist":"tf-acc-ui.local,alt.example"`) {
+		t.Fatalf("update body = %s", fake.certUpdateBody)
+	}
+	if plan.DomainList.ValueString() != "alt.example, tf-acc-ui.local" {
+		t.Fatalf("domain_list = %q", plan.DomainList.ValueString())
+	}
+}
+
+func TestCertificateUpdateLeavesComputedDomainNameOffTheList(t *testing.T) {
+	fake := newPlatformFake()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	state := &certificateModel{
+		ID:         types.StringValue("1"),
+		Type:       types.StringValue(vergeos.CertificateTypeLetsEncrypt),
+		DomainName: types.StringValue("computed.example"),
+		DomainList: types.StringValue("computed.example,old.example"),
+		Contact:    types.Int64Value(3),
+		AgreeTOS:   types.BoolValue(true),
+	}
+	fake.seedCertificate(vergeos.Certificate{
+		Domain:     "computed.example",
+		DomainList: "computed.example,old.example",
+		Type:       vergeos.CertificateTypeLetsEncrypt,
+		Created:    1700000000,
+	})
+	fake.setDomainName(1, "computed.example")
+	plan := *state
+	plan.DomainList = types.StringValue("alt.example")
+	if err := api.updateCertificate(context.Background(), &plan, state, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fake.certUpdateBody, "computed.example") || !strings.Contains(fake.certUpdateBody, `"domainlist":"alt.example"`) {
+		t.Fatalf("update body = %s", fake.certUpdateBody)
+	}
+	if plan.DomainList.ValueString() != "alt.example" || plan.DomainName.ValueString() != "computed.example" {
+		t.Fatalf("domain_name=%q domain_list=%q", plan.DomainName.ValueString(), plan.DomainList.ValueString())
+	}
+	if got := domainListForState("computed.example,alt.example", "alt.example", ""); got != "computed.example,alt.example" {
+		t.Fatalf("computed name collapsed domain_list to %q", got)
 	}
 }
 
@@ -941,6 +1256,8 @@ func testAPI(t *testing.T, host string) *API {
 	api.webhookWait = 0
 	api.putTries = 3
 	api.putBackoff = 0
+	api.certificateNameTimeout = 2 * time.Second
+	api.certificateNameInterval = 0
 	return api
 }
 
@@ -962,6 +1279,12 @@ type fakeCertBody struct {
 	DomainName string `json:"domainname,omitempty"`
 }
 
+type settledCertificateNames struct {
+	domain     string
+	domainName string
+	domainList string
+}
+
 type platformFake struct {
 	mu               sync.Mutex
 	next             int
@@ -980,6 +1303,11 @@ type platformFake struct {
 	failPuts         int
 	failPutStatus    int
 	putAttempts      int
+	certGets         int
+	delayNameReads   int
+	blankNames       bool
+	issueDefaults    bool
+	settledNames     map[int]settledCertificateNames
 	certCreateBody   string
 	certUpdateBody   string
 	urlCreateBody    string
@@ -1128,14 +1456,27 @@ func (f *platformFake) createCertificate(w http.ResponseWriter, r *http.Request)
 	f.mu.Lock()
 	id := f.next
 	f.next++
-	domain := req.DomainName
+	domain := strings.TrimSpace(req.DomainName)
+	if domain == "" {
+		domain = firstDomain(req.DomainList)
+	}
 	if domain == "" {
 		domain = "generated.example"
+	}
+	list := req.DomainList
+	if strings.TrimSpace(list) == "" {
+		list = domain
+	}
+	storedName := domain
+	if f.issueDefaults {
+		domain = ""
+		list = "verge-api,yb-api,localhost"
+		storedName = "verge-api"
 	}
 	f.certs[id] = vergeos.Certificate{
 		Key:         vergeos.FlexInt(id),
 		Domain:      domain,
-		DomainList:  req.DomainList,
+		DomainList:  list,
 		Description: req.Description,
 		Type:        req.Type,
 		Public:      req.Public,
@@ -1153,6 +1494,10 @@ func (f *platformFake) createCertificate(w http.ResponseWriter, r *http.Request)
 	if req.Contact != nil {
 		f.certs[id] = withContact(f.certs[id], *req.Contact)
 	}
+	if f.domainNames == nil {
+		f.domainNames = map[int]string{}
+	}
+	f.domainNames[id] = storedName
 	f.certCreateBody = string(body)
 	f.mu.Unlock()
 	writeJSON(w, map[string]int{"$key": id})
@@ -1186,6 +1531,7 @@ func (f *platformFake) getCertificate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "certificate read failed", http.StatusInternalServerError)
 		return
 	}
+	f.certGets++
 	fields := r.URL.Query().Get("fields")
 	f.certFieldQueries = append(f.certFieldQueries, fields)
 	if strings.Contains(fields, "private") {
@@ -1203,6 +1549,18 @@ func (f *platformFake) getCertificate(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.omitGetKey {
 		body.Key = 0
+	}
+	if f.blankNames || f.delayNameReads > 0 {
+		if f.delayNameReads > 0 {
+			f.delayNameReads--
+		}
+		body.Domain = ""
+		body.DomainName = ""
+		body.DomainList = ""
+	} else if names, ok := f.settledNames[int(cert.Key)]; ok {
+		body.Domain = names.domain
+		body.DomainName = names.domainName
+		body.DomainList = names.domainList
 	}
 	writeJSON(w, body)
 }
@@ -1223,6 +1581,16 @@ func (f *platformFake) updateCertificate(w http.ResponseWriter, r *http.Request)
 	}
 	if req.Description != nil {
 		cert.Description = *req.Description
+	}
+	if req.DomainList != nil {
+		cert.DomainList = *req.DomainList
+		if name := firstDomain(*req.DomainList); name != "" {
+			cert.Domain = name
+			if f.domainNames == nil {
+				f.domainNames = map[int]string{}
+			}
+			f.domainNames[int(cert.Key)] = name
+		}
 	}
 	if req.Public != nil {
 		cert.Public = *req.Public
