@@ -68,7 +68,7 @@ func TestVMListSkipsSnapshotsAndFiltersName(t *testing.T) {
 	if id != "1" {
 		t.Fatalf("identity id = %q", id)
 	}
-	if filter != "tenant eq 9" {
+	if filter != "owner eq 'tenants/9'" {
 		t.Fatalf("filter = %q", filter)
 	}
 

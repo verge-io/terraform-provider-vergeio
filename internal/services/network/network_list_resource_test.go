@@ -135,6 +135,46 @@ func TestReadNetworkKeepsConfiguredBondInterfaces(t *testing.T) {
 	}
 }
 
+func TestNetworkListFiltersTenantOwner(t *testing.T) {
+	var filter string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.2.0"}`))
+		case "/api/v4/vnets":
+			filter = r.URL.Query().Get("filter")
+			_, _ = w.Write([]byte(`[{"$key":24,"name":"tenant-net","enabled":true,"type":"internal"}]`))
+		case "/api/v4/tenants":
+			_, _ = w.Write([]byte(`[{"$key":9,"name":"customer-a"}]`))
+		case "/api/v4/tenants/9":
+			_, _ = w.Write([]byte(`{"$key":9,"name":"customer-a"}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	lister := configuredNetworkList(t, server.URL)
+	results, err := listtest.Collect(ctx, lister, NewNetworkResource(), shared.ListQuery{
+		Tenant: types.StringValue("customer-a"),
+	}, false, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].DisplayName != "tenant-net" {
+		t.Fatalf("results = %#v", results)
+	}
+	if filter != "owner eq 'tenants/9'" {
+		t.Fatalf("filter = %q", filter)
+	}
+}
+
 func configuredNetworkList(t *testing.T, host string) *NetworkListResource {
 	t.Helper()
 	lister := NewNetworkListResource().(*NetworkListResource)
