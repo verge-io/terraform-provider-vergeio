@@ -2,6 +2,7 @@
 
 ### Bug fixes
 
+- Deleting an IPsec configuration, an IPsec connection, a WireGuard interface or peer, a DNS view, zone, or record, or a firewall rule no longer treats a 404 as success when the row is still there. VergeOS can refuse that delete after the parent network is removed outside Terraform and still answer 404. The provider reads the row again and returns an error, so Terraform keeps the resource in state. A refresh of `vergeio_network_ipsec` or `vergeio_network_ipsec_connection` warns when the parent network is gone and the row remains (#292).
 - Creating or deleting a `vergeio_certificate` no longer makes other creates in the same apply fail with "connection reset by peer" or EOF. VergeOS closes open API connections about half a second after those two calls. Other writes wait until that window has passed. The provider retries its own GET, PUT, and DELETE requests after a connection reset or EOF. POST is not retried (#295).
 - `data.vergeio_vms` now returns drives and NICs on each VM. `allocated_bytes` and `filesize` stay null (#296).
 

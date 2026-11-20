@@ -148,8 +148,11 @@ func deleteAppliedWireGuard(ctx context.Context, sdk *vergeos.Client, id, networ
 				return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
 			}
 		}
-		last = sdk.VNetWireGuards.Delete(ctx, id)
-		if last == nil || vergeos.IsNotFoundError(last) {
+		last = confirmDeleted(sdk.VNetWireGuards.Delete(ctx, id), namedRow("WireGuard interface", id, ""), func() error {
+			_, getErr := sdk.VNetWireGuards.Get(ctx, id)
+			return getErr
+		})
+		if last == nil {
 			return nil
 		}
 		if !wireGuardDeletePending(last) {
@@ -161,7 +164,11 @@ func deleteAppliedWireGuard(ctx context.Context, sdk *vergeos.Client, id, networ
 }
 
 func deleteWireGuardOnce(ctx context.Context, sdk *vergeos.Client, id int) error {
-	if err := sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	err := confirmDeleted(sdk.VNetWireGuards.Delete(ctx, id), namedRow("WireGuard interface", id, ""), func() error {
+		_, getErr := sdk.VNetWireGuards.Get(ctx, id)
+		return getErr
+	})
+	if err != nil {
 		return fmt.Errorf("delete WireGuard interface %d: %w", id, err)
 	}
 	return nil
@@ -189,7 +196,11 @@ func deleteWireGuardPeerRows(ctx context.Context, sdk *vergeos.Client, wireguard
 	var errs []error
 	for _, peer := range peers {
 		id := peer.Key.Int()
-		if err := sdk.VNetWireGuardPeers.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		err := confirmDeleted(sdk.VNetWireGuardPeers.Delete(ctx, id), namedRow("WireGuard peer", id, peer.Name), func() error {
+			_, getErr := sdk.VNetWireGuardPeers.Get(ctx, id)
+			return getErr
+		})
+		if err != nil {
 			errs = append(errs, fmt.Errorf("delete WireGuard peer %d: %w", id, err))
 		}
 	}
@@ -225,7 +236,10 @@ func deleteIPSecRows(ctx context.Context, sdk *vergeos.Client, networkID int) er
 	if len(remaining) > 0 {
 		return fmt.Errorf("IPsec configuration %d still has phase 1 rows, so it was not deleted. %s", ipsecID, vpnDeleteOrder)
 	}
-	if err := sdk.VNetIPSecs.Delete(ctx, ipsecID); err != nil && !vergeos.IsNotFoundError(err) {
+	if err := confirmDeleted(sdk.VNetIPSecs.Delete(ctx, ipsecID), namedRow("IPsec configuration", ipsecID, ""), func() error {
+		_, getErr := sdk.VNetIPSecs.Get(ctx, ipsecID)
+		return getErr
+	}); err != nil {
 		return fmt.Errorf("delete IPsec configuration %d: %w", ipsecID, err)
 	}
 	return nil
@@ -234,6 +248,8 @@ func deleteIPSecRows(ctx context.Context, sdk *vergeos.Client, networkID int) er
 // deletePhase1AfterPhase2 deletes every phase 2 under phase1ID, then the
 // phase 1. A phase 2 delete error returns before the phase 1 delete. That
 // delete is what leaves the phase 1 trigger failing on later attempts.
+// A 404 on delete is not proof the row is gone. VergeOS can refuse the
+// delete and govergeos still reports NotFoundError while the row remains.
 func deletePhase1AfterPhase2(ctx context.Context, sdk *vergeos.Client, phase1ID int) error {
 	phase2s, err := sdk.VNetIPSecPhase2s.ListByPhase1(ctx, phase1ID)
 	if err != nil {
@@ -241,11 +257,17 @@ func deletePhase1AfterPhase2(ctx context.Context, sdk *vergeos.Client, phase1ID 
 	}
 	for _, phase2 := range phase2s {
 		id := phase2.Key.Int()
-		if err := sdk.VNetIPSecPhase2s.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		if err := confirmDeleted(sdk.VNetIPSecPhase2s.Delete(ctx, id), namedRow("IPsec phase 2", id, phase2.Name), func() error {
+			_, getErr := sdk.VNetIPSecPhase2s.Get(ctx, id)
+			return getErr
+		}); err != nil {
 			return fmt.Errorf("IPsec phase 2 %d was not deleted, so phase 1 %d was left in place: %w", id, phase1ID, err)
 		}
 	}
-	if err := sdk.VNetIPSecPhase1s.Delete(ctx, phase1ID); err != nil && !vergeos.IsNotFoundError(err) {
+	if err := confirmDeleted(sdk.VNetIPSecPhase1s.Delete(ctx, phase1ID), namedRow("IPsec phase 1", phase1ID, ""), func() error {
+		_, getErr := sdk.VNetIPSecPhase1s.Get(ctx, phase1ID)
+		return getErr
+	}); err != nil {
 		return fmt.Errorf("delete IPsec phase 1 %d: %w", phase1ID, err)
 	}
 	return nil

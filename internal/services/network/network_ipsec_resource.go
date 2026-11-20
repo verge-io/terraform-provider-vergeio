@@ -179,6 +179,9 @@ func (r *NetworkIPSecResource) Read(ctx context.Context, req resource.ReadReques
 		resp.Diagnostics.AddError("Error Reading Network IPsec", err.Error())
 		return
 	}
+	if summary, detail := r.api.parentNetworkWarning(ctx, positiveOrZero(data.NetworkID), namedRow("IPsec configuration", positiveOrZero(data.ID), "")); detail != "" {
+		resp.Diagnostics.AddWarning(summary, detail)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
 }

@@ -145,6 +145,34 @@ func (a *vpnAPI) noteIPSecStatus(ctx context.Context, phase1ID int) {
 	tflog.Debug(ctx, fmt.Sprintf("IPsec phase 1 %d has %d active security association(s)", phase1ID, len(conns)))
 }
 
+// networkIDForIPSec reads the network on an IPsec configuration. Zero means
+// the lookup did not produce a network id. The caller skips a warning then,
+// so a failed lookup does not fail the read of a row that is still there.
+func (a *vpnAPI) networkIDForIPSec(ctx context.Context, ipsecID int) int {
+	if a == nil || a.sdk == nil || ipsecID <= 0 {
+		return 0
+	}
+	row, err := a.sdk.VNetIPSecs.Get(ctx, ipsecID)
+	if err != nil || row == nil {
+		return 0
+	}
+	return row.VNet.Int()
+}
+
+// parentNetworkWarning is set when the child row is still readable and the
+// parent network is gone. Any other lookup result is left alone.
+func (a *vpnAPI) parentNetworkWarning(ctx context.Context, networkID int, row string) (string, string) {
+	if a == nil || a.sdk == nil || networkID <= 0 || strings.TrimSpace(row) == "" {
+		return "", ""
+	}
+	_, err := a.sdk.Networks.Get(ctx, networkID)
+	if !vergeos.IsNotFoundError(err) {
+		return "", ""
+	}
+	return "Parent network was deleted outside Terraform",
+		fmt.Sprintf("Network %d is gone and %s is still on the system. VergeOS leaves these rows behind when the network is deleted outside Terraform, and a later delete of the row is refused while it remains.", networkID, row)
+}
+
 func stringState() []planmodifier.String {
 	return []planmodifier.String{stringplanmodifier.UseStateForUnknown()}
 }

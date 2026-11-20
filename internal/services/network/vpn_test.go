@@ -185,6 +185,9 @@ func TestPhase2DeleteFailureLeavesPhase1(t *testing.T) {
 	if !strings.Contains(err.Error(), "phase 1 7 was left in place") {
 		t.Fatalf("error = %v", err)
 	}
+	if strings.Contains(err.Error(), "VergeOS refused the delete") {
+		t.Fatalf("a real delete error was reported as a refused 404: %v", err)
+	}
 	if len(calls) != 1 || calls[0] != "/api/v4/vnet_ipsec_phase2s/8" {
 		t.Fatalf("deletes = %v, want only the phase 2", calls)
 	}
