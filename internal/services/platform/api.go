@@ -40,6 +40,14 @@ type API struct {
 	// settings write goes through it.
 	putTries   int
 	putBackoff time.Duration
+	// certificateNameTimeout and certificateNameInterval bound the re-read
+	// of domain, domainname, and domainlist. VergeOS fills those after create.
+	// certificateFreshFor is how recently the row must have been created
+	// before a read waits. It stays at the real settle window when a test
+	// shortens the retry timeout.
+	certificateNameTimeout  time.Duration
+	certificateNameInterval time.Duration
+	certificateFreshFor     time.Duration
 }
 
 func NewAPI(c *vergeio.Client) (*API, error) {
@@ -51,12 +59,15 @@ func NewAPI(c *vergeio.Client) (*API, error) {
 		return nil, err
 	}
 	return &API{
-		sdk:          sdk,
-		http:         c,
-		webhookTries: 20,
-		webhookWait:  500 * time.Millisecond,
-		putTries:     3,
-		putBackoff:   100 * time.Millisecond,
+		sdk:                     sdk,
+		http:                    c,
+		webhookTries:            20,
+		webhookWait:             500 * time.Millisecond,
+		putTries:                3,
+		putBackoff:              100 * time.Millisecond,
+		certificateNameTimeout:  certificateNameTimeout,
+		certificateNameInterval: certificateNameInterval,
+		certificateFreshFor:     certificateNameTimeout,
 	}, nil
 }
 
