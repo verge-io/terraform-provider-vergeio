@@ -16,6 +16,8 @@ description: |-
 
 Removing this destination also removes its delivery log. [`vergeio_webhook`](webhook.html) is one message sent to this destination.
 
+VergeOS reuses deleted keys, and this table has no stable id, so the provider identifies the row by name. Renaming the destination outside Terraform makes Terraform treat it as deleted, and the next apply creates a new one with the configured name. Rename it through Terraform instead.
+
 ## Example Usage
 
 {{ tffile "examples/resources/vergeio_webhook_url/resource.tf" }}

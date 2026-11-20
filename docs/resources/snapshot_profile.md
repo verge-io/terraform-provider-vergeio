@@ -20,6 +20,8 @@ Each `period` block is one schedule: how often (`frequency`), the time of day (`
 
 Destroying the profile deletes its periods. Remove `snapshot_profile` from a VM that still uses the profile, or destroy that VM in the same configuration, before destroying the profile.
 
+VergeOS reuses deleted keys, and this table has no stable id, so the provider identifies the row by name. Renaming the profile outside Terraform makes Terraform treat it as deleted, and the next apply creates a new one with the configured name. Rename it through Terraform instead.
+
 ## Example Usage
 
 ```terraform
@@ -62,7 +64,7 @@ resource "vergeio_vm" "web" {
 
 ### Required
 
-- `name` (String) Profile name. Must be unique.
+- `name` (String) Profile name. Must be unique. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.
 
 ### Optional
 
