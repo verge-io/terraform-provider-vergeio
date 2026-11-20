@@ -77,6 +77,8 @@ resource "vergeio_vm_nic" "test" {
 data "vergeio_vms" "test" {
   filter_name = vergeio_vm.test.name
   is_snapshot = false
+
+  depends_on = [vergeio_vm_nic.test]
 }
 `, networkName, vmName))
 }

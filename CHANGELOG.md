@@ -1,3 +1,9 @@
+## Unreleased
+
+### Bug fixes
+
+- `data.vergeio_vms` now returns drives and NICs on each VM. `allocated_bytes` and `filesize` stay null (#296).
+
 ## v3.0.0
 
 ### Breaking changes
