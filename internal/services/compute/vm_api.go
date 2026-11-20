@@ -1079,7 +1079,6 @@ func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
 	return &running, nil
 }
 
-// This function kills the VM
 func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill VM API for VM %v", data.Id.ValueString()))
 	return va.changeVMPowerState(ctx, data, "kill")
@@ -1278,6 +1277,10 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel, expectLiveCl
 	if err != nil {
 		return false, err
 	}
+	// A zero list has no element type. terraform query rejects that value.
+	if data.GuestAgentIPs.ElementType(ctx) == nil {
+		data.GuestAgentIPs = types.ListNull(types.StringType)
+	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
@@ -1475,7 +1478,6 @@ func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel, 
 	return nil
 }
 
-// Read VMs from the API. Used by the data source
 func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 	tflog.Debug(ctx, "Reading the vm data")
