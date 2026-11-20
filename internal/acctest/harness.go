@@ -103,6 +103,44 @@ func RequireActions(t *testing.T) {
 	}
 }
 
+// RequireEphemeral skips unless acceptance credentials are set and the CLI
+// can open ephemeral resources. Terraform added them in 1.10. OpenTofu added
+// them in 1.11.
+func RequireEphemeral(t *testing.T) {
+	t.Helper()
+	PreCheck(t)
+	bin := strings.TrimSpace(os.Getenv("TF_ACC_TERRAFORM_PATH"))
+	if bin == "" {
+		bin = "terraform"
+	}
+	out, err := exec.Command(bin, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s version: %v\n%s", bin, err, out)
+	}
+	text := string(out)
+	match := regexp.MustCompile(`v(\d+)\.(\d+)`).FindStringSubmatch(text)
+	if match == nil {
+		t.Fatalf("could not parse a version from %s: %s", bin, text)
+	}
+	major, err := strconv.Atoi(match[1])
+	if err != nil {
+		t.Fatalf("parse major version %q: %v", match[1], err)
+	}
+	minor, err := strconv.Atoi(match[2])
+	if err != nil {
+		t.Fatalf("parse minor version %q: %v", match[2], err)
+	}
+	if strings.Contains(text, "OpenTofu") {
+		if major < 1 || (major == 1 && minor < 11) {
+			t.Skipf("ephemeral resources need OpenTofu 1.11 or later. This CLI is %d.%d", major, minor)
+		}
+		return
+	}
+	if major < 1 || (major == 1 && minor < 10) {
+		t.Skipf("ephemeral resources need Terraform 1.10 or later. This CLI is %d.%d", major, minor)
+	}
+}
+
 // PreCheck skips the test unless TF_ACC is set and lab credentials are present.
 // Unit tests never need those variables.
 func PreCheck(t *testing.T) {

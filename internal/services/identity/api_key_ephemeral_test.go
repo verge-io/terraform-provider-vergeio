@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -60,6 +61,7 @@ func TestAPIKeyEphemeralConfigureRejectsWrongClient(t *testing.T) {
 
 func TestOpenAPIKeyMintsAndCloseDeletes(t *testing.T) {
 	store := newAPIKeyStore()
+	store.secretField = "private_key"
 	sdk := apiKeySDK(t, store)
 	opened, private, renewAt, err := openAPIKey(context.Background(), sdk, apiKeyModel{
 		UserID:      types.Int32Value(10),
@@ -117,6 +119,23 @@ func TestOpenAPIKeyReplacesExistingName(t *testing.T) {
 	}
 }
 
+func TestOpenAPIKeyReadsTokenField(t *testing.T) {
+	store := newAPIKeyStore()
+	store.secretField = "token"
+	sdk := apiKeySDK(t, store)
+	opened, _, _, err := openAPIKey(context.Background(), sdk, apiKeyModel{
+		UserID:     types.Int32Value(10),
+		Name:       types.StringValue("terraform-tenant"),
+		TTLSeconds: types.Int64Value(600),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.Token.ValueString() != "secret-token" {
+		t.Fatalf("token = %s", opened.Token)
+	}
+}
+
 func TestOpenAPIKeyRejectsMissingToken(t *testing.T) {
 	store := newAPIKeyStore()
 	store.omitToken = true
@@ -126,11 +145,28 @@ func TestOpenAPIKeyRejectsMissingToken(t *testing.T) {
 		Name:       types.StringValue("terraform-tenant"),
 		TTLSeconds: types.Int64Value(600),
 	})
-	if err == nil || !strings.Contains(err.Error(), "token") {
+	if err == nil || !strings.Contains(err.Error(), "secret") {
 		t.Fatalf("error = %v", err)
 	}
 	if store.liveCount() != 0 {
-		t.Fatalf("live keys = %d, want the key deleted when no token is returned", store.liveCount())
+		t.Fatalf("live keys = %d, want the key deleted when no secret is returned", store.liveCount())
+	}
+}
+
+func TestOpenAPIKeyCreateErrorLeavesNoKey(t *testing.T) {
+	store := newAPIKeyStore()
+	store.failCreate = http.StatusBadRequest
+	sdk := apiKeySDK(t, store)
+	_, _, _, err := openAPIKey(context.Background(), sdk, apiKeyModel{
+		UserID:     types.Int32Value(10),
+		Name:       types.StringValue("terraform-tenant"),
+		TTLSeconds: types.Int64Value(600),
+	})
+	if err == nil {
+		t.Fatal("expected create to fail")
+	}
+	if store.liveCount() != 0 {
+		t.Fatalf("live keys = %d", store.liveCount())
 	}
 }
 
@@ -169,13 +205,15 @@ type apiKeyRecord struct {
 }
 
 type apiKeyStore struct {
-	mu         sync.Mutex
-	next       int
-	keys       map[int]apiKeyRecord
-	deletedSet map[int]bool
-	created    map[string]any
-	updated    map[string]any
-	omitToken  bool
+	mu          sync.Mutex
+	next        int
+	keys        map[int]apiKeyRecord
+	deletedSet  map[int]bool
+	created     map[string]any
+	updated     map[string]any
+	omitToken   bool
+	secretField string
+	failCreate  int
 }
 
 func newAPIKeyStore() *apiKeyStore {
@@ -270,9 +308,23 @@ func (s *apiKeyStore) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiKeyStore) create(w http.ResponseWriter, r *http.Request) {
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	var payload map[string]any
-	_ = json.Unmarshal(body, &payload)
+	if err := json.Unmarshal(body, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	fail := s.failCreate
+	s.mu.Unlock()
+	if fail != 0 {
+		http.Error(w, `{"err":"rejected"}`, fail)
+		return
+	}
 	s.mu.Lock()
 	id := s.next
 	s.next++
@@ -281,12 +333,25 @@ func (s *apiKeyStore) create(w http.ResponseWriter, r *http.Request) {
 	s.keys[id] = apiKeyRecord{id: id, userID: int(user), name: name}
 	s.created = payload
 	omit := s.omitToken
+	field := s.secretField
 	s.mu.Unlock()
+	if field == "" {
+		field = "private_key"
+	}
 	response := map[string]any{}
 	if !omit {
-		response["token"] = "secret-token"
+		response[field] = "secret-token"
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"$key": id, "response": response})
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"$key":     strconv.Itoa(id),
+		"$row":     3,
+		"dbpath":   "user_api_keys/" + strconv.Itoa(id),
+		"location": "/api/v4/user_api_keys/" + strconv.Itoa(id),
+		"response": response,
+	}); err != nil {
+		panic(err)
+	}
 }
 
 func (s *apiKeyStore) get(w http.ResponseWriter, r *http.Request) {
