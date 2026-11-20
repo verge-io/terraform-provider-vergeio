@@ -216,6 +216,10 @@ func (r *serviceResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	if err := r.api.readService(ctx, &data); err != nil {
 		if missing(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
