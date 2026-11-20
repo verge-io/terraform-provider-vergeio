@@ -53,6 +53,15 @@ type Client struct {
 	// depend on another version check.
 	sdkMu sync.Mutex
 	sdk   *vergeos.Client
+
+	// mutationGate keeps certificate create and delete from overlapping other
+	// writes. VergeOS closes open API connections about half a second after
+	// those two calls. Writers take the read side.
+	mutationGate      sync.RWMutex
+	certificateSettle time.Duration
+
+	directRetryAttempts int
+	directRetryBackoff  time.Duration
 }
 
 // ClientConfig is the connection settings for NewClientWithConfig.
@@ -168,15 +177,55 @@ func (c *Client) Do(ctx context.Context, method string, endpoint string, payload
 	absoluteendpoint := c.serverURL(endpoint)
 	log.Printf("[DEBUG] Sending %s request to %s", method, absoluteendpoint)
 
-	var bodyreader io.Reader
-
+	var payloadBytes []byte
 	if payload != nil {
 		// Secret fields stay in the request. Only the debug line is masked.
 		log.Printf("[DEBUG] With payload %s", maskSecretPayload(payload.String()))
-		bodyreader = payload
+		payloadBytes = append([]byte(nil), payload.Bytes()...)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, absoluteendpoint, bodyreader)
+	// A writer holds the read side for the whole call, including a retry.
+	// A certificate create or delete already holds the write side.
+	release := c.guardMutation(ctx, method)
+	defer release()
+
+	attempts := 1
+	if retryableDirectMethod(method) {
+		attempts = c.directRetryCount()
+	}
+	var last error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if attempt > 1 {
+			if err := c.sleepRetry(ctx, attempt-1); err != nil {
+				return nil, err
+			}
+			log.Printf("[DEBUG] retrying %s %s after %s", method, absoluteendpoint, last.Error())
+		}
+		resp, err := c.doOnce(ctx, method, endpoint, absoluteendpoint, payloadBytes, params)
+		if err == nil {
+			return resp, nil
+		}
+		retry := retryableDirectError(err) && attempt < attempts
+		if drainErr := drainResponse(resp); drainErr != nil {
+			err = errors.Join(err, drainErr)
+		}
+		if !retry {
+			return nil, err
+		}
+		last = err
+	}
+	return nil, last
+}
+
+func (c *Client) doOnce(ctx context.Context, method, endpoint, absoluteendpoint string, payload []byte, params *Options) (*http.Response, error) {
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, absoluteendpoint, body)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +261,7 @@ func (c *Client) Do(ctx context.Context, method string, endpoint string, payload
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return resp, err
 	}
 	log.Printf("[DEBUG] Resp: %v Err: %v", resp, err)
 
@@ -222,26 +271,33 @@ func (c *Client) Do(ctx context.Context, method string, endpoint string, payload
 			Endpoint:   endpoint,
 		}
 
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, err
+		body, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			// The status already arrived. A bare read error would send the request again.
+			if len(body) > 0 {
+				apiError.VergeError = string(body)
+			} else {
+				apiError.VergeError = resp.Status
+			}
+			return nil, errors.Join(error(apiError), readErr, closeErr)
 		}
 
 		log.Printf("[DEBUG] Resp Body: %s", maskSecretPayload(string(body)))
 
 		test := VergeResponse{}
-		err = json.Unmarshal(body, &test)
-		if err != nil {
-			log.Printf("UNMARSHALL ERROR: %s", err.Error())
+		if jsonErr := json.Unmarshal(body, &test); jsonErr != nil {
+			log.Printf("UNMARSHALL ERROR: %s", jsonErr.Error())
 			apiError.VergeError = string(body)
 		} else {
 			apiError.VergeError = test.Error
 		}
-
+		if closeErr != nil {
+			return nil, errors.Join(error(apiError), closeErr)
+		}
 		return nil, error(apiError)
-
 	}
-	return resp, err
+	return resp, nil
 }
 
 // setAuth adds the request credential. An API key is a bearer token and is

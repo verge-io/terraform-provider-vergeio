@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -429,10 +430,15 @@ func (a *API) createCertificate(ctx context.Context, data *certificateModel, pri
 		AgreeTOS:    boolPtr(data.AgreeTOS),
 	}
 	id, err := a.createCertificateRow(ctx, req)
+	if id > 0 {
+		data.ID = idString(id)
+	}
 	if err != nil {
+		if id > 0 {
+			return fmt.Errorf("certificate %d was created: %w", id, err)
+		}
 		return err
 	}
-	data.ID = idString(id)
 	cert, row, err := a.loadCertificate(ctx, id, true, domainName)
 	if err != nil {
 		return fmt.Errorf("certificate %d was created: %w", id, err)
@@ -455,6 +461,19 @@ func (a *API) createCertificateRow(ctx context.Context, req *vergeos.Certificate
 	if a == nil || a.http == nil {
 		return 0, fmt.Errorf("vergeio client is nil")
 	}
+	var id int
+	err := a.http.WithCertificateMutation(ctx, func(ctx context.Context) error {
+		created, postErr := a.postCertificate(ctx, req)
+		id = created
+		return postErr
+	})
+	return id, err
+}
+
+func (a *API) postCertificate(ctx context.Context, req *vergeos.CertificateCreateRequest) (int, error) {
+	if a == nil || a.http == nil {
+		return 0, fmt.Errorf("vergeio client is nil")
+	}
 	buf, err := json.Marshal(req)
 	if err != nil {
 		return 0, err
@@ -466,12 +485,22 @@ func (a *API) createCertificateRow(ctx context.Context, req *vergeos.Certificate
 	if resp == nil || resp.Body == nil {
 		return 0, fmt.Errorf("empty response from certificate create")
 	}
-	defer func() { _ = resp.Body.Close() }()
 	var created struct {
 		Key vergeos.FlexInt `json:"$key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return 0, fmt.Errorf("decode certificate create: %w", err)
+	decodeErr := json.NewDecoder(resp.Body).Decode(&created)
+	closeErr := resp.Body.Close()
+	if decodeErr != nil {
+		if closeErr != nil {
+			return 0, errors.Join(fmt.Errorf("decode certificate create: %w", decodeErr), closeErr)
+		}
+		return 0, fmt.Errorf("decode certificate create: %w", decodeErr)
+	}
+	if closeErr != nil {
+		if created.Key <= 0 {
+			return 0, closeErr
+		}
+		return int(created.Key), closeErr
 	}
 	if created.Key <= 0 {
 		return 0, fmt.Errorf("certificate create did not return a key")
@@ -562,5 +591,10 @@ func (a *API) deleteCertificate(ctx context.Context, id int) error {
 	if err := a.requireSDK(); err != nil {
 		return err
 	}
-	return ignoreMissing(a.sdk.Certificates.Delete(ctx, id))
+	if a.http == nil {
+		return fmt.Errorf("vergeio client is nil")
+	}
+	return a.http.WithCertificateMutation(ctx, func(ctx context.Context) error {
+		return ignoreMissing(a.sdk.Certificates.Delete(ctx, id))
+	})
 }
