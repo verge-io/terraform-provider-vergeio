@@ -220,7 +220,7 @@ func TestCertificateCreateKeepsPrivateKeyOutOfState(t *testing.T) {
 
 	updated := *manual
 	updated.Description = types.StringValue("replaced text")
-	if err := api.updateCertificate(ctx, &updated, manual, "", ""); err != nil {
+	if err := api.updateCertificate(ctx, &updated, manual, "", "", "tf-acc.example"); err != nil {
 		t.Fatal(err)
 	}
 	if updated.Description.ValueString() != "replaced text" || !strings.Contains(fake.certUpdateBody, `"description":"replaced text"`) || strings.Contains(fake.certUpdateBody, "PRIVATE KEY") {
@@ -492,7 +492,7 @@ func TestCertificateUpdatePutsDomainNameFirst(t *testing.T) {
 	fake.setDomainName(1, "tf-acc-ui.local")
 	plan := *state
 	plan.DomainList = types.StringValue("alt.example, tf-acc-ui.local")
-	if err := api.updateCertificate(context.Background(), &plan, state, "", ""); err != nil {
+	if err := api.updateCertificate(context.Background(), &plan, state, "", "", "tf-acc-ui.local"); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(fake.certUpdateBody, "domainname") || !strings.Contains(fake.certUpdateBody, `"domainlist":"tf-acc-ui.local,alt.example"`) {
@@ -500,6 +500,42 @@ func TestCertificateUpdatePutsDomainNameFirst(t *testing.T) {
 	}
 	if plan.DomainList.ValueString() != "alt.example, tf-acc-ui.local" {
 		t.Fatalf("domain_list = %q", plan.DomainList.ValueString())
+	}
+}
+
+func TestCertificateUpdateLeavesComputedDomainNameOffTheList(t *testing.T) {
+	fake := newPlatformFake()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	state := &certificateModel{
+		ID:         types.StringValue("1"),
+		Type:       types.StringValue(vergeos.CertificateTypeLetsEncrypt),
+		DomainName: types.StringValue("computed.example"),
+		DomainList: types.StringValue("computed.example,old.example"),
+		Contact:    types.Int64Value(3),
+		AgreeTOS:   types.BoolValue(true),
+	}
+	fake.seedCertificate(vergeos.Certificate{
+		Domain:     "computed.example",
+		DomainList: "computed.example,old.example",
+		Type:       vergeos.CertificateTypeLetsEncrypt,
+		Created:    1700000000,
+	})
+	fake.setDomainName(1, "computed.example")
+	plan := *state
+	plan.DomainList = types.StringValue("alt.example")
+	if err := api.updateCertificate(context.Background(), &plan, state, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fake.certUpdateBody, "computed.example") || !strings.Contains(fake.certUpdateBody, `"domainlist":"alt.example"`) {
+		t.Fatalf("update body = %s", fake.certUpdateBody)
+	}
+	if plan.DomainList.ValueString() != "alt.example" || plan.DomainName.ValueString() != "computed.example" {
+		t.Fatalf("domain_name=%q domain_list=%q", plan.DomainName.ValueString(), plan.DomainList.ValueString())
+	}
+	if got := domainListForState("computed.example,alt.example", "alt.example", ""); got != "computed.example,alt.example" {
+		t.Fatalf("computed name collapsed domain_list to %q", got)
 	}
 }
 

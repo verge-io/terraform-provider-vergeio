@@ -239,7 +239,7 @@ func (r *certificateResource) Update(ctx context.Context, req resource.UpdateReq
 	if versionChanged(plan.EABHMACKeyWOVersion, state.EABHMACKeyWOVersion) {
 		hmac = secret(config.EABHMACKeyWO)
 	}
-	if err := r.api.updateCertificate(ctx, &plan, &state, privateKey, hmac); err != nil {
+	if err := r.api.updateCertificate(ctx, &plan, &state, privateKey, hmac, stringValue(config.DomainName)); err != nil {
 		resp.Diagnostics.AddError("Error updating certificate", err.Error())
 		return
 	}
@@ -442,7 +442,7 @@ func (a *API) createCertificate(ctx context.Context, data *certificateModel, pri
 		!certificateIssuedFor(domainName, gotDomain, gotName, gotList) {
 		return fmt.Errorf("certificate %d was created: %w", id, certificateWrongNameError(id, domainName, gotDomain, gotName, gotList))
 	}
-	if err := a.applyCertificate(ctx, data, cert, row, *data); err != nil {
+	if err := a.applyCertificate(ctx, data, cert, row, *data, domainName); err != nil {
 		return fmt.Errorf("certificate %d was created: %w", id, err)
 	}
 	return nil
@@ -494,7 +494,7 @@ func (a *API) readCertificate(ctx context.Context, data *certificateModel) error
 	if cert != nil && int(cert.Key) != id {
 		tflog.Debug(ctx, fmt.Sprintf("certificate read requested id %d and VergeOS returned key %d", id, int(cert.Key)))
 	}
-	if err := a.applyCertificate(ctx, data, cert, row, *data); err != nil {
+	if err := a.applyCertificate(ctx, data, cert, row, *data, stringValue(data.DomainName)); err != nil {
 		return err
 	}
 	// Create and update keep the planned domain_name. A refresh is the
@@ -504,7 +504,7 @@ func (a *API) readCertificate(ctx context.Context, data *certificateModel) error
 	return nil
 }
 
-func (a *API) updateCertificate(ctx context.Context, plan, state *certificateModel, privateKey, hmac string) error {
+func (a *API) updateCertificate(ctx context.Context, plan, state *certificateModel, privateKey, hmac, configuredDomain string) error {
 	if err := a.requireSDK(); err != nil {
 		return err
 	}
@@ -521,7 +521,10 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 	}
 	domainList := changedString(plan.DomainList, state.DomainList)
 	if domainList != nil {
-		combined := certificateCreateList(stringValue(plan.DomainName), *domainList)
+		// plan.DomainName can be a value copied from state when the
+		// configuration omits domain_name. Only a name from the
+		// configuration is added to the list.
+		combined := certificateCreateList(configuredDomain, *domainList)
 		domainList = &combined
 	}
 	req := &vergeos.CertificateUpdateRequest{
@@ -552,7 +555,7 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 	if err != nil {
 		return err
 	}
-	return a.applyCertificate(ctx, plan, cert, row, *plan)
+	return a.applyCertificate(ctx, plan, cert, row, *plan, configuredDomain)
 }
 
 func (a *API) deleteCertificate(ctx context.Context, id int) error {

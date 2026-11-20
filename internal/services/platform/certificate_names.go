@@ -19,7 +19,7 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert *vergeos.Certificate, row certificateDetail, prior certificateModel) error {
+func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert *vergeos.Certificate, row certificateDetail, prior certificateModel, configuredDomain string) error {
 	if cert == nil {
 		return fmt.Errorf("certificate response was empty")
 	}
@@ -41,7 +41,7 @@ func (a *API) applyCertificate(ctx context.Context, data *certificateModel, cert
 	}
 	data.Domain = stringFromAPI(domain, prior.Domain)
 	data.DomainName = applyDomainName(prior.DomainName, chosen)
-	data.DomainList = stringFromAPI(domainListForState(domainList, stringValue(prior.DomainList), stringValue(prior.DomainName)), prior.DomainList)
+	data.DomainList = stringFromAPI(domainListForState(domainList, stringValue(prior.DomainList), configuredDomain), prior.DomainList)
 	data.Description = stringFromAPI(cert.Description, prior.Description)
 	data.PublicCertificate = keepPEM(public, prior.PublicCertificate)
 	data.Chain = keepPEM(row.Chain, prior.Chain)
