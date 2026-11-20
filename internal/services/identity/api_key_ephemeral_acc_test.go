@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -21,6 +22,7 @@ import (
 func TestAccAPIKeyEphemeral(t *testing.T) {
 	keyName := acctest.Name("eph-key")
 	config := testAccAPIKeyEphemeralConfig(keyName)
+	cleanup := testAccAPIKeyEphemeralCleanupConfig()
 	closed := testAccCheckEphemeralAPIKeyClosed("data.vergeio_users.acc", keyName)
 
 	resource.Test(t, resource.TestCase{
@@ -43,8 +45,27 @@ func TestAccAPIKeyEphemeral(t *testing.T) {
 				},
 				Check: closed,
 			},
+			{
+				// Post-test destroy configures every provider in this config.
+				// An ephemeral api_key is unknown then, so this step leaves
+				// nothing that uses the aliased provider.
+				Config: cleanup,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					closed,
+					testAccCheckNoAliasedProvider,
+				),
+			},
 		},
 	})
+}
+
+func TestAPIKeyEphemeralCleanupConfigOmitsAlias(t *testing.T) {
+	cfg := testAccAPIKeyEphemeralCleanupConfig()
+	for _, forbidden := range []string{"ephemeral", "alias", "api_key", "as_user"} {
+		if strings.Contains(cfg, forbidden) {
+			t.Fatalf("cleanup config contains %q:\n%s", forbidden, cfg)
+		}
+	}
 }
 
 func testAccAPIKeyEphemeralConfig(keyName string) string {
@@ -74,6 +95,26 @@ data "vergeio_version" "as_user" {
   provider = vergeio.as_user
 }
 `, os.Getenv("TF_ACC_VERGEIO_USERNAME"), keyName, os.Getenv("TF_ACC_VERGEIO_HOST")))
+}
+
+func testAccAPIKeyEphemeralCleanupConfig() string {
+	return acctest.Config(fmt.Sprintf(`
+data "vergeio_users" "acc" {
+  filter_name = %q
+}
+`, os.Getenv("TF_ACC_VERGEIO_USERNAME")))
+}
+
+func testAccCheckNoAliasedProvider(s *terraform.State) error {
+	for _, rs := range s.RootModule().Resources {
+		if strings.Contains(rs.Provider, "as_user") {
+			return fmt.Errorf("%s still uses provider %s", rs.Type, rs.Provider)
+		}
+	}
+	if _, ok := s.RootModule().Resources["data.vergeio_version.as_user"]; ok {
+		return fmt.Errorf("data.vergeio_version.as_user is still in state")
+	}
+	return nil
 }
 
 func testAccCheckEphemeralAPIKeyClosed(userResource, keyName string) resource.TestCheckFunc {
