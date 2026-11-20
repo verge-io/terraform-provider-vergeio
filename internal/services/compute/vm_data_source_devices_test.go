@@ -1,6 +1,8 @@
 package compute
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,6 +31,120 @@ func TestMachineIDFilter(t *testing.T) {
 	}
 	if got := machineIDFilter([]int{11, 10, 11}); got != "(machine eq 10 or machine eq 11)" {
 		t.Fatalf("two machines = %q", got)
+	}
+}
+
+func TestMachineIDFiltersStayBounded(t *testing.T) {
+	ids := make([]int, 400)
+	for i := range ids {
+		ids[i] = 100000 + i + 1
+	}
+	filters := machineIDFilters(ids)
+	if len(filters) < 2 {
+		t.Fatalf("filters = %d, want more than one", len(filters))
+	}
+	seen := make(map[int]int, len(ids))
+	for _, filter := range filters {
+		if len(filter) > maxMachineFilterLen {
+			t.Fatalf("filter length %d exceeds %d: %s", len(filter), maxMachineFilterLen, filter)
+		}
+		for _, id := range ids {
+			if filterHasMachine(filter, id) {
+				seen[id]++
+			}
+		}
+	}
+	if len(seen) != len(ids) {
+		t.Fatalf("covered %d ids, want %d", len(seen), len(ids))
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Fatalf("machine %d appears in %d filters", id, count)
+		}
+	}
+}
+
+func filterHasMachine(filter string, id int) bool {
+	token := fmt.Sprintf("machine eq %d", id)
+	rest := filter
+	for {
+		i := strings.Index(rest, token)
+		if i < 0 {
+			return false
+		}
+		after := i + len(token)
+		if after == len(rest) || strings.HasPrefix(rest[after:], " or ") || rest[after] == ')' {
+			return true
+		}
+		rest = rest[i+1:]
+	}
+}
+
+func TestReadVMsSplitsDeviceListFilters(t *testing.T) {
+	const count = 400
+	vms := make([]map[string]any, count)
+	for i := range vms {
+		vms[i] = map[string]any{
+			"$key":    i + 1,
+			"machine": 100000 + i + 1,
+			"name":    fmt.Sprintf("vm-%d", i),
+		}
+	}
+	vmBody, err := json.Marshal(vms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var driveFilters, nicFilters []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case "/api/v4/vms":
+			_, _ = w.Write(vmBody)
+		case "/api/v4/machine_drives":
+			mu.Lock()
+			driveFilters = append(driveFilters, r.URL.Query().Get("filter"))
+			mu.Unlock()
+			_, _ = w.Write([]byte(`[]`))
+		case "/api/v4/machine_nics":
+			mu.Lock()
+			nicFilters = append(nicFilters, r.URL.Query().Get("filter"))
+			mu.Unlock()
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := mustAPI(NewVMApi(vergeio.NewClient(server.URL, "user", "pass", true)))
+	data := &VMDataSourceModel{}
+	if err := api.readVMs(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(driveFilters) < 2 || len(nicFilters) != len(driveFilters) {
+		t.Fatalf("drive filters %d, nic filters %d", len(driveFilters), len(nicFilters))
+	}
+	for _, filter := range append(append([]string{}, driveFilters...), nicFilters...) {
+		if len(filter) > maxMachineFilterLen {
+			t.Fatalf("filter length %d exceeds %d", len(filter), maxMachineFilterLen)
+		}
+	}
+	if len(data.Vms) != count {
+		t.Fatalf("vms = %d, want %d", len(data.Vms), count)
+	}
+	for _, vm := range data.Vms {
+		if vm.Drives == nil || vm.Nics == nil || len(vm.Drives) != 0 || len(vm.Nics) != 0 {
+			t.Fatalf("vm %s devices drives=%v nics=%v", vm.Name.ValueString(), vm.Drives, vm.Nics)
+		}
 	}
 }
 

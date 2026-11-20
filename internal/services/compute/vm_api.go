@@ -1524,7 +1524,17 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	return nil
 }
 
+const maxMachineFilterLen = 1200
+
 func machineIDFilter(ids []int) string {
+	filters := machineIDFilters(ids)
+	if len(filters) == 0 {
+		return ""
+	}
+	return filters[0]
+}
+
+func machineIDFilters(ids []int) []string {
 	seen := make(map[int]struct{}, len(ids))
 	unique := make([]int, 0, len(ids))
 	for _, id := range ids {
@@ -1539,10 +1549,24 @@ func machineIDFilter(ids []int) string {
 	}
 	sort.Ints(unique)
 	if len(unique) == 0 {
-		return ""
+		return nil
 	}
-	parts := make([]string, len(unique))
-	for i, id := range unique {
+	var filters []string
+	start := 0
+	for start < len(unique) {
+		end := start + 1
+		for end < len(unique) && len(joinMachineFilter(unique[start:end+1])) <= maxMachineFilterLen {
+			end++
+		}
+		filters = append(filters, joinMachineFilter(unique[start:end]))
+		start = end
+	}
+	return filters
+}
+
+func joinMachineFilter(ids []int) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
 		parts[i] = fmt.Sprintf("machine eq %d", id)
 	}
 	if len(parts) == 1 {
@@ -1553,26 +1577,33 @@ func machineIDFilter(ids []int) string {
 
 func (va *VMApi) drivesByMachine(ctx context.Context, machineIDs []int) (map[int][]vergeos.VMDrive, error) {
 	grouped := map[int][]vergeos.VMDrive{}
-	filter := machineIDFilter(machineIDs)
-	if filter == "" {
-		return grouped, nil
-	}
-	drives, err := va.sdk.VMDrives.ListAll(ctx, vergeos.WithFilter(filter))
-	if err != nil {
-		return nil, fmt.Errorf("listing drives: %w", err)
-	}
-	for _, drive := range drives {
-		grouped[drive.Machine] = append(grouped[drive.Machine], drive)
+	for _, filter := range machineIDFilters(machineIDs) {
+		drives, err := va.sdk.VMDrives.ListAll(ctx, vergeos.WithFilter(filter))
+		if err != nil {
+			return nil, fmt.Errorf("listing drives: %w", err)
+		}
+		for _, drive := range drives {
+			grouped[drive.Machine] = append(grouped[drive.Machine], drive)
+		}
 	}
 	return grouped, nil
 }
 
 func (va *VMApi) nicsByMachine(ctx context.Context, machineIDs []int) (map[int][]vmListNIC, error) {
 	grouped := map[int][]vmListNIC{}
-	filter := machineIDFilter(machineIDs)
-	if filter == "" {
-		return grouped, nil
+	for _, filter := range machineIDFilters(machineIDs) {
+		nics, err := va.listNICs(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		for _, nic := range nics {
+			grouped[nic.Machine] = append(grouped[nic.Machine], nic)
+		}
 	}
+	return grouped, nil
+}
+
+func (va *VMApi) listNICs(ctx context.Context, filter string) ([]vmListNIC, error) {
 	apiResp, err := va.client.Get(ctx, vergeio.NICEndpoint, &vergeio.Options{
 		Fields: vmListNICFields,
 		Filter: filter,
@@ -1595,10 +1626,7 @@ func (va *VMApi) nicsByMachine(ctx context.Context, machineIDs []int) (map[int][
 	if err := json.Unmarshal(body, &nics); err != nil {
 		return nil, fmt.Errorf("listing NICs: %w", err)
 	}
-	for _, nic := range nics {
-		grouped[nic.Machine] = append(grouped[nic.Machine], nic)
-	}
-	return grouped, nil
+	return nics, nil
 }
 
 func vmDriveModels(drives []vergeos.VMDrive) ([]*VMDriveModel, error) {
