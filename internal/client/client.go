@@ -274,10 +274,13 @@ func (c *Client) doOnce(ctx context.Context, method, endpoint, absoluteendpoint 
 		body, readErr := io.ReadAll(resp.Body)
 		closeErr := resp.Body.Close()
 		if readErr != nil {
-			if closeErr != nil {
-				return nil, errors.Join(readErr, closeErr)
+			// The status already arrived. A bare read error would send the request again.
+			if len(body) > 0 {
+				apiError.VergeError = string(body)
+			} else {
+				apiError.VergeError = resp.Status
 			}
-			return nil, readErr
+			return nil, errors.Join(error(apiError), readErr, closeErr)
 		}
 
 		log.Printf("[DEBUG] Resp Body: %s", maskSecretPayload(string(body)))

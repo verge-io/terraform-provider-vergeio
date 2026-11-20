@@ -161,6 +161,60 @@ func TestDirectRetryPolicy(t *testing.T) {
 	}
 }
 
+func TestDirectRetryDoesNotReplayAfterStatus(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	cases := []struct {
+		name   string
+		method string
+		status int
+		read   error
+	}{
+		{name: "GET 401 truncated", method: http.MethodGet, status: http.StatusUnauthorized, read: io.ErrUnexpectedEOF},
+		{name: "PUT 500 reset while reading", method: http.MethodPut, status: http.StatusInternalServerError, read: reset},
+		{name: "DELETE 403 truncated", method: http.MethodDelete, status: http.StatusForbidden, read: io.ErrUnexpectedEOF},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &scriptedTransport{outcomes: []error{
+				statusReadError{code: tc.status, read: tc.read},
+				nil,
+			}}
+			client := NewClient("https://example.test", "user", "pass", true)
+			client.httpClient.Transport = transport
+			client.directRetryBackoff = time.Millisecond
+
+			_, err := callDirect(client, tc.method, `{"value":"1"}`)
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			var apiErr Error
+			if !errors.As(err, &apiErr) || apiErr.StatusCode != tc.status {
+				t.Fatalf("error = %v, want status %d", err, tc.status)
+			}
+			if transport.calls != 1 {
+				t.Fatalf("calls = %d, want 1", transport.calls)
+			}
+		})
+	}
+}
+
+func callDirect(client *Client, method, body string) (*http.Response, error) {
+	ctx := context.Background()
+	payload := bytes.NewBufferString(body)
+	switch method {
+	case http.MethodGet:
+		return client.Get(ctx, "api/v4/version", nil)
+	case http.MethodPut:
+		return client.Put(ctx, "api/v4/settings/x", payload)
+	case http.MethodDelete:
+		return client.Delete(ctx, "api/v4/webhook_urls/1")
+	case http.MethodPost:
+		return client.Post(ctx, "api/v4/webhook_urls", payload)
+	default:
+		return nil, errors.New("unsupported method")
+	}
+}
+
 func TestDirectRetryStopsWhenContextIsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	transport := &scriptedTransport{outcomes: []error{
@@ -203,6 +257,15 @@ func (s *scriptedTransport) RoundTrip(req *http.Request) (*http.Response, error)
 	if s.calls-1 < len(s.outcomes) {
 		outcome = s.outcomes[s.calls-1]
 	}
+	if status, ok := outcome.(statusReadError); ok {
+		return &http.Response{
+			StatusCode: status.code,
+			Status:     http.StatusText(status.code),
+			Body:       io.NopCloser(failReader{err: status.read}),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	}
 	if status, ok := outcome.(statusError); ok {
 		return &http.Response{
 			StatusCode: int(status),
@@ -227,6 +290,29 @@ func (s *scriptedTransport) RoundTrip(req *http.Request) (*http.Response, error)
 type statusError int
 
 func (s statusError) Error() string { return http.StatusText(int(s)) }
+
+type statusReadError struct {
+	code int
+	read error
+}
+
+func (s statusReadError) Error() string {
+	if s.read != nil {
+		return s.read.Error()
+	}
+	return http.StatusText(s.code)
+}
+
+type failReader struct {
+	err error
+}
+
+func (r failReader) Read([]byte) (int, error) {
+	if r.err == nil {
+		return 0, io.EOF
+	}
+	return 0, r.err
+}
 
 type timeoutNetError struct{}
 
