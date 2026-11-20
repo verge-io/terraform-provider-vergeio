@@ -43,6 +43,8 @@ func TestReadVMsEscapesNameFilterAndKeepsExactName(t *testing.T) {
 						return
 					}
 					_, _ = w.Write(body)
+				case "/api/v4/machine_drives", "/api/v4/machine_nics":
+					_, _ = w.Write([]byte(`[]`))
 				default:
 					t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 					http.Error(w, "unexpected", http.StatusNotFound)
