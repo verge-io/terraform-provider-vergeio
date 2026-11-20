@@ -40,7 +40,7 @@ resource "vergeio_webhook_url" "example" {
 
 ### Required
 
-- `name` (String) Destination name. Must be unique. 1 to 128 characters.
+- `name` (String) Destination name. Must be unique. 1 to 128 characters. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.
 - `url` (String) HTTP or HTTPS endpoint that receives the POST.
 
 ### Optional

@@ -48,6 +48,7 @@ Creates a tag category in VergeOS. Requires VergeOS v26 or later. A category gro
 
 ### Read-Only
 
+- `created` (Number) Unix time when VergeOS created the category. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another category, and refresh drops this resource. A name change on the same category still updates in place.
 - `id` (String) Tag category key assigned by VergeOS.
 
 ## Import

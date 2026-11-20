@@ -21,6 +21,13 @@ func knownBool(v types.Bool) types.Bool {
 	return v
 }
 
+func knownInt64(v types.Int64) types.Int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return types.Int64Null()
+	}
+	return v
+}
+
 func knownInt32(v types.Int32) types.Int32 {
 	if v.IsNull() || v.IsUnknown() {
 		return types.Int32Null()

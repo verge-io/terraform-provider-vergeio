@@ -155,7 +155,7 @@ func (r *siteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"incoming_management_enabled": volatileBool("Whether the remote system can manage this system."),
 			"remote_user":                 volatileString("Remote user stored by VergeOS."),
 			"last_stat_update":            timestampAttr("Time statistics were last updated, as seconds since the epoch."),
-			"created":                     timestampAttr("Time the site was created, as seconds since the epoch."),
+			"created":                     timestampAttr("Unix time when VergeOS created the site. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another site, and refresh drops this resource. A name change on the same site still updates in place."),
 			"modified":                    timestampAttr("Time the site was last modified, as seconds since the epoch."),
 			"creator":                     stableString("User that created the site."),
 		},

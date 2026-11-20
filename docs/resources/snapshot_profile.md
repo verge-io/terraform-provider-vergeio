@@ -62,7 +62,7 @@ resource "vergeio_vm" "web" {
 
 ### Required
 
-- `name` (String) Profile name. Must be unique.
+- `name` (String) Profile name. Must be unique. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.
 
 ### Optional
 

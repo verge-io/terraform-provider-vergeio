@@ -75,7 +75,26 @@ func (a *API) readSite(ctx context.Context, data *siteModel) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureSiteOwned(data, got); err != nil {
+		return err
+	}
 	applySite(data, got, *data)
+	return nil
+}
+
+// ensureSiteOwned returns NotFound when the stored key now points at another
+// site (created mismatch). Skip the check when created is unset (import, or
+// state written before this check existed).
+func ensureSiteOwned(data *siteModel, got *vergeos.Site) error {
+	if data == nil || got == nil {
+		return fmt.Errorf("site read returned no row")
+	}
+	if data.Created.IsNull() || data.Created.IsUnknown() || data.Created.ValueInt64() == 0 {
+		return nil
+	}
+	if got.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "Site", ID: got.Key.Int()}
+	}
 	return nil
 }
 
@@ -85,6 +104,13 @@ func (a *API) updateSite(ctx context.Context, plan, state *siteModel, password s
 	}
 	id, err := parseID(state.ID, "site")
 	if err != nil {
+		return err
+	}
+	current, err := a.sdk.Sites.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureSiteOwned(state, current); err != nil {
 		return err
 	}
 	interval, err := changedInt(plan.StatisticsInterval, state.StatisticsInterval)
@@ -128,6 +154,9 @@ func (a *API) updateSite(ctx context.Context, plan, state *siteModel, password s
 		}
 	}
 	plan.ID = state.ID
+	if plan.Created.IsNull() || plan.Created.IsUnknown() {
+		plan.Created = state.Created
+	}
 	return a.readSite(ctx, plan)
 }
 

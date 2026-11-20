@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/acctest"
 )
@@ -120,6 +121,127 @@ func testAccCheckWebhookDestroy(s *terraform.State) error {
 		_, err := sdk.WebhookURLs.Get(ctx, id)
 		return err
 	})
+}
+
+// TestAccWebhookURL_KeyReuseDoesNotAdoptForeign covers #291. VergeOS 26.2
+// webhook_urls rows have no readonly id, so a different name is another row.
+func TestAccWebhookURL_KeyReuseDoesNotAdoptForeign(t *testing.T) {
+	acctest.PreCheck(t)
+	name := acctest.Name("hook-kr291")
+	foreignName := acctest.Name("hook-kr291-f")
+	config := testAccWebhookURLOnly(name, "https://example.com/tf-acc-mine")
+
+	var managedKey int
+	var foreignKey int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignKey <= 0 {
+			return
+		}
+		_ = client.WebhookURLs.Delete(context.Background(), foreignKey)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckWebhookURLDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "name", name),
+					resource.TestCheckResourceAttrSet("vergeio_webhook_url.test", "id"),
+					func(s *terraform.State) error {
+						id, err := acctest.ResourceID(s, "vergeio_webhook_url.test")
+						if err != nil {
+							return err
+						}
+						managedKey = id
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := client.WebhookURLs.Delete(ctx, managedKey); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed webhook url %d: %v", managedKey, err)
+					}
+					acctest.WaitUntilMissing(t, func() error {
+						_, err := client.WebhookURLs.Get(ctx, managedKey)
+						return err
+					}, fmt.Sprintf("webhook url %d", managedKey))
+					created, err := client.WebhookURLs.Create(ctx, &vergeos.WebhookURLCreateRequest{
+						Name: foreignName,
+						URL:  "https://example.com/tf-acc-other",
+					})
+					if err != nil {
+						t.Fatalf("create foreign webhook url: %v", err)
+					}
+					foreignKey = created.Key.Int()
+					keyReused = foreignKey == managedKey
+					t.Logf("managed webhook url key=%d; foreign key=%d name=%s reused=%v", managedKey, foreignKey, created.Name, keyReused)
+				},
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_webhook_url.test", plancheck.ResourceActionCreate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "name", name),
+					func(s *terraform.State) error {
+						return acctest.ForeignUntouched(s, "vergeio_webhook_url.test", foreignKey, keyReused, func(ctx context.Context) (string, int, error) {
+							client, err := acctest.SDKClient()
+							if err != nil {
+								return "", 0, err
+							}
+							got, err := client.WebhookURLs.Get(ctx, foreignKey)
+							if err != nil {
+								return "", 0, err
+							}
+							return got.Name, got.Key.Int(), nil
+						}, foreignName)
+					},
+				),
+			},
+		},
+	})
+}
+
+func testAccCheckWebhookURLDestroy(s *terraform.State) error {
+	client, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	return acctest.CheckDeletedMatching(s, "vergeio_webhook_url", func(ctx context.Context, id int, attrs map[string]string) error {
+		got, err := client.WebhookURLs.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if name := attrs["name"]; name != "" && got.Name != name {
+			return &vergeos.NotFoundError{Resource: "WebhookURL", ID: id}
+		}
+		return nil
+	})
+}
+
+func testAccWebhookURLOnly(name, rawURL string) string {
+	if err := acctest.RequirePrefix(name); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_webhook_url" "test" {
+  name = %q
+  url  = %q
+}
+`, name, rawURL))
 }
 
 func testAccWebhookConfig(name, rawURL string, timeout int, message string) string {

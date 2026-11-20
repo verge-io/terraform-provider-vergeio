@@ -87,6 +87,9 @@ func (api *SnapshotProfileApi) readProfile(ctx context.Context, data *SnapshotPr
 	if err != nil {
 		return err
 	}
+	if err := ensureProfileOwned(data, profile); err != nil {
+		return err
+	}
 	periods, err := api.sdk.SnapshotProfilePeriods.ListByProfile(ctx, id)
 	if err != nil {
 		return err
@@ -104,6 +107,13 @@ func (api *SnapshotProfileApi) readProfile(ctx context.Context, data *SnapshotPr
 func (api *SnapshotProfileApi) updateProfile(ctx context.Context, plan, state *SnapshotProfileResourceModel) error {
 	id, err := parseID(state.Id, "snapshot profile")
 	if err != nil {
+		return err
+	}
+	current, err := api.sdk.SnapshotProfiles.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureProfileOwned(state, current); err != nil {
 		return err
 	}
 	desired, err := periodInputs(plan.Period)
@@ -178,6 +188,22 @@ func profileUpdateRequest(plan, state *SnapshotProfileResourceModel) *vergeos.Sn
 		return nil
 	}
 	return req
+}
+
+// ensureProfileOwned returns NotFound when the stored key now points at
+// another profile. snapshot_profiles has no readonly id on VergeOS 26.2, so
+// the unique name is the token. Skip the check when name is unset (import).
+func ensureProfileOwned(data *SnapshotProfileResourceModel, profile *vergeos.SnapshotProfile) error {
+	if data == nil || profile == nil {
+		return fmt.Errorf("snapshot profile read returned no row")
+	}
+	if data.Name.IsNull() || data.Name.IsUnknown() || data.Name.ValueString() == "" {
+		return nil
+	}
+	if data.Name.ValueString() != profile.Name {
+		return &vergeos.NotFoundError{Resource: "SnapshotProfile", ID: profile.Key.Int()}
+	}
+	return nil
 }
 
 func applyProfile(data *SnapshotProfileResourceModel, profile *vergeos.SnapshotProfile) {

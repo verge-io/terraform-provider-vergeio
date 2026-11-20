@@ -83,7 +83,7 @@ func (r *SnapshotProfileResource) Schema(ctx context.Context, req resource.Schem
 				},
 			},
 			"name": schema.StringAttribute{
-				MarkdownDescription: "Profile name. Must be unique.",
+				MarkdownDescription: "Profile name. Must be unique. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.",
 				Required:            true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),

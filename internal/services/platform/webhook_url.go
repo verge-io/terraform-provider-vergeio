@@ -69,7 +69,7 @@ func (r *webhookURLResource) Schema(ctx context.Context, req resource.SchemaRequ
 		MarkdownDescription: webhookURLDescription,
 		Attributes: map[string]schema.Attribute{
 			"id":   idAttr("Webhook destination key assigned by VergeOS."),
-			"name": schema.StringAttribute{MarkdownDescription: "Destination name. Must be unique. 1 to 128 characters.", Required: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 128)}},
+			"name": schema.StringAttribute{MarkdownDescription: "Destination name. Must be unique. 1 to 128 characters. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.", Required: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 128)}},
 			"url": schema.StringAttribute{
 				MarkdownDescription: "HTTP or HTTPS endpoint that receives the POST.",
 				Required:            true,
@@ -244,7 +244,26 @@ func (a *API) readWebhookURL(ctx context.Context, data *webhookURLModel) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureWebhookURLOwned(data, got); err != nil {
+		return err
+	}
 	applyWebhookURL(data, got, *data)
+	return nil
+}
+
+// ensureWebhookURLOwned returns NotFound when the stored key now points at
+// another destination. webhook_urls has no readonly id on VergeOS 26.2, so
+// the unique name is the token. Skip the check when name is unset (import).
+func ensureWebhookURLOwned(data *webhookURLModel, got *vergeos.WebhookURL) error {
+	if data == nil || got == nil {
+		return fmt.Errorf("webhook destination read returned no row")
+	}
+	if !knownString(data.Name) || data.Name.ValueString() == "" {
+		return nil
+	}
+	if data.Name.ValueString() != got.Name {
+		return &vergeos.NotFoundError{Resource: "WebhookURL", ID: got.Key.Int()}
+	}
 	return nil
 }
 
@@ -257,6 +276,13 @@ func (a *API) updateWebhookURL(ctx context.Context, plan, state *webhookURLModel
 	}
 	id, err := parseID(state.ID, "webhook destination")
 	if err != nil {
+		return err
+	}
+	current, err := a.sdk.WebhookURLs.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureWebhookURLOwned(state, current); err != nil {
 		return err
 	}
 	timeout, err := changedIntPtr(plan.Timeout, state.Timeout)

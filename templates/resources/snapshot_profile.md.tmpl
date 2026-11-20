@@ -29,7 +29,7 @@ Destroying the profile deletes its periods. Remove `snapshot_profile` from a VM 
 
 ### Required
 
-- `name` (String) Profile name. Must be unique.
+- `name` (String) Profile name. Must be unique. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.
 
 ### Optional
 

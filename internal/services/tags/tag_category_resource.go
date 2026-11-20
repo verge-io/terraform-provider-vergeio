@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -43,6 +44,7 @@ type TagCategoryResourceModel struct {
 	Id                       types.String `tfsdk:"id"`
 	Name                     types.String `tfsdk:"name"`
 	Description              types.String `tfsdk:"description"`
+	Created                  types.Int64  `tfsdk:"created"`
 	SingleTagSelection       types.Bool   `tfsdk:"single_tag_selection"`
 	TaggableVolumes          types.Bool   `tfsdk:"taggable_volumes"`
 	TaggableVNets            types.Bool   `tfsdk:"taggable_vnets"`
@@ -86,6 +88,13 @@ func (r *TagCategoryResource) Schema(ctx context.Context, req resource.SchemaReq
 				Computed:            true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"created": schema.Int64Attribute{
+				MarkdownDescription: "Unix time when VergeOS created the category. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another category, and refresh drops this resource. A name change on the same category still updates in place.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.UseStateForUnknown(),
 				},
 			},
 			"single_tag_selection":       omitEmptyBool("When true, an object can have only one tag from this category. Omit to leave the current value unchanged. An omitted value is not sent."),
@@ -191,6 +200,9 @@ func (r *TagCategoryResource) Update(ctx context.Context, req resource.UpdateReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if plan.Created.IsNull() || plan.Created.IsUnknown() {
+		plan.Created = state.Created
+	}
 	if err := r.tagsApi.updateTagCategory(ctx, &plan, &state); err != nil {
 		resp.Diagnostics.AddError("Error updating tag category", err.Error())
 		return
@@ -253,6 +265,7 @@ func categoryForState(data *TagCategoryResourceModel) TagCategoryResourceModel {
 	stored.Id = knownString(data.Id)
 	stored.Name = knownString(data.Name)
 	stored.Description = knownString(data.Description)
+	stored.Created = knownInt64(data.Created)
 	stored.SingleTagSelection = knownBool(data.SingleTagSelection)
 	stored.TaggableVolumes = knownBool(data.TaggableVolumes)
 	stored.TaggableVNets = knownBool(data.TaggableVNets)
