@@ -265,6 +265,10 @@ func (r *NetworkDNSRecordResource) Read(ctx context.Context, req resource.ReadRe
 	}
 	if err := r.api.readRecord(ctx, &data); err != nil {
 		if dnsMissing(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}

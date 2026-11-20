@@ -169,6 +169,10 @@ func (r *NetworkIPSecResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	if err := r.api.readIPSec(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}

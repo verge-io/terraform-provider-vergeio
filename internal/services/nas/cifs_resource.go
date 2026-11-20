@@ -72,7 +72,7 @@ func (r *cifsResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 	resp.Schema = schema.Schema{
 		MarkdownDescription: cifsDescription,
 		Attributes: map[string]schema.Attribute{
-			"id": idAttr("Share id."),
+			"id": idAttr("Share id, a 40 character SHA1 hex string."),
 			"volume_id": schema.StringAttribute{
 				MarkdownDescription: "Volume id, the same value as vergeio_nas_volume.id. Changing it replaces the share.",
 				Required:            true,
@@ -149,6 +149,10 @@ func (r *cifsResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	if err := r.api.readCIFS(ctx, &data); err != nil {
 		if missing(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -186,17 +190,24 @@ func (r *cifsResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 }
 
 func (r *cifsResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
-	resp.IdentitySchema = shared.KeyIdentitySchema("CIFS share id. Import vergeio_nas_cifs_share with this value.")
+	resp.IdentitySchema = shared.KeyIdentitySchema("CIFS share id, a 40 character SHA1 hex string. Import vergeio_nas_cifs_share with this value.")
 }
 
 func (r *cifsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	importObjectID(ctx, req, resp, "Invalid NAS CIFS Share Import ID", "Import vergeio_nas_cifs_share with the share id.")
+	importObjectID(ctx, req, resp, "Invalid NAS CIFS Share Import ID", "Import vergeio_nas_cifs_share with the share id, a 40 character SHA1 hex string.")
 }
 
 func importObjectID(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse, summary, detail string) {
-	if strings.TrimSpace(req.ID) == "" && req.Identity == nil {
+	id := strings.TrimSpace(req.ID)
+	if id == "" && req.Identity == nil {
 		resp.Diagnostics.AddError(summary, detail)
 		return
+	}
+	if id != "" {
+		if _, err := parseSHA1ID(id, "object"); err != nil {
+			resp.Diagnostics.AddError(summary, detail)
+			return
+		}
 	}
 	shared.ImportByID(ctx, req, resp, summary, detail)
 }

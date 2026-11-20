@@ -87,7 +87,7 @@ resource "vergeio_nas_volume" "example" {
 - `creator` (String) User that created the volume.
 - `drive` (Number) Machine drive id for this volume.
 - `fs_type` (String) Filesystem type VergeOS assigned.
-- `id` (String) Volume id.
+- `id` (String) Volume id, a 40 character SHA1 hex string.
 - `is_snapshot` (Boolean) Whether this volume is a snapshot.
 - `modified` (Number) Last modification time, as seconds since the epoch.
 
