@@ -46,6 +46,7 @@
 
 ### Bug fixes
 
+- `terraform query` lists `vergeio_network` and `vergeio_vm` with `include_resource` and with `-generate-config-out`. Both failed with a Value Conversion Error on `bond_interfaces_args` or `guest_agent_ips` and returned no rows (#293).
 - Ephemeral `vergeio_api_key` returns the bearer token on VergeOS 26.2. The create response puts that secret in `private_key`. govergeos v0.5.0 read `token` and returned an empty string, so Open deleted the new key and failed with "VergeOS did not return an API key token" on every run. The provider uses the govergeos commit that reads `private_key`. A create response with no secret still deletes the key (#294).
 - A `vergeio_certificate` create that fails on the follow-up read keeps the certificate key in state. The next apply reads that row instead of posting another certificate (#268).
 - `vergeio_tenant_clone` waits until `no_nodes` and `no_storage` have taken effect. VergeOS accepts the clone before the copy finishes, so the new tenant can still list the source node. The action reads until those rows are gone. A row that remains is removed, and the action does not report success while it is still there (#217).

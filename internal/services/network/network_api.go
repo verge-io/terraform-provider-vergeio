@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -434,6 +435,25 @@ func unsetInterfaceVnetZero(v types.Int32) types.Int32 {
 	return types.Int32Null()
 }
 
+// bondInterfacesList stores vnets.bond_interfaces_args. An empty value is null.
+func bondInterfacesList(ctx context.Context, ids []int) (types.List, error) {
+	if len(ids) == 0 {
+		return types.ListNull(types.Int32Type), nil
+	}
+	values := make([]int32, len(ids))
+	for i, id := range ids {
+		if id > math.MaxInt32 || id < math.MinInt32 {
+			return types.List{}, fmt.Errorf("bond_interfaces_args[%d] = %d is outside the range of an int32", i, id)
+		}
+		values[i] = int32(id)
+	}
+	list, diags := types.ListValueFrom(ctx, types.Int32Type, values)
+	if diags.HasError() {
+		return types.List{}, fmt.Errorf("bond_interfaces_args: %v", diags)
+	}
+	return list, nil
+}
+
 // interfaceVnetFromAPI stores the physical network id reported by VergeOS.
 // A missing or null interface is 0 on the SDK type. State stores 0 so a
 // configuration of 0 is equal after refresh and does not rewrite the plan.
@@ -496,6 +516,14 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	// fill the default when state has never stored one, such as after import.
 	if data.RestartOnChange.IsNull() || data.RestartOnChange.IsUnknown() {
 		data.RestartOnChange = types.BoolValue(true)
+	}
+	// A zero list has no element type. terraform query rejects that value.
+	if data.Bond_Interfaces_Args.ElementType(ctx) == nil {
+		bondArgs, err := bondInterfacesList(ctx, network.BondInterfacesArgs)
+		if err != nil {
+			return err
+		}
+		data.Bond_Interfaces_Args = bondArgs
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
