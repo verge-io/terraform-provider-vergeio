@@ -2,6 +2,7 @@
 
 ### Bug fixes
 
+- Creating or deleting a `vergeio_certificate` no longer makes other creates in the same apply fail with "connection reset by peer" or EOF. VergeOS closes open API connections about half a second after those two calls. Other writes wait until that window has passed. The provider retries its own GET, PUT, and DELETE requests after a connection reset or EOF. POST is not retried (#295).
 - `data.vergeio_vms` now returns drives and NICs on each VM. `allocated_bytes` and `filesize` stay null (#296).
 
 ## v3.0.0

@@ -1160,8 +1160,10 @@ func configuredCertificate(t *testing.T, host string) *certificateResource {
 	t.Helper()
 	item := &certificateResource{}
 	configured := &resource.ConfigureResponse{}
+	client := vergeio.NewClient(host, "user", "pass", true)
+	client.SetCertificateSettle(time.Millisecond)
 	item.Configure(context.Background(), resource.ConfigureRequest{
-		ProviderData: vergeio.NewClient(host, "user", "pass", true),
+		ProviderData: client,
 	}, configured)
 	if configured.Diagnostics.HasError() {
 		t.Fatal(configured.Diagnostics)
@@ -1248,7 +1250,9 @@ func importResponse(ctx context.Context, schema resschema.Schema) *resource.Impo
 
 func testAPI(t *testing.T, host string) *API {
 	t.Helper()
-	api, err := NewAPI(vergeio.NewClient(host, "user", "pass", true))
+	client := vergeio.NewClient(host, "user", "pass", true)
+	client.SetCertificateSettle(time.Millisecond)
+	api, err := NewAPI(client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1287,6 +1291,7 @@ type settledCertificateNames struct {
 
 type platformFake struct {
 	mu               sync.Mutex
+	pause            func(*http.Request)
 	next             int
 	certs            map[int]vergeos.Certificate
 	urls             map[int]vergeos.WebhookURL
@@ -1394,6 +1399,9 @@ func (f *platformFake) urlByName(name string) (vergeos.WebhookURL, bool) {
 }
 
 func (f *platformFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if f.pause != nil {
+		f.pause(r)
+	}
 	if vergeio.AnswerCredentialCheck(w, r) {
 		return
 	}
