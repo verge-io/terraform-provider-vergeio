@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	dsschema "github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
@@ -52,13 +54,27 @@ func TestVersionDataSource_Schema(t *testing.T) {
 		t.Fatal("schema attributes should not be nil")
 	}
 
-	// Check key attributes
-	expectedAttrs := []string{"name", "version", "hash"}
-	for _, attrName := range expectedAttrs {
-		if attr, ok := resp.Schema.Attributes[attrName]; !ok {
+	expectedAttrs := map[string]string{
+		"name":    "Short API name reported by VergeOS at /version.json.",
+		"version": "VergeOS version string reported at /version.json.",
+		"hash":    "Forty-character git commit hash of the running VergeOS build, from /version.json.",
+	}
+	for attrName, wantDesc := range expectedAttrs {
+		attr, ok := resp.Schema.Attributes[attrName]
+		if !ok {
 			t.Errorf("attribute '%s' should exist in schema", attrName)
-		} else if !attr.IsComputed() {
+			continue
+		}
+		if !attr.IsComputed() {
 			t.Errorf("attribute '%s' should be computed", attrName)
+		}
+		stringAttr, ok := attr.(dsschema.StringAttribute)
+		if !ok {
+			t.Errorf("attribute '%s' should be a string", attrName)
+			continue
+		}
+		if stringAttr.MarkdownDescription != wantDesc {
+			t.Errorf("attribute %s description = %q, want %q", attrName, stringAttr.MarkdownDescription, wantDesc)
 		}
 	}
 
@@ -188,8 +204,7 @@ func TestAccVersionDataSource(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("data.vergeio_version.test", "name"),
 					resource.TestCheckResourceAttrSet("data.vergeio_version.test", "version"),
-					// Hash may not be available from SDK, so just check it exists (can be empty)
-					resource.TestCheckResourceAttr("data.vergeio_version.test", "hash", ""),
+					resource.TestMatchResourceAttr("data.vergeio_version.test", "hash", regexp.MustCompile(`^[0-9a-fA-F]{40}$`)),
 				),
 			},
 		},
