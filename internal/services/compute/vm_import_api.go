@@ -289,7 +289,13 @@ func (a *importAPI) createVMImport(ctx context.Context, data *importModel) error
 	// govergeos downloads a URL and posts vm_imports in the same call. VergeOS
 	// then tries to extract an OVA that is still empty. Download first, wait
 	// until the catalog file has a size, and import that file id.
-	downloadedFile, err := a.downloadImportURL(ctx, data, req)
+	// timeouts.create is one budget for the download and the import.
+	timeout, err := importTimeout(data.Timeouts, "create", vmImportWaitDefault)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	downloadedFile, err := a.downloadImportURL(ctx, req, deadline)
 	if err != nil {
 		return err
 	}
@@ -341,12 +347,16 @@ func (a *importAPI) createVMImport(ctx context.Context, data *importModel) error
 		tflog.Debug(ctx, fmt.Sprintf("VM %s already exists; using import %s", req.Name, key))
 		return a.readVMImport(ctx, data, key)
 	}
-	timeout, err := importTimeout(data.Timeouts, "create", vmImportWaitDefault)
-	if err != nil {
-		return err
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		if cleanupErr := a.deleteOwned(ctx, data); cleanupErr != nil {
+			return fmt.Errorf("vm import %s did not finish before %s (cleanup: %v)", key, timeout, cleanupErr)
+		}
+		data.ID = types.StringNull()
+		return fmt.Errorf("vm import %s did not finish before %s", key, timeout)
 	}
 	finished, err := a.sdk.VMImports.Wait(ctx, key, &vergeos.VMImportWaitOptions{
-		Timeout:      timeout,
+		Timeout:      remaining,
 		PollInterval: vmImportPollInterval,
 	})
 	if err != nil {
@@ -510,7 +520,7 @@ func (a *importAPI) deleteFile(ctx context.Context, id int) error {
 	return nil
 }
 
-func (a *importAPI) downloadImportURL(ctx context.Context, data *importModel, req *vergeos.VMImportCreateRequest) (int, error) {
+func (a *importAPI) downloadImportURL(ctx context.Context, req *vergeos.VMImportCreateRequest, deadline time.Time) (int, error) {
 	if req == nil || req.URL == "" {
 		return 0, nil
 	}
@@ -534,14 +544,7 @@ func (a *importAPI) downloadImportURL(ctx context.Context, data *importModel, re
 	if file == nil || file.Key.Int() <= 0 {
 		return 0, fmt.Errorf("VergeOS did not return a file id for %q", name)
 	}
-	timeout, err := importTimeout(data.Timeouts, "create", vmImportWaitDefault)
-	if err != nil {
-		if cleanupErr := a.deleteFile(ctx, file.Key.Int()); cleanupErr != nil {
-			return 0, fmt.Errorf("%w (catalog file %d was left in place: %v)", err, file.Key.Int(), cleanupErr)
-		}
-		return 0, err
-	}
-	ready, err := a.waitForFile(ctx, file.Key.Int(), timeout)
+	ready, err := a.waitForFileUntil(ctx, file.Key.Int(), deadline)
 	if err != nil {
 		if cleanupErr := a.deleteFile(ctx, file.Key.Int()); cleanupErr != nil {
 			return 0, fmt.Errorf("%w (catalog file %d was left in place: %v)", err, file.Key.Int(), cleanupErr)
@@ -555,7 +558,10 @@ func (a *importAPI) waitForFile(ctx context.Context, id int, timeout time.Durati
 	if timeout <= 0 {
 		timeout = vmImportWaitDefault
 	}
-	deadline := time.Now().Add(timeout)
+	return a.waitForFileUntil(ctx, id, time.Now().Add(timeout))
+}
+
+func (a *importAPI) waitForFileUntil(ctx context.Context, id int, deadline time.Time) (*vergeos.File, error) {
 	for {
 		file, err := a.sdk.Files.Get(ctx, id)
 		if err != nil {
@@ -569,7 +575,7 @@ func (a *importAPI) waitForFile(ctx context.Context, id int, timeout time.Durati
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return nil, fmt.Errorf("catalog file %d did not finish downloading before %s", id, timeout)
+			return nil, fmt.Errorf("catalog file %d did not finish downloading before the create timeout", id)
 		}
 		sleep := vmImportPollInterval
 		if sleep > remaining {

@@ -270,6 +270,68 @@ func TestVMImportURLGivesUpBeforeImport(t *testing.T) {
 	}
 }
 
+func TestVMImportURLSharesCreateTimeout(t *testing.T) {
+	previous := vmImportPollInterval
+	vmImportPollInterval = time.Millisecond
+	t.Cleanup(func() { vmImportPollInterval = previous })
+
+	const budget = 80 * time.Millisecond
+	start := time.Now()
+	var firstImport, lastImport time.Time
+	deletedImport := false
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/files":
+			writeJSON(w, http.StatusOK, `{"$key":9}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			size := 0
+			if time.Since(start) >= 50*time.Millisecond {
+				size = 1024
+			}
+			writeJSON(w, http.StatusOK, fmt.Sprintf(`{"$key":9,"name":"alpine.ova","filesize":%d}`, size))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `{"$key":"`+testImportKey+`"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			now := time.Now()
+			if firstImport.IsZero() {
+				firstImport = now
+			}
+			lastImport = now
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"importing","file":9}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_import_logs":
+			writeJSON(w, http.StatusOK, `[]`)
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/api/v4/vm_imports/"):
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vm_imports/"+testImportKey:
+			deletedImport = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/files/9":
+			w.WriteHeader(http.StatusOK)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	err := api.create(context.Background(), &importModel{
+		Name:   types.StringValue("guest"),
+		Target: types.StringValue(vmImportTargetVM),
+		URL:    types.StringValue("https://downloads.example.com/alpine.ova"),
+		Timeouts: &importTimeouts{
+			Create: types.StringValue(budget.String()),
+		},
+	})
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected the import to stop when the create timeout was spent")
+	}
+	if !deletedImport {
+		t.Fatal("the import posted after the download was left in place")
+	}
+	importWait := lastImport.Sub(firstImport)
+	if importWait > 60*time.Millisecond || elapsed > budget+70*time.Millisecond {
+		t.Fatalf("create ran for %s and polled the import for %s; timeouts.create is %s for both steps", elapsed, importWait, budget)
+	}
+}
+
 func TestVMImportFailureCleansUp(t *testing.T) {
 	deleted := map[string]int{}
 	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
