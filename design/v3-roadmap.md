@@ -112,7 +112,7 @@ These stay open and keep the `deferred` label. They are not part of the 3.0 rele
 * #83. Fleet management across many systems and tenants.
 * #84. A Kubernetes cluster module on the VergeOS CSI driver, cloud controller manager, and Rancher integration.
 * #85. A nested lab module, for training labs and for disposable clusters that run acceptance tests.
-* #86. VM import, export, and migration. Also labelled `blocked`, waiting on govergeos support.
+* #86. VM import, export, and migration. `vergeio_vm_import` declares an OVA as a VM or a disk image as a media file. `data.vergeio_vm_import` waits for an import started elsewhere. `vergeio_vm_export` keeps the volume export configuration. An export run and the image pipeline stay in the Ansible collection. The govergeos client at `4986437a` already has `VMImports` and `VMExports`.
 
 ## Open decisions
 

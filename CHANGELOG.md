@@ -1,5 +1,9 @@
 ## Unreleased
 
+### Features
+
+- **New Resource:** `vergeio_vm_import` and `vergeio_vm_export`. **New Data Source:** `vergeio_vm_import`. An OVA or OVF is imported as a VM and the apply waits until VergeOS reports complete or warning. A failed import returns as soon as the row is `error` or `aborted`. A disk image (`qcow2`, `vmdk`, `vhd`, `vhdx`, `raw`, `img`, `vdi`, `iso`) is downloaded into the media catalog with `target = "media"`, because VergeOS rejects that file on `vm_imports`. `file_id` is the catalog id a drive imports with `media = "import"`. Destroy removes the import row and the VM it created, unless `delete_vm` is false or a VM of that name already existed. A catalog file this resource downloaded is removed when `delete_file` is true. The data source reads one existing import by key or by name and waits, so a configuration can depend on an import started in the UI or by Ansible. A name that matches two rows is an error. `vergeio_vm_export` stores `quiesced`, `create_current`, and `max_exports` for one NAS volume. It does not start an export. Destroy removes that row and leaves files already written. The migration procedure, an export run, and the `image_pipeline` role stay in the Ansible collection. See [VM import and migration](docs/guides/vm-import.md) (#86).
+
 ### Bug fixes
 
 - Import of a `vergeio_webhook_url` with `retries` 0 stores 0, so the plan after import is empty. `timeout` 0 and `allow_insecure` false are stored the same way (#303).
