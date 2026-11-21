@@ -1,7 +1,7 @@
 # category_name selects the category when the id is not known.
 # It cannot be combined with category_filter.
 
-data "vergeio_tags" "powerup_true" {
+data "vergeio_tags" "powerup_by_name" {
   filter        = "true"
   category_name = "powerup"
 }
