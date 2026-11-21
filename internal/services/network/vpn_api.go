@@ -6,7 +6,6 @@ package network
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
@@ -164,9 +163,9 @@ func (nc *NetworkApi) refuseNetworkDelete(ctx context.Context, data *NetworkReso
 	if data == nil {
 		return fmt.Errorf("missing network")
 	}
-	networkID, err := strconv.Atoi(strings.TrimSpace(data.Id.ValueString()))
-	if err != nil || networkID <= 0 {
-		return fmt.Errorf("invalid network ID format: %v", data.Id.ValueString())
+	networkID, err := parseID(data.Id, "network")
+	if err != nil {
+		return err
 	}
 	return refuseNetworkDelete(ctx, nc.sdk, networkID)
 }

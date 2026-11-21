@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 
 	"terraform-provider-vergeio/internal/client"
 
@@ -150,9 +149,9 @@ func (nc *UserApi) updateUser(ctx context.Context, planData *UserResourceModel, 
 		return err
 	}
 
-	userIDInt, err := strconv.Atoi(stateData.Id.ValueString())
+	userIDInt, err := parseID(stateData.Id, "user")
 	if err != nil {
-		return fmt.Errorf("invalid user ID format: %v", err)
+		return err
 	}
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating user %d", userIDInt))
@@ -194,9 +193,9 @@ func (nc *UserApi) readUser(ctx context.Context, data *UserResourceModel) error 
 	tflog.Debug(ctx, "Reading the user data")
 
 	// Parse user ID
-	userIDInt, err := strconv.Atoi(data.Id.ValueString())
+	userIDInt, err := parseID(data.Id, "user")
 	if err != nil {
-		return fmt.Errorf("invalid user ID format: %v", err)
+		return err
 	}
 
 	// Call SDK API to get specific user
@@ -220,9 +219,9 @@ func (nc *UserApi) deleteUser(ctx context.Context, data *UserResourceModel) erro
 	tflog.Debug(ctx, "Deleting the user data")
 
 	// Parse user ID
-	userIDInt, err := strconv.Atoi(data.Id.ValueString())
+	userIDInt, err := parseID(data.Id, "user")
 	if err != nil {
-		return fmt.Errorf("invalid user ID format: %v", err)
+		return err
 	}
 
 	// Call SDK API to delete user
