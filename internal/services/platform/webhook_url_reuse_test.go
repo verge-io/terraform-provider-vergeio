@@ -142,6 +142,64 @@ func TestWebhookURLReadKeepsSameNameAndImport(t *testing.T) {
 	}
 }
 
+func TestWebhookURLImportReadKeepsZero(t *testing.T) {
+	const row = `{"$key":1,"name":"tf-acc-hook","url":"https://example.com/tf-acc-hook","timeout":0,"retries":0,"allow_insecure":false}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		var body string
+		switch r.URL.Path {
+		case "/version.json":
+			body = `{"version":"26.2.2"}`
+		case "/api/v4/webhook_urls/1":
+			if r.Method != http.MethodGet {
+				http.Error(w, "method", http.StatusMethodNotAllowed)
+				return
+			}
+			body = row
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := w.Write([]byte(body)); err != nil {
+			t.Errorf("write %s: %v", r.URL.Path, err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := context.Background()
+	item := configuredWebhookURL(t, server.URL)
+	schemaResp := &fwresource.SchemaResponse{}
+	item.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+
+	imported := tfsdk.State{Schema: schemaResp.Schema}
+	diags := imported.Set(ctx, &webhookURLModel{ID: types.StringValue("1")})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &fwresource.ReadResponse{State: imported}
+	item.Read(ctx, fwresource.ReadRequest{State: imported}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got webhookURLModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.Retries.IsNull() || got.Retries.IsUnknown() || got.Retries.ValueInt64() != 0 {
+		t.Fatalf("retries = %#v", got.Retries)
+	}
+	if got.Timeout.IsNull() || got.Timeout.IsUnknown() || got.Timeout.ValueInt64() != 0 {
+		t.Fatalf("timeout = %#v", got.Timeout)
+	}
+	if got.AllowInsecure.IsNull() || got.AllowInsecure.IsUnknown() || got.AllowInsecure.ValueBool() {
+		t.Fatalf("allow_insecure = %#v", got.AllowInsecure)
+	}
+}
+
 func configuredWebhookURL(t *testing.T, host string) *webhookURLResource {
 	t.Helper()
 	item := &webhookURLResource{}

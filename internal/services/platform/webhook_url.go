@@ -370,9 +370,9 @@ func applyWebhookURL(data *webhookURLModel, got *vergeos.WebhookURL, prior webho
 	data.Type = normalizeChoice(got.Type, prior.Type, "custom")
 	data.Headers = stringFromAPI(got.Headers, prior.Headers)
 	data.AuthorizationType = normalizeChoice(got.AuthorizationType, prior.AuthorizationType, vergeos.WebhookAuthNone)
-	data.AllowInsecure = boolFromAPI(got.AllowInsecure, prior.AllowInsecure)
-	data.Timeout = intFromAPI(got.Timeout, prior.Timeout)
-	data.Retries = intFromAPI(got.Retries, prior.Retries)
+	data.AllowInsecure = types.BoolValue(got.AllowInsecure)
+	data.Timeout = types.Int64Value(int64(got.Timeout))
+	data.Retries = types.Int64Value(int64(got.Retries))
 	data.AuthorizationValueWOVersion = prior.AuthorizationValueWOVersion
 }
 
