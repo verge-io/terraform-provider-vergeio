@@ -9,9 +9,9 @@ output "Available_Media_Images" {
 
 # Add a filter to view details about a specific image
 
-data "vergeio_mediasources" "all" {
+data "vergeio_mediasources" "cloneiso" {
   filter_name = "verge.io-clone.iso"
 }
 output "cloneiso" {
-  value = data.vergeio_mediasources.all.mediasources
+  value = data.vergeio_mediasources.cloneiso.mediasources
 }

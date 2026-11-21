@@ -20,13 +20,13 @@ output "cluster_id" {
   value = data.vergeio_clusters.all.clusters
 }
 
-# Add a fliter to see information on a specific cluster
+# Add a filter to see information on a specific cluster
 
-data "vergeio_clusters" "all" {
+data "vergeio_clusters" "compute" {
   filter_name = "Compute"
 }
-output "cluster_id" {
-  value = data.vergeio_clusters.all.clusters
+output "compute_cluster" {
+  value = data.vergeio_clusters.compute.clusters
 }
 ```
 # Example Output
