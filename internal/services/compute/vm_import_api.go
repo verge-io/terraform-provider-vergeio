@@ -286,25 +286,56 @@ func (a *importAPI) createVMImport(ctx context.Context, data *importModel) error
 	if err := validateImportExtension(vmImportTargetVM, req.URL, req.FileName); err != nil {
 		return err
 	}
+	// govergeos downloads a URL and posts vm_imports in the same call. VergeOS
+	// then tries to extract an OVA that is still empty. Download first, wait
+	// until the catalog file has a size, and import that file id.
+	downloadedFile, err := a.downloadImportURL(ctx, data, req)
+	if err != nil {
+		return err
+	}
+	if downloadedFile > 0 {
+		req.File = &downloadedFile
+		req.URL = ""
+		req.FileName = ""
+	}
 	created, err := a.sdk.VMImports.Create(ctx, req)
 	if err != nil {
-		if req.URL != "" {
-			if cleanupErr := a.deleteOrphanDownload(ctx, req); cleanupErr != nil {
-				return fmt.Errorf("%w (catalog cleanup: %v)", err, cleanupErr)
+		if downloadedFile > 0 {
+			if cleanupErr := a.deleteFile(ctx, downloadedFile); cleanupErr != nil {
+				return fmt.Errorf("%w (catalog file %d was left in place: %v)", err, downloadedFile, cleanupErr)
 			}
 		}
 		return err
 	}
 	key := vmImportKey(created)
 	if created.AlreadyExisted && key == "" {
+		if downloadedFile > 0 {
+			if cleanupErr := a.deleteFile(ctx, downloadedFile); cleanupErr != nil {
+				return fmt.Errorf("VM %q already exists, and catalog file %d was left in place: %v", req.Name, downloadedFile, cleanupErr)
+			}
+		}
 		return fmt.Errorf("VM %q already exists, and VergeOS did not return one vm_imports row for that name", req.Name)
 	}
 	if key == "" {
+		if downloadedFile > 0 {
+			if cleanupErr := a.deleteFile(ctx, downloadedFile); cleanupErr != nil {
+				return fmt.Errorf("VergeOS did not return a vm_imports key for %q (catalog file %d was left in place: %v)", req.Name, downloadedFile, cleanupErr)
+			}
+		}
 		return fmt.Errorf("VergeOS did not return a vm_imports key for %q", req.Name)
+	}
+	if created.AlreadyExisted && downloadedFile > 0 {
+		if cleanupErr := a.deleteFile(ctx, downloadedFile); cleanupErr != nil {
+			return fmt.Errorf("VM %q already exists, and catalog file %d was left in place: %v", req.Name, downloadedFile, cleanupErr)
+		}
+		downloadedFile = 0
 	}
 	data.ID = types.StringValue(key)
 	data.Adopted = types.BoolValue(created.AlreadyExisted)
-	data.OwnsFile = types.BoolValue(req.URL != "" && !created.AlreadyExisted)
+	data.OwnsFile = types.BoolValue(downloadedFile > 0)
+	if downloadedFile > 0 {
+		data.FileID = types.Int64Value(int64(downloadedFile))
+	}
 	data.Target = types.StringValue(vmImportTargetVM)
 	if created.AlreadyExisted {
 		tflog.Debug(ctx, fmt.Sprintf("VM %s already exists; using import %s", req.Name, key))
@@ -479,26 +510,45 @@ func (a *importAPI) deleteFile(ctx context.Context, id int) error {
 	return nil
 }
 
-func (a *importAPI) deleteOrphanDownload(ctx context.Context, req *vergeos.VMImportCreateRequest) error {
-	name := req.FileName
+func (a *importAPI) downloadImportURL(ctx context.Context, data *importModel, req *vergeos.VMImportCreateRequest) (int, error) {
+	if req == nil || req.URL == "" {
+		return 0, nil
+	}
+	name := strings.TrimSpace(req.FileName)
 	if name == "" {
 		var err error
 		name, err = fileNameFromImportURL(req.URL)
 		if err != nil {
-			return nil
+			return 0, err
 		}
 	}
-	file, err := a.sdk.Files.GetByName(ctx, name)
-	if vergeos.IsNotFoundError(err) {
-		return nil
-	}
+	file, err := a.sdk.Files.Create(ctx, &vergeos.FileCreateRequest{
+		Name:          name,
+		Description:   downloadedImportDescription + req.Name,
+		URL:           req.URL,
+		PreferredTier: req.PreferredTier,
+	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if file.URL != req.URL || file.Description != downloadedImportDescription+req.Name {
-		return nil
+	if file == nil || file.Key.Int() <= 0 {
+		return 0, fmt.Errorf("VergeOS did not return a file id for %q", name)
 	}
-	return a.deleteFile(ctx, file.Key.Int())
+	timeout, err := importTimeout(data.Timeouts, "create", vmImportWaitDefault)
+	if err != nil {
+		if cleanupErr := a.deleteFile(ctx, file.Key.Int()); cleanupErr != nil {
+			return 0, fmt.Errorf("%w (catalog file %d was left in place: %v)", err, file.Key.Int(), cleanupErr)
+		}
+		return 0, err
+	}
+	ready, err := a.waitForFile(ctx, file.Key.Int(), timeout)
+	if err != nil {
+		if cleanupErr := a.deleteFile(ctx, file.Key.Int()); cleanupErr != nil {
+			return 0, fmt.Errorf("%w (catalog file %d was left in place: %v)", err, file.Key.Int(), cleanupErr)
+		}
+		return 0, err
+	}
+	return ready.Key.Int(), nil
 }
 
 func (a *importAPI) waitForFile(ctx context.Context, id int, timeout time.Duration) (*vergeos.File, error) {
@@ -618,7 +668,13 @@ func (a *importAPI) applyVMImport(ctx context.Context, data *importModel, row *v
 	data.Aborted = types.BoolValue(row.Aborted)
 	data.FailedDriveCount = types.Int64Value(int64(row.FailedDriveCount))
 	data.VMID = flexIntOrNull(row.VM)
-	data.FileID = flexIntOrNull(row.File)
+	if fileID := flexIntOrNull(row.File); !fileID.IsNull() {
+		data.FileID = fileID
+	} else if inputs.FileID.IsNull() || inputs.FileID.IsUnknown() {
+		data.FileID = types.Int64Null()
+	} else {
+		data.FileID = inputs.FileID
+	}
 	data.PreserveMACs = mergeBool(inputs.PreserveMACs, row.PreserveMACs, true)
 	data.PreserveDriveFormat = mergeBool(inputs.PreserveDriveFormat, row.PreserveDriveFormat, true)
 	data.PreserveBIOSSerial = mergeBool(inputs.PreserveBIOSSerial, row.PreserveBIOSSerial, newer)

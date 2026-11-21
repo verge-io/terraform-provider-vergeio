@@ -5,6 +5,7 @@ package compute
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -154,6 +155,118 @@ func TestVMImportDiskURLDoesNotPost(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "target = \"media\"") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestVMImportURLWaitsForCatalogFile(t *testing.T) {
+	previous := vmImportPollInterval
+	vmImportPollInterval = time.Millisecond
+	t.Cleanup(func() { vmImportPollInterval = previous })
+
+	var mu sync.Mutex
+	fileGets := 0
+	ready := false
+	var posted string
+	postedEarly := false
+	deleted := map[string]int{}
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/files":
+			writeJSON(w, http.StatusOK, `{"$key":9}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			fileGets++
+			size := 0
+			if fileGets >= 3 {
+				size = 48800000
+				ready = true
+			}
+			writeJSON(w, http.StatusOK, fmt.Sprintf(`{"$key":9,"name":"alpine.ova","url":"https://downloads.example.com/alpine.ova","description":"Downloaded for VM import guest","filesize":%d}`, size))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_imports":
+			body, _ := io.ReadAll(r.Body)
+			posted = string(body)
+			if !ready {
+				postedEarly = true
+			}
+			writeJSON(w, http.StatusOK, `{"$key":"`+testImportKey+`"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","vm":46,"file":9}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/46":
+			writeJSON(w, http.StatusOK, `{"running":false,"status":"stopped"}`)
+		case r.Method == http.MethodDelete:
+			deleted[r.URL.Path]++
+			w.WriteHeader(http.StatusOK)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{
+		Name:       types.StringValue("guest"),
+		Target:     types.StringValue(vmImportTargetVM),
+		URL:        types.StringValue("https://downloads.example.com/alpine.ova"),
+		DeleteVM:   types.BoolValue(true),
+		DeleteFile: types.BoolValue(true),
+	}
+	if err := api.create(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if postedEarly {
+		t.Fatal("vm_imports was posted before the catalog file had a size")
+	}
+	if !strings.Contains(posted, `"file":9`) || strings.Contains(posted, `"url"`) {
+		t.Fatalf("import body = %s", posted)
+	}
+	if !data.OwnsFile.ValueBool() || data.FileID.ValueInt64() != 9 || !data.Volume.IsNull() || !data.VolumePath.IsNull() {
+		t.Fatalf("import = %#v", data)
+	}
+	if err := api.delete(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if deleted["/api/v4/files/9"] != 1 || deleted["/api/v4/vms/46"] != 1 || deleted["/api/v4/vm_imports/"+testImportKey] != 1 {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+}
+
+func TestVMImportURLGivesUpBeforeImport(t *testing.T) {
+	previous := vmImportPollInterval
+	vmImportPollInterval = time.Millisecond
+	t.Cleanup(func() { vmImportPollInterval = previous })
+
+	postedImport := false
+	deletedFile := false
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/files":
+			writeJSON(w, http.StatusOK, `{"$key":9}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"alpine.ova","filesize":0,"allocated_bytes":48800000}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_imports":
+			postedImport = true
+			http.Error(w, "should not import", http.StatusInternalServerError)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/files/9":
+			deletedFile = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	err := api.create(context.Background(), &importModel{
+		Name:   types.StringValue("guest"),
+		Target: types.StringValue(vmImportTargetVM),
+		URL:    types.StringValue("https://downloads.example.com/alpine.ova"),
+		Timeouts: &importTimeouts{
+			Create: types.StringValue("30ms"),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not finish downloading") {
+		t.Fatalf("err = %v", err)
+	}
+	if postedImport {
+		t.Fatal("vm_imports was posted for an empty catalog file")
+	}
+	if !deletedFile {
+		t.Fatal("the unfinished catalog file was left in place")
 	}
 }
 
@@ -352,7 +465,7 @@ func TestVMImportDataSourceReadsCurrentRow(t *testing.T) {
 func TestOmittedImportOptionsStayNull(t *testing.T) {
 	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v4/vm_imports" {
-			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","preferred_tier":"4","override_drive_interface":"virtio","override_nic_interface":"e1000","shared_object":8}]`)
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","preferred_tier":"4","override_drive_interface":"virtio","override_nic_interface":"e1000","shared_object":8,"volume":"`+testVolumeKey+`","volume_path":"guest.ova"}]`)
 			return
 		}
 		writeImportFixture(w, r)
@@ -366,8 +479,8 @@ func TestOmittedImportOptionsStayNull(t *testing.T) {
 	if err := api.read(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
-	if !data.PreferredTier.IsNull() || !data.OverrideDriveInterface.IsNull() || !data.OverrideNICInterface.IsNull() || !data.SharedObject.IsNull() {
-		t.Fatalf("omitted options were stored from the API: tier=%v drive=%v nic=%v shared=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface, data.SharedObject)
+	if !data.PreferredTier.IsNull() || !data.OverrideDriveInterface.IsNull() || !data.OverrideNICInterface.IsNull() || !data.SharedObject.IsNull() || !data.Volume.IsNull() || !data.VolumePath.IsNull() {
+		t.Fatalf("omitted options were stored from the API: tier=%v drive=%v nic=%v shared=%v volume=%v path=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface, data.SharedObject, data.Volume, data.VolumePath)
 	}
 }
 
