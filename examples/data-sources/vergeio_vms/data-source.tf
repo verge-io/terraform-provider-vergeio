@@ -1,5 +1,5 @@
 
-# VMs data source fetches the VMsfrom the VergeIO. 
+# VMs data source fetches the VMs from the VergeIO. 
 
 data "vergeio_vms" "all" {
 }
@@ -9,12 +9,12 @@ output "Virtual_Machines" {
 
 # Add a filter to see information on a specific virtual machine or ignore VM snapshots
 
-data "vergeio_vms" "all" {
+data "vergeio_vms" "example" {
   filter_name = "Example VM"
   is_snapshot = false
 }
-output "Virtual_Machines" {
-  value = data.vergeio_vms.all.vms
+output "example_vm" {
+  value = data.vergeio_vms.example.vms
 }
 
 # VMs and NICs information is also available via the VMs data source

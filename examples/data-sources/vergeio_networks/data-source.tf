@@ -9,9 +9,9 @@ output "networks" {
 
 # Add a filter to see information on a specific network
 
-data "vergeio_networks" "all" {
+data "vergeio_networks" "external" {
   filter_name = "External"
 }
-output "networks" {
-  value = data.vergeio_networks.all.networks
+output "external_network" {
+  value = data.vergeio_networks.external.networks
 }
