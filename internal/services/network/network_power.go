@@ -6,7 +6,6 @@ package network
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -37,12 +36,9 @@ func (nc *NetworkApi) applyPlannedPowerState(ctx context.Context, data *NetworkR
 		tflog.Debug(ctx, "Planned powerstate is unset; leaving network power unchanged")
 		return nil
 	}
-	if data.Id.IsNull() || data.Id.IsUnknown() || data.Id.ValueString() == "" {
-		return fmt.Errorf("missing network id")
-	}
-	networkID, err := strconv.Atoi(data.Id.ValueString())
+	networkID, err := parseID(data.Id, "network")
 	if err != nil {
-		return fmt.Errorf("invalid network ID format: %v", err)
+		return err
 	}
 
 	network, err := nc.sdk.Networks.Get(ctx, networkID)

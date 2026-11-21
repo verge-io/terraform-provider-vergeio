@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"time"
 
@@ -223,9 +222,9 @@ func networkUpdateRequest(planData *NetworkResourceModel, stateData *NetworkReso
 	if id.IsNull() || id.IsUnknown() || id.ValueString() == "" {
 		id = stateData.Id
 	}
-	networkIDInt, err := strconv.Atoi(id.ValueString())
+	networkIDInt, err := parseID(id, "network")
 	if err != nil {
-		return nil, 0, fmt.Errorf("invalid network ID format: %v", err)
+		return nil, 0, err
 	}
 	return &networkUpdateBody{
 		NetworkUpdateRequest: *req,
@@ -271,9 +270,9 @@ func (nc *NetworkApi) deleteNetwork(ctx context.Context, data *NetworkResourceMo
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Delete Network API for Network %v", data.Id.ValueString()))
 
 	// Parse network ID
-	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	networkIDInt, err := parseID(data.Id, "network")
 	if err != nil {
-		return fmt.Errorf("invalid network ID format: %v", err)
+		return err
 	}
 
 	// DNS views are removed first. VergeOS deletes zones and records with the
@@ -308,9 +307,9 @@ func describeNetworkPower(on bool) string {
 func (nc *NetworkApi) checkNetworkPowerState(ctx context.Context, data *NetworkResourceModel) error {
 
 	// Parse network ID
-	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	networkIDInt, err := parseID(data.Id, "network")
 	if err != nil {
-		return fmt.Errorf("invalid network ID format: %v", err)
+		return err
 	}
 
 	// Call SDK API with specific fields
@@ -416,9 +415,9 @@ func (nc *NetworkApi) killNetwork(ctx context.Context, data *NetworkResourceMode
 
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill Network API for Network %v", data.Id.ValueString()))
 
-	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	networkIDInt, err := parseID(data.Id, "network")
 	if err != nil {
-		return fmt.Errorf("invalid Network ID format: %v", err)
+		return err
 	}
 
 	return nc.sdk.Networks.Kill(ctx, networkIDInt)
@@ -447,9 +446,9 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	tflog.Debug(ctx, "Reading the network data")
 
 	// Parse network ID
-	networkIDInt, err := strconv.Atoi(data.Id.ValueString())
+	networkIDInt, err := parseID(data.Id, "network")
 	if err != nil {
-		return fmt.Errorf("invalid network ID format: %v", err)
+		return err
 	}
 
 	// Call SDK API to get specific network
@@ -460,6 +459,7 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 
 	tflog.Debug(ctx, fmt.Sprintf("Read the network %v", network))
 
+	data.Id = idString(network.Key.Int())
 	data.Name = types.StringValue(network.Name)
 	data.Description = types.StringValue(network.Description)
 	data.Enabled = types.BoolValue(network.Enabled)
