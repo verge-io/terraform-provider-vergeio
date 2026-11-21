@@ -79,7 +79,7 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 
 `terraform query` lists VMs, networks, tenants, users, groups, tags, and snapshot profiles that already exist. Filter with `name_pattern`, `tag`, and, for VMs and networks, `tenant`. `tenant` is a key or a name. Networks match `vnets.owner`. VMs match `vms.owner`. Neither table has a `tenant` column. The identity `id` is the import id. OpenTofu uses that same id in an `import` block. See [Adopt an existing VergeOS system](docs/guides/adopt-system.md).
 
-Terraform keeps tenants, networks, firewall policy, VM configuration, identity, and snapshot profiles. Ansible runs procedures and configures the guest. See [Terraform and Ansible](docs/guides/terraform-ansible.md).
+Terraform keeps tenants, networks, firewall policy, VM configuration, identity, and snapshot profiles. Ansible runs procedures and configures the guest. See [Terraform and Ansible](docs/guides/terraform-ansible.md). An OVA or disk image the configuration depends on is `vergeio_vm_import`. `vergeio_vm_export` keeps the volume export settings and does not start a run. See [VM import and migration](docs/guides/vm-import.md).
 
 ## Modules
 
@@ -123,6 +123,8 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_user
 - vergeio_vm
 - vergeio_vm_drive
+- vergeio_vm_export
+- vergeio_vm_import
 - vergeio_vm_nic
 - vergeio_vm_recipe_instance
 - vergeio_webhook
@@ -135,6 +137,8 @@ Devices stay nested on `vergeio_vm`.
 `vergeio_nas_service` deploys the Services recipe, which creates the virtual machine and the NAS service together. `name` and `network_id` are required. `user` blocks are the accounts on that service. `password_wo` is sent when the user is created and when `password_wo_version` changes. VergeOS requires a character that is not a letter or digit. Terraform stores the version, not the password. `vergeio_nas_volume` is a volume on that service. Destroy disables the volume and waits until VergeOS allows the delete. `vergeio_nas_cifs_share` and `vergeio_nas_nfs_share` are shares on a volume. Volume snapshots and volume sync are not part of these resources.
 
 `vergeio_vm_recipe_instance` deploys a VM from a catalog recipe. `vergeio_catalogs` and `vergeio_vm_recipes` look the recipe up by name. `answers` is a map of strings. A disk size is bytes, so 50 GB is `53687091200`. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. The resource deploys the VM. It has no simulate argument.
+
+`vergeio_vm_import` brings in an OVA or OVF as a VM, or a disk image as a media-catalog file. `data.vergeio_vm_import` waits for an import that is already running. `vergeio_vm_export` keeps the export configuration for one NAS volume and does not start a run. Destroy of an import removes the VM it created unless that VM already existed. Destroy of an export leaves files already written on the volume.
 
 `vergeio_group` creates a group. `vergeio_permission` grants a user or a group list, read, create, modify, and delete on a table or one object. `vergeio_member` adds a user or another object to a group. `vergeio_users` lists users the same way `vergeio_groups` lists groups.
 
@@ -172,6 +176,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_tenants
 - vergeio_users
 - vergeio_version
+- vergeio_vm_import
 - vergeio_vm_recipes
 - vergeio_vms
 

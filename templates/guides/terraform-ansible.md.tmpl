@@ -22,7 +22,7 @@ Ansible owns work that has an order, and work inside the guest. These names are 
 
 * Node maintenance and rolling updates: module `vergeio.vergeos.node_maintenance`, role `node_drain`, module `vergeio.vergeos.update`, and role `rolling_update`.
 * Restore drills: role `restore_drill`.
-* Export and import: modules `vergeio.vergeos.vm_export` and `vergeio.vergeos.vm_import`.
+* Export runs and migration procedures: module `vergeio.vergeos.vm_export`, module `vergeio.vergeos.vm_import` when the play uploads a local file and walks a fleet, and role `image_pipeline`. Terraform declares the image a configuration depends on (`vergeio_vm_import`) and the volume export settings (`vergeio_vm_export`). It can also wait for an import that is already running (`data.vergeio_vm_import`). The [VM import and migration](vm-import.html) guide is that boundary.
 * Reporting: roles `health_report` and `billing_export`.
 * Key rotation: role `api_key_rotation`.
 * OS configuration: packages, services, and files on the guest.
