@@ -23,6 +23,7 @@ func TestWebhookAcceptanceConfigParses(t *testing.T) {
 		testAccWebhookConfig("tf-acc-hook", "https://example.com/hook", 10, `{"text":"one"}`),
 		testAccWebhookConfig("tf-acc-hook", "https://example.com/hook/v2", 30, `{"text":"one"}`),
 		testAccWebhookConfig("tf-acc-hook", "https://example.com/hook/v2", 30, `{"text":"two"}`),
+		testAccWebhookURLRetriesZero("tf-acc-hook"),
 	} {
 		if _, diags := hclsyntax.ParseConfig([]byte(src), "acc.tf", hcl.InitialPos); diags.HasErrors() {
 			t.Fatalf("acceptance config did not parse: %s\n%s", diags.Error(), src)
@@ -230,6 +231,61 @@ func testAccCheckWebhookURLDestroy(s *terraform.State) error {
 		}
 		return nil
 	})
+}
+
+func TestAccWebhookURL_RetriesZeroImport(t *testing.T) {
+	name := acctest.Name("hook-retries0")
+	if err := acctest.RequirePrefix(name); err != nil {
+		t.Fatal(err)
+	}
+	config := testAccWebhookURLRetriesZero(name)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckWebhookURLDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "name", name),
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "url", "https://example.com/tf-acc-retries0"),
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "retries", "0"),
+					resource.TestCheckResourceAttrSet("vergeio_webhook_url.test", "id"),
+				),
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				ResourceName:      "vergeio_webhook_url.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+			{
+				Config: config,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+		},
+	})
+}
+
+func testAccWebhookURLRetriesZero(name string) string {
+	if err := acctest.RequirePrefix(name); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_webhook_url" "test" {
+  name    = %q
+  url     = "https://example.com/tf-acc-retries0"
+  retries = 0
+}
+`, name))
 }
 
 func testAccWebhookURLOnly(name, rawURL string) string {
