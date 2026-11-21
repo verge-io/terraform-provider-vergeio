@@ -634,8 +634,8 @@ func (a *importAPI) applyVMImport(ctx context.Context, data *importModel, row *v
 	data.FileName = inputs.FileName
 	data.File = inputs.File
 	data.SharedObject = inputs.SharedObject
-	if data.SharedObject.IsNull() || data.SharedObject.IsUnknown() {
-		data.SharedObject = flexIntOrNull(row.SharedObject)
+	if data.SharedObject.IsUnknown() {
+		data.SharedObject = types.Int64Null()
 	}
 	data.DeleteVM = deleteVMFlag
 	data.DeleteFile = deleteFileFlag
@@ -969,7 +969,10 @@ func fileReady(file *vergeos.File) bool {
 	if file == nil {
 		return false
 	}
-	return file.Filesize > 0 || file.UsedBytes > 0 || file.AllocatedBytes > 0
+	// AllocatedBytes is reserved space and UsedBytes can move before the
+	// object has content. Filesize is the logical size VergeOS reports
+	// once the download has produced a file.
+	return file.Filesize > 0
 }
 
 func deleteVM(data *importModel) bool {
@@ -1062,10 +1065,16 @@ func mergeBool(config types.Bool, api, trustAPI bool) types.Bool {
 }
 
 func mergeString(config types.String, api string) types.String {
+	// An omitted optional attribute stays null. Copying a platform default
+	// into state fails the apply consistency check, because the plan value
+	// was null and the attribute is not computed.
+	if config.IsNull() || config.IsUnknown() {
+		return types.StringNull()
+	}
 	if strings.TrimSpace(api) != "" {
 		return types.StringValue(api)
 	}
-	if config.IsNull() || config.IsUnknown() || strings.TrimSpace(config.ValueString()) == "" {
+	if strings.TrimSpace(config.ValueString()) == "" {
 		return types.StringNull()
 	}
 	return config

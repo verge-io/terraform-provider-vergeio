@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
 )
@@ -345,6 +346,40 @@ func TestVMImportDataSourceReadsCurrentRow(t *testing.T) {
 		Name: types.StringValue("guest"),
 	}); !diags.HasError() {
 		t.Fatal("expected id and name together to be rejected")
+	}
+}
+
+func TestOmittedImportOptionsStayNull(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/vm_imports" {
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","preferred_tier":"4","override_drive_interface":"virtio","override_nic_interface":"e1000","shared_object":8}]`)
+			return
+		}
+		writeImportFixture(w, r)
+	})
+	data := &importModel{
+		ID:     types.StringValue(testImportKey),
+		Name:   types.StringValue("guest"),
+		Target: types.StringValue(vmImportTargetVM),
+		File:   types.Int64Value(12),
+	}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.PreferredTier.IsNull() || !data.OverrideDriveInterface.IsNull() || !data.OverrideNICInterface.IsNull() || !data.SharedObject.IsNull() {
+		t.Fatalf("omitted options were stored from the API: tier=%v drive=%v nic=%v shared=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface, data.SharedObject)
+	}
+}
+
+func TestFileReadyRequiresFilesize(t *testing.T) {
+	if fileReady(&vergeos.File{AllocatedBytes: 4096, UsedBytes: 512}) {
+		t.Fatal("reserved space is not a finished download")
+	}
+	if !fileReady(&vergeos.File{Filesize: 4096}) {
+		t.Fatal("a logical size means the file has content")
+	}
+	if fileReady(nil) || fileReady(&vergeos.File{}) {
+		t.Fatal("an empty file is not ready")
 	}
 }
 
