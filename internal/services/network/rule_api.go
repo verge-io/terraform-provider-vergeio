@@ -145,13 +145,14 @@ func (a *RuleApi) deleteRule(ctx context.Context, vnetID, key int, apply bool) (
 	if rule.SystemRule {
 		return nil, &systemRuleError{Name: rule.Name}
 	}
-	if err := a.sdk.VNetRules.Delete(ctx, key); err != nil {
-		if vergeos.IsNotFoundError(err) {
-			return a.finishApply(ctx, vnetID, false, apply)
-		}
+	raw := a.sdk.VNetRules.Delete(ctx, key)
+	if err := confirmDeleted(raw, namedRow("firewall rule", key, rule.Name), func() error {
+		_, getErr := a.sdk.VNetRules.Get(ctx, key)
+		return getErr
+	}); err != nil {
 		return nil, err
 	}
-	return a.finishApply(ctx, vnetID, true, apply)
+	return a.finishApply(ctx, vnetID, raw == nil, apply)
 }
 
 func (a *RuleApi) managedRules(ctx context.Context, vnetID int) ([]firewallRule, error) {
@@ -186,10 +187,11 @@ func (a *RuleApi) applyChanges(ctx context.Context, changes []ruleChange) error 
 				return fmt.Errorf("update firewall rule %d: %w", change.Key, err)
 			}
 		case ruleDelete:
-			if err := a.sdk.VNetRules.Delete(ctx, change.Key); err != nil {
-				if vergeos.IsNotFoundError(err) {
-					continue
-				}
+			raw := a.sdk.VNetRules.Delete(ctx, change.Key)
+			if err := confirmDeleted(raw, namedRow("firewall rule", change.Key, ""), func() error {
+				_, getErr := a.sdk.VNetRules.Get(ctx, change.Key)
+				return getErr
+			}); err != nil {
 				return fmt.Errorf("delete firewall rule %d: %w", change.Key, err)
 			}
 		default:

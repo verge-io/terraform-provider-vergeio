@@ -821,16 +821,27 @@ func deleteDNSView(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if id <= 0 {
 		return nil
 	}
+	row := namedRow("DNS view", id, "")
+	get := func() error {
+		_, err := sdk.VNetDNSViews.Get(ctx, id)
+		return err
+	}
 	err := sdk.VNetDNSViews.Delete(ctx, id)
-	if err == nil || vergeos.IsNotFoundError(err) {
+	if err == nil {
 		return nil
+	}
+	if vergeos.IsNotFoundError(err) {
+		return confirmDeleted(err, row, get)
 	}
 	if childErr := deleteViewChildren(ctx, sdk, id); childErr != nil {
 		return fmt.Errorf("delete DNS view %d: %w (zones were left in place: %v)", id, err, childErr)
 	}
 	retry := sdk.VNetDNSViews.Delete(ctx, id)
-	if retry == nil || vergeos.IsNotFoundError(retry) {
+	if retry == nil {
 		return nil
+	}
+	if vergeos.IsNotFoundError(retry) {
+		return confirmDeleted(retry, row, get)
 	}
 	return fmt.Errorf("delete DNS view %d: %w", id, retry)
 }
@@ -855,16 +866,27 @@ func deleteDNSZone(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if id <= 0 {
 		return nil
 	}
+	row := namedRow("DNS zone", id, "")
+	get := func() error {
+		_, err := sdk.VNetDNSZones.Get(ctx, id)
+		return err
+	}
 	err := sdk.VNetDNSZones.Delete(ctx, id)
-	if err == nil || vergeos.IsNotFoundError(err) {
+	if err == nil {
 		return nil
+	}
+	if vergeos.IsNotFoundError(err) {
+		return confirmDeleted(err, row, get)
 	}
 	if childErr := deleteZoneRecords(ctx, sdk, id); childErr != nil {
 		return fmt.Errorf("delete DNS zone %d: %w (records were left in place: %v)", id, err, childErr)
 	}
 	retry := sdk.VNetDNSZones.Delete(ctx, id)
-	if retry == nil || vergeos.IsNotFoundError(retry) {
+	if retry == nil {
 		return nil
+	}
+	if vergeos.IsNotFoundError(retry) {
+		return confirmDeleted(retry, row, get)
 	}
 	return fmt.Errorf("delete DNS zone %d: %w", id, retry)
 }
@@ -887,11 +909,16 @@ func deleteDNSRecord(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if id <= 0 {
 		return nil
 	}
-	if err := sdk.VNetDNSRecords.Delete(ctx, id); err != nil {
-		if vergeos.IsNotFoundError(err) {
-			return nil
-		}
-		return fmt.Errorf("delete DNS record %d: %w", id, err)
+	raw := sdk.VNetDNSRecords.Delete(ctx, id)
+	err := confirmDeleted(raw, namedRow("DNS record", id, ""), func() error {
+		_, getErr := sdk.VNetDNSRecords.Get(ctx, id)
+		return getErr
+	})
+	if err == nil {
+		return nil
 	}
-	return nil
+	if vergeos.IsNotFoundError(raw) {
+		return err
+	}
+	return fmt.Errorf("delete DNS record %d: %w", id, err)
 }

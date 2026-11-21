@@ -71,7 +71,10 @@ func (a *vpnAPI) createIPSec(ctx context.Context, data *ipsecModel) error {
 // in state. The next apply would create another row, and network destroy
 // stays blocked while this one remains.
 func dropCreatedIPSec(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
-	if err := sdk.VNetIPSecs.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	if err := confirmDeleted(sdk.VNetIPSecs.Delete(ctx, id), namedRow("IPsec configuration", id, ""), func() error {
+		_, getErr := sdk.VNetIPSecs.Get(ctx, id)
+		return getErr
+	}); err != nil {
 		return fmt.Errorf("IPsec configuration %d was created but not stored in state: %w (delete failed: %v)", id, cause, err)
 	}
 	return fmt.Errorf("IPsec configuration %d was created but not stored in state, and the row was removed: %w", id, cause)
@@ -148,10 +151,10 @@ func (a *vpnAPI) deleteIPSec(ctx context.Context, data *ipsecModel) error {
 		}
 		return fmt.Errorf("IPsec configuration %d still has phase 1 %s. Delete vergeio_network_ipsec_connection first so phase 2 is removed before phase 1. %s", id, strings.Join(names, ", "), vpnDeleteOrder)
 	}
-	if err := a.sdk.VNetIPSecs.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-		return err
-	}
-	return nil
+	return confirmDeleted(a.sdk.VNetIPSecs.Delete(ctx, id), namedRow("IPsec configuration", id, ""), func() error {
+		_, getErr := a.sdk.VNetIPSecs.Get(ctx, id)
+		return getErr
+	})
 }
 
 func ipsecUpdateRequest(data *ipsecModel) *vergeos.VNetIPSecUpdateRequest {
