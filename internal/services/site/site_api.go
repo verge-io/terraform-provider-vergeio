@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/verge-io/govergeos"
@@ -160,9 +161,21 @@ func (a *API) updateSite(ctx context.Context, plan, state *siteModel, password s
 	return a.readSite(ctx, plan)
 }
 
-func (a *API) deleteSite(ctx context.Context, id int) error {
+func (a *API) deleteSite(ctx context.Context, data *siteModel) error {
 	if err := a.requireSDK(); err != nil {
 		return err
+	}
+	id, err := parseID(data.ID, "site")
+	if err != nil {
+		return err
+	}
+	current, getErr := a.sdk.Sites.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureSiteOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	if err := a.deleteSiteChildren(ctx, id); err != nil {
 		return err

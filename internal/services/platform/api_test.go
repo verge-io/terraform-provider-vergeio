@@ -970,11 +970,7 @@ func TestWebhookURLAndDelivery(t *testing.T) {
 		t.Fatalf("status = %s", hook.Status.ValueString())
 	}
 
-	id, err := parseID(next.ID, "webhook destination")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := api.deleteWebhookURL(ctx, id); err != nil {
+	if err := api.deleteWebhookURL(ctx, dest); err != nil {
 		t.Fatal(err)
 	}
 	if len(fake.urls) != 0 || len(fake.hooks) != 0 {

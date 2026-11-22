@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -139,6 +140,14 @@ func (api *SnapshotProfileApi) deleteProfile(ctx context.Context, data *Snapshot
 	id, err := parseID(data.Id, "snapshot profile")
 	if err != nil {
 		return err
+	}
+	current, getErr := api.sdk.SnapshotProfiles.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureProfileOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	periods, err := api.sdk.SnapshotProfilePeriods.ListByProfile(ctx, id)
 	if err != nil && !vergeos.IsNotFoundError(err) {

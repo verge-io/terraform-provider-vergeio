@@ -142,6 +142,111 @@ func testAccCheckTagCategoryKeyReuseDestroy(s *terraform.State) error {
 	})
 }
 
+// TestAccTagCategory_KeyReuseDestroyRefreshOff covers #322. Destroy with
+// refresh off must leave the row that now holds the stored key.
+func TestAccTagCategory_KeyReuseDestroyRefreshOff(t *testing.T) {
+	acctest.PreCheck(t)
+	name := acctest.Name("tagcat-kr322")
+	foreignName := acctest.Name("tagcat-kr322-f")
+	config := testAccTagCategoryOnly(name, "mine")
+
+	var managedKey int
+	var foreignKey int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignKey <= 0 {
+			return
+		}
+		_ = client.TagCategories.Delete(context.Background(), foreignKey)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		AdditionalCLIOptions:     acctest.PlanWithoutRefresh(),
+		CheckDestroy:             testAccCheckTagCategoryKeyReuseDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_tag_category.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_tag_category.test", "created"),
+					func(s *terraform.State) error {
+						rs := s.RootModule().Resources["vergeio_tag_category.test"]
+						id, err := acctest.ResourceID(s, "vergeio_tag_category.test")
+						if err != nil {
+							return err
+						}
+						managedKey = id
+						if rs.Primary.Attributes["created"] == "" || rs.Primary.Attributes["created"] == "0" {
+							return fmt.Errorf("created is %q", rs.Primary.Attributes["created"])
+						}
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := client.TagCategories.Delete(ctx, managedKey); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed tag category %d: %v", managedKey, err)
+					}
+					acctest.WaitUntilMissing(t, func() error {
+						_, err := client.TagCategories.Get(ctx, managedKey)
+						return err
+					}, fmt.Sprintf("tag category %d", managedKey))
+					created, err := client.TagCategories.Create(ctx, &vergeos.TagCategoryCreateRequest{
+						Name:        foreignName,
+						Description: "belongs to someone else",
+					})
+					if err != nil {
+						t.Fatalf("create foreign tag category: %v", err)
+					}
+					foreignKey = created.Key.Int()
+					keyReused = foreignKey == managedKey
+					t.Logf("managed tag category key=%d; foreign key=%d created=%d reused=%v", managedKey, foreignKey, created.Created, keyReused)
+				},
+				Config: acctest.Config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_tag_category.test", plancheck.ResourceActionDestroy),
+					},
+				},
+				Check: func(*terraform.State) error {
+					if err := acctest.ForeignPresent(foreignKey, foreignName, keyReused, func(ctx context.Context) (string, error) {
+						client, err := acctest.SDKClient()
+						if err != nil {
+							return "", err
+						}
+						got, err := client.TagCategories.Get(ctx, foreignKey)
+						if err != nil {
+							return "", err
+						}
+						return got.Name, nil
+					}); err != nil {
+						return err
+					}
+					client, err := acctest.SDKClient()
+					if err != nil {
+						return err
+					}
+					if err := client.TagCategories.Delete(context.Background(), foreignKey); err != nil && !vergeos.IsNotFoundError(err) {
+						return fmt.Errorf("delete foreign tag category %d: %w", foreignKey, err)
+					}
+					foreignKey = 0
+					return nil
+				},
+			},
+		},
+	})
+}
+
 func testAccTagCategoryOnly(name, description string) string {
 	if err := acctest.RequirePrefix(name); err != nil {
 		panic(err)

@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -227,6 +228,14 @@ func (api *APIKeyApi) deleteAPIKey(ctx context.Context, data *APIKeyResourceMode
 	id, err := parseID(data.Id, "API key")
 	if err != nil {
 		return err
+	}
+	current, getErr := api.sdk.UserAPIKeys.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureAPIKeyOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	if err := api.sdk.UserAPIKeys.Delete(ctx, id); err != nil {
 		if vergeos.IsNotFoundError(err) {

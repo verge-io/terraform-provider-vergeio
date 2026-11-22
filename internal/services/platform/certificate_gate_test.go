@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -176,7 +177,7 @@ func TestCertificateDeleteHoldsTheGate(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- api.deleteCertificate(context.Background(), id)
+		done <- api.deleteCertificate(context.Background(), &certificateModel{ID: types.StringValue(strconv.Itoa(id))})
 	}()
 	select {
 	case <-entered:

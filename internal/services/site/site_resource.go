@@ -155,7 +155,7 @@ func (r *siteResource) Schema(ctx context.Context, req resource.SchemaRequest, r
 			"incoming_management_enabled": volatileBool("Whether the remote system can manage this system."),
 			"remote_user":                 volatileString("Remote user stored by VergeOS."),
 			"last_stat_update":            timestampAttr("Time statistics were last updated, as seconds since the epoch."),
-			"created":                     timestampAttr("Unix time when VergeOS created the site. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another site, and refresh drops this resource. A name change on the same site still updates in place."),
+			"created":                     timestampAttr("Unix time when VergeOS created the site. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another site, and refresh drops this resource. Destroy without a refresh leaves the other row. A name change on the same site still updates in place."),
 			"modified":                    timestampAttr("Time the site was last modified, as seconds since the epoch."),
 			"creator":                     stableString("User that created the site."),
 		},
@@ -238,16 +238,11 @@ func (r *siteResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := parseID(data.ID, "site")
-	if err != nil {
+	if err := r.api.deleteSite(ctx, &data); err != nil {
 		resp.Diagnostics.AddError("Error deleting site", err.Error())
 		return
 	}
-	if err := r.api.deleteSite(ctx, id); err != nil {
-		resp.Diagnostics.AddError("Error deleting site", err.Error())
-		return
-	}
-	tflog.Debug(ctx, fmt.Sprintf("deleted site %d", id))
+	tflog.Debug(ctx, fmt.Sprintf("deleted site %s", data.ID.ValueString()))
 }
 
 func (r *siteResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {

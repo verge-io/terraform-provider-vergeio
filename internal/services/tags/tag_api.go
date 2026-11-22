@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -154,6 +155,14 @@ func (ta *TagsApi) deleteTag(ctx context.Context, data *TagResourceModel) error 
 	id, err := parseID(data.Id, "tag")
 	if err != nil {
 		return err
+	}
+	current, getErr := ta.sdk.Tags.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureTagOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	if err := ta.sdk.Tags.Delete(ctx, id); err != nil {
 		if vergeos.IsNotFoundError(err) {

@@ -247,6 +247,8 @@ func TestTagCategoryDeleteWarnsAboutCascade(t *testing.T) {
 		switch {
 		case r.URL.Path == "/version.json":
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tag_categories/4":
+			_, _ = w.Write([]byte(`{"$key":4,"name":"env","created":1700000000}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tag_categories/4":
 			deleted.Store(true)
 			_, _ = w.Write([]byte(`{"response":"OK"}`))

@@ -145,6 +145,113 @@ func testAccCheckSiteKeyReuseDestroy(s *terraform.State) error {
 	})
 }
 
+// TestAccSite_KeyReuseDestroyRefreshOff covers #322. Destroy with refresh
+// off must leave the site that now holds the stored key.
+func TestAccSite_KeyReuseDestroyRefreshOff(t *testing.T) {
+	acctest.PreCheck(t)
+	name := acctest.Name("site-kr322")
+	foreignName := acctest.Name("site-kr322-f")
+	config := testAccSiteOnly(name, "https://203.0.113.50")
+
+	var managedKey int
+	var foreignKey int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignKey <= 0 {
+			return
+		}
+		_ = client.Sites.Delete(context.Background(), foreignKey)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		AdditionalCLIOptions:     acctest.PlanWithoutRefresh(),
+		CheckDestroy:             testAccCheckSiteKeyReuseDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_site.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_site.test", "created"),
+					func(s *terraform.State) error {
+						rs := s.RootModule().Resources["vergeio_site.test"]
+						id, err := acctest.ResourceID(s, "vergeio_site.test")
+						if err != nil {
+							return err
+						}
+						managedKey = id
+						if rs.Primary.Attributes["created"] == "" || rs.Primary.Attributes["created"] == "0" {
+							return fmt.Errorf("created is %q", rs.Primary.Attributes["created"])
+						}
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := client.Sites.Delete(ctx, managedKey); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed site %d: %v", managedKey, err)
+					}
+					acctest.WaitUntilMissing(t, func() error {
+						_, err := client.Sites.Get(ctx, managedKey)
+						return err
+					}, fmt.Sprintf("site %d", managedKey))
+					enabled := false
+					created, err := client.Sites.Create(ctx, &vergeos.SiteCreateRequest{
+						Name:    foreignName,
+						URL:     "https://203.0.113.51",
+						Enabled: &enabled,
+					})
+					if err != nil {
+						t.Fatalf("create foreign site: %v", err)
+					}
+					foreignKey = created.Key.Int()
+					keyReused = foreignKey == managedKey
+					t.Logf("managed site key=%d; foreign key=%d created=%d reused=%v", managedKey, foreignKey, created.Created, keyReused)
+				},
+				Config: acctest.Config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_site.test", plancheck.ResourceActionDestroy),
+					},
+				},
+				Check: func(*terraform.State) error {
+					if err := acctest.ForeignPresent(foreignKey, foreignName, keyReused, func(ctx context.Context) (string, error) {
+						client, err := acctest.SDKClient()
+						if err != nil {
+							return "", err
+						}
+						got, err := client.Sites.Get(ctx, foreignKey)
+						if err != nil {
+							return "", err
+						}
+						return got.Name, nil
+					}); err != nil {
+						return err
+					}
+					client, err := acctest.SDKClient()
+					if err != nil {
+						return err
+					}
+					if err := client.Sites.Delete(context.Background(), foreignKey); err != nil && !vergeos.IsNotFoundError(err) {
+						return fmt.Errorf("delete foreign site %d: %w", foreignKey, err)
+					}
+					foreignKey = 0
+					return nil
+				},
+			},
+		},
+	})
+}
+
 func testAccSiteOnly(name, rawURL string) string {
 	if err := acctest.RequirePrefix(name); err != nil {
 		panic(err)

@@ -153,6 +153,76 @@ func TestSiteReadKeepsSameCreatedAndImport(t *testing.T) {
 	}
 }
 
+func TestSiteDeleteChecksCreated(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		syncs      string
+		created    int64
+		wantDelete bool
+		wantErr    bool
+	}{
+		{name: "foreign", status: http.StatusOK, body: `{"$key":1,"name":"other","url":"https://other.invalid","created":1800000000}`, syncs: `[{"$key":4,"site":1,"name":"foreign-sync"}]`, created: 1700000000},
+		{name: "same", status: http.StatusOK, body: `{"$key":1,"name":"renamed","url":"https://mine.invalid","created":1700000000}`, syncs: `[]`, created: 1700000000, wantDelete: true},
+		{name: "missing", status: http.StatusNotFound, syncs: `[]`, created: 1700000000, wantDelete: true},
+		{name: "read error", status: http.StatusInternalServerError, created: 1700000000, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.2.2"}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v4/sites/1":
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				case r.Method == http.MethodGet && (r.URL.Path == "/api/v4/site_syncs_outgoing" || r.URL.Path == "/api/v4/site_syncs_incoming"):
+					_, _ = w.Write([]byte(tc.syncs))
+				case r.Method == http.MethodDelete:
+					deletes++
+					if tc.status == http.StatusNotFound && r.URL.Path == "/api/v4/sites/1" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					_, _ = w.Write([]byte(`{"response":"OK"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			ctx := context.Background()
+			item := configuredSite(t, server.URL)
+			schemaResp := &fwresource.SchemaResponse{}
+			item.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+			state := tfsdk.State{Schema: schemaResp.Schema}
+			diags := state.Set(ctx, &siteModel{
+				ID:      types.StringValue("1"),
+				Name:    types.StringValue("mine"),
+				URL:     types.StringValue("https://mine.invalid"),
+				Created: types.Int64Value(tc.created),
+			})
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			resp := &fwresource.DeleteResponse{}
+			item.Delete(ctx, fwresource.DeleteRequest{State: state}, resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("error = %v, want error %t", resp.Diagnostics, tc.wantErr)
+			}
+			if deletes > 0 != tc.wantDelete {
+				t.Fatalf("deletes = %d, want delete %t", deletes, tc.wantDelete)
+			}
+		})
+	}
+}
+
 func configuredSite(t *testing.T, host string) *siteResource {
 	t.Helper()
 	item := &siteResource{}

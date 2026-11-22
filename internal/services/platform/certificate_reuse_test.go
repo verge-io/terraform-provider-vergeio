@@ -159,3 +159,68 @@ func TestCertificateReadKeepsSameCreatedAndImport(t *testing.T) {
 		t.Fatalf("import read = description %s created %s", filled.Description, filled.Created)
 	}
 }
+
+func TestCertificateDeleteChecksCreated(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		created    int64
+		wantDelete bool
+		wantErr    bool
+	}{
+		{name: "foreign", status: http.StatusOK, body: `{"$key":5,"domainname":"other.example.com","type":"self_signed","created":1800000000}`, created: 1700000000},
+		{name: "same", status: http.StatusOK, body: `{"$key":5,"domainname":"mine.example.com","type":"self_signed","created":1700000000}`, created: 1700000000, wantDelete: true},
+		{name: "missing", status: http.StatusNotFound, created: 1700000000, wantDelete: true},
+		{name: "read error", status: http.StatusInternalServerError, created: 1700000000, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.2.2"}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v4/certificates/5":
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/certificates/5":
+					deletes++
+					if tc.status == http.StatusNotFound {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					_, _ = w.Write([]byte(`{"response":"OK"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			ctx := context.Background()
+			item := configuredCertificate(t, server.URL)
+			schemaResp := &fwresource.SchemaResponse{}
+			item.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+			state := tfsdk.State{Schema: schemaResp.Schema}
+			diags := state.Set(ctx, &certificateModel{
+				ID:      types.StringValue("5"),
+				Created: types.Int64Value(tc.created),
+			})
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			resp := &fwresource.DeleteResponse{}
+			item.Delete(ctx, fwresource.DeleteRequest{State: state}, resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("error = %v, want error %t", resp.Diagnostics, tc.wantErr)
+			}
+			if deletes > 0 != tc.wantDelete {
+				t.Fatalf("deletes = %d, want delete %t", deletes, tc.wantDelete)
+			}
+		})
+	}
+}
