@@ -242,7 +242,7 @@ func TestReadTenantCopyAfterImport(t *testing.T) {
 		case r.URL.Path == "/version.json":
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case r.URL.Path == "/api/v4/tenants/40" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":true}`))
+			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
 			http.NotFound(w, r)
@@ -260,7 +260,7 @@ func TestReadTenantCopyAfterImport(t *testing.T) {
 	}
 }
 
-func TestReadTenantCopyStoresLiveIsolation(t *testing.T) {
+func TestReadTenantCopyKeepsConfiguredIsolate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
@@ -270,7 +270,7 @@ func TestReadTenantCopyStoresLiveIsolation(t *testing.T) {
 		case r.URL.Path == "/version.json":
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
 		case r.URL.Path == "/api/v4/tenants/40" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false}`))
+			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":true}`))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
 			http.NotFound(w, r)
@@ -279,12 +279,15 @@ func TestReadTenantCopyStoresLiveIsolation(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	api := testTenantAPI(t, server.URL)
-	data := &TenantCopyResourceModel{Id: types.StringValue("40")}
+	data := &TenantCopyResourceModel{
+		Id:      types.StringValue("40"),
+		Isolate: types.BoolValue(false),
+	}
 	if err := api.readTenantCopy(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
 	if data.Isolate.IsNull() || data.Isolate.ValueBool() {
-		t.Fatalf("isolate = %#v, want false from the live tenant", data.Isolate)
+		t.Fatalf("isolate = %#v, want the configured false kept", data.Isolate)
 	}
 }
 

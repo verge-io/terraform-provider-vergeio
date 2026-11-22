@@ -30,7 +30,7 @@ This is not the [`vergeio_tenant_clone` action](../actions/tenant_clone.html). T
 
 ### Optional
 
-- `isolate` (Boolean) Post `isolateon` on the copy when it is not already isolated. Defaults to true. false leaves the connectivity the clone copied. This resource does not post `isolateoff`.
+- `isolate` (Boolean) Post `isolateon` on the copy when it is not already isolated. Defaults to true. false leaves the connectivity the clone copied, including isolation copied from the source. This resource does not post `isolateoff`. Refresh keeps this value.
 
 ### Read-Only
 
@@ -38,7 +38,7 @@ This is not the [`vergeio_tenant_clone` action](../actions/tenant_clone.html). T
 
 ## Import
 
-Import with the copy's tenant key, or `source/copy` when the source tenant key is known. A copy key alone is enough for refresh. `source/copy` also stores `tenant_id`. Refresh stores `isolate` from the tenant's live isolation flag, so the next plan does not replace the copy when that flag matches the configuration. The default is true.
+Import with the copy's tenant key, or `source/copy` when the source tenant key is known. A copy key alone is enough for refresh. `source/copy` also stores `tenant_id`. Import stores `isolate` as true, the default. Refresh keeps that value. It does not copy the tenant `isolate` field, because `false` leaves copied connectivity in place and does not post `isolateoff`.
 
 ```shell
 terraform import vergeio_tenant_copy.example 40

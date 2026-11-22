@@ -76,11 +76,12 @@ func (r *TenantCopyResource) Schema(ctx context.Context, req resource.SchemaRequ
 				},
 			},
 			"isolate": schema.BoolAttribute{
-				MarkdownDescription: "Post isolateon on the copy when it is not already isolated. Defaults to true. false leaves the connectivity the clone copied. This resource does not post isolateoff.",
+				MarkdownDescription: "Post isolateon on the copy when it is not already isolated. Defaults to true. false leaves the connectivity the clone copied, including isolation copied from the source. This resource does not post isolateoff, and refresh does not replace this value with the tenant isolate field.",
 				Optional:            true,
 				Computed:            true,
 				Default:             booldefault.StaticBool(true),
 				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
 					boolplanmodifier.RequiresReplace(),
 				},
 			},
@@ -179,8 +180,7 @@ func (r *TenantCopyResource) ImportState(ctx context.Context, req resource.Impor
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), sourceID)...)
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), copyID)...)
-	// Default matches the schema. Read replaces it with the live isolate flag
-	// before the next plan, so a null value cannot force a replacement.
+	// The schema default. Refresh keeps this value. It is not the tenant isolate field.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("isolate"), true)...)
 }
 

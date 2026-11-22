@@ -96,7 +96,13 @@ func (a *API) readTenantCopy(ctx context.Context, data *TenantCopyResourceModel)
 	}
 	data.Id = idString(got.Key.Int())
 	data.Name = types.StringValue(got.Name)
-	data.Isolate = types.BoolValue(got.Isolate)
+	// isolate is the configured choice to post isolateon. false does not
+	// post isolateoff, so the copied tenant can stay isolated. Writing that
+	// live flag back would not match the configuration and RequiresReplace
+	// would clone again on every plan. A missing value uses the default true.
+	if data.Isolate.IsNull() || data.Isolate.IsUnknown() {
+		data.Isolate = types.BoolValue(true)
+	}
 	return nil
 }
 
