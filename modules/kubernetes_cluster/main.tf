@@ -53,53 +53,66 @@ locals {
     "vm_services",
   ])
 
-  firewall = merge(
-    {
-      cluster = {
+  firewall_rules = [
+    for rule in [
+      {
+        key               = "cluster"
+        include           = true
         name              = "${var.name}-allow-cluster"
-        orderid           = 10
         protocol          = "any"
         direction         = "incoming"
         destination_ports = ""
         source_ip         = var.cidr
-      }
-      api = {
+      },
+      {
+        key               = "api"
+        include           = true
         name              = "${var.name}-allow-api"
-        orderid           = 20
         protocol          = "tcp"
         direction         = "incoming"
         destination_ports = "6443"
         source_ip         = var.api_source_cidr == null ? "" : var.api_source_cidr
-      }
-      rke2 = {
+      },
+      {
+        key               = "rke2"
+        include           = true
         name              = "${var.name}-allow-rke2"
-        orderid           = 30
         protocol          = "tcp"
         direction         = "incoming"
         destination_ports = "9345"
         source_ip         = var.api_source_cidr == null ? "" : var.api_source_cidr
-      }
-      https = {
+      },
+      {
+        key               = "https"
+        include           = true
         name              = "${var.name}-allow-https-out"
-        orderid           = 40
         protocol          = "tcp"
         direction         = "outgoing"
         destination_ports = "443"
         source_ip         = ""
-      }
-    },
-    var.ssh_source_cidr == null ? {} : {
-      ssh = {
+      },
+      {
+        key               = "ssh"
+        include           = var.ssh_source_cidr != null
         name              = "${var.name}-allow-ssh"
-        orderid           = 50
         protocol          = "tcp"
         direction         = "incoming"
         destination_ports = "22"
-        source_ip         = var.ssh_source_cidr
-      }
-    },
-  )
-  firewall_last = max([for rule in local.firewall : rule.orderid]...)
+        source_ip         = var.ssh_source_cidr == null ? "" : var.ssh_source_cidr
+      },
+    ] : rule if rule.include
+  ]
+  firewall = {
+    for index, rule in local.firewall_rules : rule.key => {
+      name              = rule.name
+      orderid           = index + 1
+      protocol          = rule.protocol
+      direction         = rule.direction
+      destination_ports = rule.destination_ports
+      source_ip         = rule.source_ip
+    }
+  }
+  firewall_last = length(local.firewall_rules)
 
   service_cluster_ip = cidrhost(var.service_cidr, 1)
   server_dns_names = distinct(concat(
