@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -56,6 +57,12 @@ func (a *vpnAPI) createIPSec(ctx context.Context, data *ipsecModel) error {
 	data.ID = typesStringID(id)
 	tflog.Debug(ctx, fmt.Sprintf("Created IPsec configuration %s on network %d", data.ID.ValueString(), networkID))
 
+	// A reused IPsec key still has the previous network's phase 1 rows.
+	// Those rows point at this key as soon as it is issued.
+	if err := deletePhase1sForIPSec(ctx, a.sdk, id); err != nil {
+		return dropCreatedIPSec(ctx, a.sdk, id, fmt.Errorf("phase 1 rows already on IPsec configuration %d were not removed: %w", id, err))
+	}
+
 	if ipsecCharonConfigured(data) {
 		if _, err := a.sdk.VNetIPSecs.Update(ctx, id, ipsecUpdateRequest(data)); err != nil {
 			return dropCreatedIPSec(ctx, a.sdk, id, fmt.Errorf("advanced settings were not saved: %w", err))
@@ -89,10 +96,11 @@ func (a *vpnAPI) readIPSec(ctx context.Context, data *ipsecModel) error {
 	if err != nil {
 		return err
 	}
-	if want, ok, err := optionalPositiveID(data.NetworkID); err != nil {
+	if err := ensureIPSecOwned(data, row); err != nil {
 		return err
-	} else if ok && row.VNet.Int() != want {
-		return &vergeos.NotFoundError{Resource: "VNetIPSec", ID: id}
+	}
+	if err := a.absentNetwork(ctx, row.VNet.Int(), namedRow("IPsec configuration", row.Key.Int(), "")); err != nil {
+		return err
 	}
 	// Get does not return the advanced files or several charon settings.
 	// Keep the configured values so refresh does not clear them.
@@ -127,10 +135,39 @@ func (a *vpnAPI) updateIPSec(ctx context.Context, data *ipsecModel) error {
 	if err != nil {
 		return fmt.Errorf("ipsec id: %w", err)
 	}
+	current, err := a.sdk.VNetIPSecs.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureIPSecOwned(data, current); err != nil {
+		return err
+	}
+	if err := a.requireNetwork(ctx, current.VNet.Int(), namedRow("IPsec configuration", id, "")); err != nil {
+		return err
+	}
 	if _, err := a.sdk.VNetIPSecs.Update(ctx, id, ipsecUpdateRequest(data)); err != nil {
 		return err
 	}
 	return a.readIPSec(ctx, data)
+}
+
+// ensureIPSecOwned returns NotFound when the stored key now points at an
+// IPsec configuration on a different network. Skip the check when network_id
+// is unset (import, or destroy before the first read). vnet_ipsecs has no
+// created column on the pinned govergeos client, so a reused key that keeps
+// the same network cannot be told apart.
+func ensureIPSecOwned(data *ipsecModel, row *vergeos.VNetIPSec) error {
+	if data == nil || row == nil {
+		return fmt.Errorf("ipsec read returned no row")
+	}
+	want, ok, err := optionalPositiveID(data.NetworkID)
+	if err != nil {
+		return err
+	}
+	if ok && row.VNet.Int() != want {
+		return &vergeos.NotFoundError{Resource: "VNetIPSec", ID: row.Key.Int()}
+	}
+	return nil
 }
 
 // deleteIPSec refuses while a phase 1 row remains. The connection resource
@@ -139,6 +176,18 @@ func (a *vpnAPI) deleteIPSec(ctx context.Context, data *ipsecModel) error {
 	id, err := parsePositiveID(stringOrEmpty(data.ID))
 	if err != nil {
 		return fmt.Errorf("ipsec id: %w", err)
+	}
+	if _, ok, err := optionalPositiveID(data.NetworkID); err != nil {
+		return fmt.Errorf("network_id: %w", err)
+	} else if ok {
+		current, getErr := a.sdk.VNetIPSecs.Get(ctx, id)
+		foreign, err := shared.ForeignRow(getErr, ensureIPSecOwned(data, current))
+		if err != nil {
+			return err
+		}
+		if foreign {
+			return nil
+		}
 	}
 	phase1s, err := a.sdk.VNetIPSecPhase1s.ListByIPSec(ctx, id)
 	if err != nil {
@@ -151,10 +200,23 @@ func (a *vpnAPI) deleteIPSec(ctx context.Context, data *ipsecModel) error {
 		}
 		return fmt.Errorf("IPsec configuration %d still has phase 1 %s. Delete vergeio_network_ipsec_connection first so phase 2 is removed before phase 1. %s", id, strings.Join(names, ", "), vpnDeleteOrder)
 	}
-	return confirmDeleted(a.sdk.VNetIPSecs.Delete(ctx, id), namedRow("IPsec configuration", id, ""), func() error {
+	return explainIPSecDelete(confirmDeleted(a.sdk.VNetIPSecs.Delete(ctx, id), namedRow("IPsec configuration", id, ""), func() error {
 		_, getErr := a.sdk.VNetIPSecs.Get(ctx, id)
 		return getErr
-	})
+	}))
+}
+
+func deletePhase1sForIPSec(ctx context.Context, sdk *vergeos.Client, ipsecID int) error {
+	phase1s, err := sdk.VNetIPSecPhase1s.ListByIPSec(ctx, ipsecID)
+	if err != nil {
+		return fmt.Errorf("list IPsec phase 1 for configuration %d: %w", ipsecID, err)
+	}
+	for _, phase1 := range phase1s {
+		if err := deletePhase1AfterPhase2(ctx, sdk, phase1.Key.Int()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ipsecUpdateRequest(data *ipsecModel) *vergeos.VNetIPSecUpdateRequest {

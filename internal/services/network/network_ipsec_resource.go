@@ -41,7 +41,7 @@ func (r *NetworkIPSecResource) Metadata(ctx context.Context, req resource.Metada
 
 func (r *NetworkIPSecResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "IPsec settings for one VergeOS network. A network has one of these. Set network_id to vergeio_network.id so Terraform destroys this resource before the network. Destroy is refused while a phase 1 row still exists. Delete vergeio_network_ipsec_connection first. That resource deletes phase 2, then phase 1. Deleting phase 1 while a phase 2 row remains makes later phase 1 deletes fail permanently, and deleting the network does not remove these rows. " + vpnDeleteOrder,
+		MarkdownDescription: "IPsec settings for one VergeOS network. A network has one of these. Set network_id to vergeio_network.id so Terraform destroys this resource before the network. Destroy is refused while a phase 1 row still exists. Delete vergeio_network_ipsec_connection first. That resource deletes phase 2, then phase 1. Deleting phase 1 while a phase 2 row remains makes later phase 1 deletes fail permanently, and deleting the network does not remove these rows. When the network is deleted outside Terraform, refresh removes this resource from state and the next apply creates it on the new network. Creating the network deletes IPsec rows that already point at the new key. The pinned govergeos client does not return created on vnet_ipsecs, so a reused key on a different network is left alone and a reused key that keeps the same network cannot be told apart. " + vpnDeleteOrder,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "IPsec configuration id.",
@@ -169,6 +169,9 @@ func (r *NetworkIPSecResource) Read(ctx context.Context, req resource.ReadReques
 	}
 	if err := r.api.readIPSec(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			if summary, detail, ok := parentMissingDetail(err); ok {
+				resp.Diagnostics.AddWarning(summary, detail)
+			}
 			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
 			if resp.Diagnostics.HasError() {
 				return
@@ -178,9 +181,6 @@ func (r *NetworkIPSecResource) Read(ctx context.Context, req resource.ReadReques
 		}
 		resp.Diagnostics.AddError("Error Reading Network IPsec", err.Error())
 		return
-	}
-	if summary, detail := r.api.parentNetworkWarning(ctx, positiveOrZero(data.NetworkID), namedRow("IPsec configuration", positiveOrZero(data.ID), "")); detail != "" {
-		resp.Diagnostics.AddWarning(summary, detail)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)

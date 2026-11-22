@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -71,6 +72,13 @@ func (a *vpnAPI) createIPSecConnection(ctx context.Context, data *ipsecConnectio
 		return err
 	}
 	phase2Req.Phase1 = phase1.Key.Int()
+	// A reused phase 1 key still has the previous connection's phase 2 rows.
+	if err := deletePhase2Rows(ctx, a.sdk, phase1.Key.Int()); err != nil {
+		if cleanupErr := deletePhase1AfterPhase2(ctx, a.sdk, phase1.Key.Int()); cleanupErr != nil {
+			return fmt.Errorf("phase 2 rows already on phase 1 %d were not removed: %w (phase 1 %d was left in place: %v)", phase1.Key.Int(), err, phase1.Key.Int(), cleanupErr)
+		}
+		return fmt.Errorf("phase 2 rows already on phase 1 %d were not removed, and the phase 1 was removed: %w", phase1.Key.Int(), err)
+	}
 	phase2, err := a.sdk.VNetIPSecPhase2s.Create(ctx, phase2Req)
 	if err != nil {
 		// Create can fail after the phase 2 row is stored. Remove phase 2
@@ -106,10 +114,11 @@ func (a *vpnAPI) readIPSecConnection(ctx context.Context, data *ipsecConnectionM
 	if err != nil {
 		return err
 	}
-	if want, ok, err := optionalPositiveID(data.IPSecID); err != nil {
+	if err := ensurePhase1Owned(data, phase1); err != nil {
 		return err
-	} else if ok && phase1.IPSec.Int() != want {
-		return &vergeos.NotFoundError{Resource: "VNetIPSecPhase1", ID: id}
+	}
+	if err := a.absentIPSecParent(ctx, phase1.IPSec.Int(), namedRow("IPsec phase 1", phase1.Key.Int(), phase1.Name)); err != nil {
+		return err
 	}
 	phase2s, err := a.sdk.VNetIPSecPhase2s.ListByPhase1(ctx, id)
 	if err != nil {
@@ -131,6 +140,16 @@ func (a *vpnAPI) updateIPSecConnection(ctx context.Context, data *ipsecConnectio
 	id, err := parsePositiveID(stringOrEmpty(data.ID))
 	if err != nil {
 		return fmt.Errorf("ipsec connection id: %w", err)
+	}
+	current, err := a.sdk.VNetIPSecPhase1s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensurePhase1Owned(data, current); err != nil {
+		return err
+	}
+	if err := a.requireIPSecParent(ctx, current.IPSec.Int(), namedRow("IPsec phase 1", id, current.Name)); err != nil {
+		return err
 	}
 	if _, err := a.sdk.VNetIPSecPhase1s.Update(ctx, id, phase1UpdateRequest(data)); err != nil {
 		return err
@@ -166,7 +185,38 @@ func (a *vpnAPI) deleteIPSecConnection(ctx context.Context, data *ipsecConnectio
 	if err != nil {
 		return fmt.Errorf("ipsec connection id: %w", err)
 	}
-	return deletePhase1AfterPhase2(ctx, a.sdk, id)
+	if _, ok, err := optionalPositiveID(data.IPSecID); err != nil {
+		return fmt.Errorf("ipsec_id: %w", err)
+	} else if ok {
+		current, getErr := a.sdk.VNetIPSecPhase1s.Get(ctx, id)
+		foreign, err := shared.ForeignRow(getErr, ensurePhase1Owned(data, current))
+		if err != nil {
+			return err
+		}
+		if foreign {
+			return nil
+		}
+	}
+	return explainIPSecDelete(deletePhase1AfterPhase2(ctx, a.sdk, id))
+}
+
+// ensurePhase1Owned returns NotFound when the stored key now points at a
+// phase 1 on a different IPsec configuration. Skip the check when ipsec_id
+// is unset. vnet_ipsec_phase1s has no created column on the pinned govergeos
+// client, so a reused key that keeps the same IPsec configuration cannot be
+// told apart.
+func ensurePhase1Owned(data *ipsecConnectionModel, row *vergeos.VNetIPSecPhase1) error {
+	if data == nil || row == nil {
+		return fmt.Errorf("ipsec phase 1 read returned no row")
+	}
+	want, ok, err := optionalPositiveID(data.IPSecID)
+	if err != nil {
+		return err
+	}
+	if ok && row.IPSec.Int() != want {
+		return &vergeos.NotFoundError{Resource: "VNetIPSecPhase1", ID: row.Key.Int()}
+	}
+	return nil
 }
 
 func selectPhase2(want *ipsecPhase2Model, rows []vergeos.VNetIPSecPhase2) (*vergeos.VNetIPSecPhase2, error) {

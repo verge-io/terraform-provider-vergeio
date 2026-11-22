@@ -101,6 +101,12 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 	data.Id = types.StringValue(fmt.Sprintf("%d", network.Key.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
 
+	// VergeOS can hand this key to a network that was deleted with IPsec
+	// rows still pointing at it. Those rows can be deleted once the key exists.
+	if err := deleteIPSecRows(ctx, nc.sdk, network.Key.Int()); err != nil {
+		return fmt.Errorf("network %s was created, but IPsec rows that already pointed at key %d were not removed: %w", data.Id.ValueString(), network.Key.Int(), err)
+	}
+
 	if _, on := networkPowerRequested(data.PowerState); on {
 		tflog.Debug(ctx, fmt.Sprintf("Powering on network %s after create", data.Id.ValueString()))
 		if err := nc.sdk.Networks.PowerOn(ctx, network.Key.Int()); err != nil {

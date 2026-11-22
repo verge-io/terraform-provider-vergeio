@@ -12,6 +12,10 @@ description: |-
 
 Destroy deletes every phase 2 under that phase 1, then the phase 1. Phase 2 is first because a phase 1 delete while a phase 2 row remains fails and then keeps failing. That includes a phase 2 row this resource does not list. Live security-association rows from `vnet_ipsec_connections` are read and not stored.
 
+When the network or the IPsec configuration is deleted outside Terraform, VergeOS can leave the phase 1 and phase 2 rows in place and refuse to delete them until a network with that key exists. Refresh removes this resource from state. The next apply creates it again. Creating the IPsec configuration deletes phase 1 rows that already point at the new key. Creating this connection deletes phase 2 rows that already point at the new phase 1, then creates the phase 2 from this block.
+
+The pinned govergeos client does not return `created` on `vnet_ipsec_phase1s` or `vnet_ipsec_phase2s`. A reused phase 1 key on a different IPsec configuration is left alone. A reused key that keeps the same IPsec configuration cannot be told apart from the managed row. `terraform destroy -refresh=false` cannot delete these rows while the parent network is gone. Refresh first, or apply so the network is created and the leftover rows are removed, then destroy.
+
 `psk` is not returned by the read this provider uses. Terraform keeps the configured key.
 
 ## Example Usage

@@ -8,7 +8,9 @@ description: |-
 
 # vergeio_network (Resource)
 
-Create an Internal or External vNET resource in VergeIO
+Create an Internal or External vNET resource in VergeIO.
+
+Creating a network deletes IPsec rows that already point at the new key. VergeOS can reuse a deleted network's key and leave that network's IPsec rows attached. Those rows are removed before the network is stored, so the recreated network does not keep the old IPsec configuration.
 
 ## Example Usage
 

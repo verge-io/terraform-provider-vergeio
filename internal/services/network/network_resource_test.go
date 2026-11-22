@@ -132,7 +132,7 @@ func TestNetworkResource_Schema(t *testing.T) {
 	}
 
 	// Check schema description
-	if resp.Schema.MarkdownDescription != "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network." {
+	if resp.Schema.MarkdownDescription != "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network. Create deletes IPsec rows that already point at the new key, so a reused network key does not keep an IPsec configuration from a network that was deleted." {
 		t.Errorf("expected description to refuse destroy while VPN rows remain, got '%s'", resp.Schema.MarkdownDescription)
 	}
 

@@ -218,6 +218,7 @@ func TestDeleteIPSecRefusesWhilePhase1Remains(t *testing.T) {
 
 func TestPhase2CreateFailureRemovesPhase2BeforePhase1(t *testing.T) {
 	var calls []string
+	phase2Posted := false
 	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			calls = append(calls, r.URL.Path)
@@ -228,10 +229,15 @@ func TestPhase2CreateFailureRemovesPhase2BeforePhase1(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
 			writeBody(w, `{"$key":7,"ipsec":5,"name":"branch","remote_gateway":"203.0.113.10"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			phase2Posted = true
 			writeBody(w, `{"$key":8}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/8":
 			http.Error(w, "read failed", http.StatusInternalServerError)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			if !phase2Posted {
+				writeBody(w, `[]`)
+				return
+			}
 			writeBody(w, `[{"$key":8,"phase1":7,"name":"lan","local":"192.168.0.0/24"}]`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/8":
 			writeBody(w, `{}`)
@@ -262,6 +268,7 @@ func TestPhase2CreateFailureRemovesPhase2BeforePhase1(t *testing.T) {
 
 func TestCreateIPSecConnectionReadsStatus(t *testing.T) {
 	var sawStatus bool
+	phase2Posted := false
 	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
@@ -269,11 +276,20 @@ func TestCreateIPSecConnectionReadsStatus(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
 			writeBody(w, `{"$key":7,"ipsec":5,"name":"branch","enabled":true,"remote_gateway":"203.0.113.10","keyexchange":"ikev2","auth":"psk","auto":"start"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			phase2Posted = true
 			writeBody(w, `{"$key":8}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/8":
 			writeBody(w, `{"$key":8,"phase1":7,"name":"lan","enabled":true,"mode":"tunnel","local":"192.168.0.0/24","remote":"198.51.100.0/24","protocol":"esp"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			if !phase2Posted {
+				writeBody(w, `[]`)
+				return
+			}
 			writeBody(w, `[{"$key":8,"phase1":7,"name":"lan","enabled":true,"mode":"tunnel","local":"192.168.0.0/24","remote":"198.51.100.0/24","protocol":"esp"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeBody(w, `{"$key":5,"vnet":12,"enabled":true}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_connections":
 			sawStatus = true
 			writeBody(w, `[]`)
@@ -534,6 +550,101 @@ func TestWireGuardFirewallFieldsRequireReplace(t *testing.T) {
 	}
 }
 
+func TestCreateIPSecDeletesPhase1AlreadyOnKey(t *testing.T) {
+	var calls []string
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			calls = append(calls, r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsecs":
+			writeBody(w, `{"$key":2}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/2":
+			writeBody(w, `{"$key":2,"vnet":18,"enabled":true,"mode":"normal"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeBody(w, `[{"$key":9,"ipsec":2,"name":"old"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			if len(calls) == 0 {
+				writeBody(w, `[{"$key":4,"phase1":9,"name":"lan-to-lan"}]`)
+				return
+			}
+			writeBody(w, `[]`)
+		case r.Method == http.MethodDelete && (r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4" || r.URL.Path == "/api/v4/vnet_ipsec_phase1s/9"):
+			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/18":
+			writeBody(w, `{"$key":18,"name":"lan"}`)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	err := api.createIPSec(t.Context(), &ipsecModel{
+		NetworkID: types.StringValue("18"),
+		Enabled:   types.BoolValue(true),
+		Mode:      types.StringValue("normal"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/api/v4/vnet_ipsec_phase2s/4", "/api/v4/vnet_ipsec_phase1s/9"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("deletes = %v", calls)
+	}
+}
+
+func TestCreateIPSecConnectionDeletesPhase2AlreadyOnKey(t *testing.T) {
+	var calls []string
+	phase2Posted := false
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			calls = append(calls, r.URL.Path)
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeBody(w, `{"$key":7}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
+			writeBody(w, `{"$key":7,"ipsec":2,"name":"branch","enabled":true,"remote_gateway":"203.0.113.10"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			if !phase2Posted {
+				writeBody(w, `[{"$key":3,"phase1":7,"name":"stale","local":"10.0.0.0/24"}]`)
+				return
+			}
+			writeBody(w, `[{"$key":8,"phase1":7,"name":"lan","local":"192.168.0.0/24"}]`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/3":
+			writeBody(w, `{}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			phase2Posted = true
+			writeBody(w, `{"$key":8}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/8":
+			writeBody(w, `{"$key":8,"phase1":7,"name":"lan","local":"192.168.0.0/24"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/2":
+			writeBody(w, `{"$key":2,"vnet":18,"enabled":true}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/18":
+			writeBody(w, `{"$key":18,"name":"lan"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_connections":
+			writeBody(w, `[]`)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	err := api.createIPSecConnection(t.Context(), &ipsecConnectionModel{
+		IPSecID:       types.StringValue("2"),
+		Name:          types.StringValue("branch"),
+		RemoteGateway: types.StringValue("203.0.113.10"),
+		Phase2: &ipsecPhase2Model{
+			Name:  types.StringValue("lan"),
+			Local: types.StringValue("192.168.0.0/24"),
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != "/api/v4/vnet_ipsec_phase2s/3" {
+		t.Fatalf("deletes = %v, want only the stale phase 2", calls)
+	}
+}
+
 func TestCreateIPSecRemovesRowWhenAdvancedUpdateFails(t *testing.T) {
 	var deleted bool
 	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
@@ -542,6 +653,8 @@ func TestCreateIPSecRemovesRowWhenAdvancedUpdateFails(t *testing.T) {
 			writeBody(w, `{"$key":5}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
 			writeBody(w, `{"$key":5,"vnet":12,"enabled":true,"mode":"normal"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeBody(w, `[]`)
 		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnet_ipsecs/5":
 			http.Error(w, "advanced failed", http.StatusInternalServerError)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsecs/5":
@@ -566,6 +679,7 @@ func TestCreateIPSecRemovesRowWhenAdvancedUpdateFails(t *testing.T) {
 
 func TestCreateIPSecConnectionRemovesRowsWhenReadFails(t *testing.T) {
 	phase1Reads := 0
+	phase2Posted := false
 	var calls []string
 	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
@@ -582,10 +696,15 @@ func TestCreateIPSecConnectionRemovesRowsWhenReadFails(t *testing.T) {
 			}
 			writeBody(w, `{"$key":7,"ipsec":5,"name":"branch","enabled":true,"remote_gateway":"203.0.113.10"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			phase2Posted = true
 			writeBody(w, `{"$key":8}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/8":
 			writeBody(w, `{"$key":8,"phase1":7,"name":"lan","local":"192.168.0.0/24"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			if !phase2Posted {
+				writeBody(w, `[]`)
+				return
+			}
 			writeBody(w, `[{"$key":8,"phase1":7,"name":"lan","local":"192.168.0.0/24"}]`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/8":
 			writeBody(w, `{}`)
