@@ -1,10 +1,9 @@
 # A certificate VergeOS generates for the UI.
-# Changing type or domain_name replaces the certificate.
-# Changing domain_list, key_type, or rsa_key_size replaces this self_signed certificate.
+# Changing type, domain_name, or domain_list replaces the certificate.
+# A self_signed certificate is always RSA 2048.
 
 resource "vergeio_certificate" "example" {
   type        = "self_signed"
   domain_name = "ui.example.com"
-  key_type    = "ecdsa"
   description = "UI certificate"
 }
