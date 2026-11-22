@@ -617,18 +617,18 @@ func (a *API) deleteCertificate(ctx context.Context, data *certificateModel) err
 	if err != nil {
 		return err
 	}
-	current, getErr := a.sdk.Certificates.Get(ctx, id)
-	foreign, err := shared.ForeignRow(getErr, ensureCertificateOwned(data, current))
-	if err != nil {
-		return err
-	}
-	if foreign {
-		return nil
-	}
 	if a.http == nil {
 		return fmt.Errorf("vergeio client is nil")
 	}
 	return a.http.WithCertificateMutation(ctx, func(ctx context.Context) error {
+		current, getErr := a.sdk.Certificates.Get(ctx, id)
+		foreign, err := shared.ForeignRow(getErr, ensureCertificateOwned(data, current))
+		if err != nil {
+			return err
+		}
+		if foreign {
+			return nil
+		}
 		return ignoreMissing(a.sdk.Certificates.Delete(ctx, id))
 	})
 }
