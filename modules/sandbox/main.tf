@@ -38,6 +38,18 @@ locals {
   }
 
   sandbox_cidr = coalesce(var.cidr, "192.0.2.0/24")
+
+  # The network exists only when every selected VM has a snapshot to clone.
+  # An empty selection plans no network, and a later empty selection removes
+  # one that was already created. That removal is not a failed check.
+  vm_selection_ready = (
+    var.source_type == "vm" &&
+    var.tenant_id == null &&
+    var.cidr != null &&
+    ((var.vms == null && var.tag != null) || (var.vms != null && var.tag == null)) &&
+    length(local.inventory) > 0 &&
+    length(local.chosen_vm_snaps) == length(local.inventory)
+  )
 }
 
 data "vergeio_vms" "tagged" {
@@ -56,7 +68,7 @@ data "vergeio_vm_snapshots" "source" {
 }
 
 resource "vergeio_network" "sandbox" {
-  count = var.source_type == "vm" ? 1 : 0
+  count = local.vm_selection_ready ? 1 : 0
 
   name                 = var.name
   description          = "Sandbox ${var.name}"
@@ -72,7 +84,7 @@ resource "vergeio_network" "sandbox" {
 }
 
 resource "vergeio_vm_clone" "this" {
-  for_each = var.source_type == "vm" ? local.chosen_vm_snaps : {}
+  for_each = local.vm_selection_ready ? local.chosen_vm_snaps : {}
 
   snapshot_id = each.value.id
   name        = "${var.name}-${one([for vm in local.inventory : vm.name if tostring(vm.key) == each.key])}"
@@ -95,8 +107,8 @@ resource "terraform_data" "check" {
     }
 
     precondition {
-      condition     = var.source_type != "vm" || (var.tenant_id == null && var.cidr != null && ((var.vms == null && var.tag != null) || (var.vms != null && var.tag == null)) && length(local.inventory) > 0 && length(local.chosen_vm_snaps) == length(local.inventory))
-      error_message = "A VM sandbox needs cidr, either tag or vms, at least one selected VM, and one snapshot on each of those VMs. A tag or vms list that selects nothing does not create a network."
+      condition     = var.source_type != "vm" || (var.tenant_id == null && var.cidr != null && ((var.vms == null && var.tag != null) || (var.vms != null && var.tag == null)) && (length(local.inventory) == 0 || length(local.chosen_vm_snaps) == length(local.inventory)))
+      error_message = "A VM sandbox needs cidr and either tag or vms. Each selected VM needs one snapshot. An empty selection creates no network and does not block removal of a sandbox that already exists."
     }
 
     precondition {

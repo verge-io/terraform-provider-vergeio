@@ -96,6 +96,7 @@ func (a *API) readTenantCopy(ctx context.Context, data *TenantCopyResourceModel)
 	}
 	data.Id = idString(got.Key.Int())
 	data.Name = types.StringValue(got.Name)
+	data.Isolate = types.BoolValue(got.Isolate)
 	return nil
 }
 

@@ -7,6 +7,13 @@ on:
 permissions:
   contents: read
 
+# Apply and destroy share one queue per pull request. A new apply cancels an
+# in-progress apply. A close runs destroy with cancel-in-progress false, so
+# it waits for a queued apply and is not cancelled itself.
+concurrency:
+  group: sandbox-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
 jobs:
   apply:
     if: github.event.action != 'closed'

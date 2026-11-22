@@ -179,6 +179,9 @@ func (r *TenantCopyResource) ImportState(ctx context.Context, req resource.Impor
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), sourceID)...)
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), copyID)...)
+	// Default matches the schema. Read replaces it with the live isolate flag
+	// before the next plan, so a null value cannot force a replacement.
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("isolate"), true)...)
 }
 
 // tenantCopyImportID accepts the copy key, or source/copy so refresh has

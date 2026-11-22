@@ -48,7 +48,7 @@ resource "vergeio_tenant_copy" "example" {
 
 ## Import
 
-Import with the copy's tenant key, or `source/copy` when the source tenant key is known. A copy key alone is enough for refresh. `source/copy` also stores `tenant_id`.
+Import with the copy's tenant key, or `source/copy` when the source tenant key is known. A copy key alone is enough for refresh. `source/copy` also stores `tenant_id`. Refresh stores `isolate` from the tenant's live isolation flag, so the next plan does not replace the copy when that flag matches the configuration. The default is true.
 
 ```shell
 terraform import vergeio_tenant_copy.example 40

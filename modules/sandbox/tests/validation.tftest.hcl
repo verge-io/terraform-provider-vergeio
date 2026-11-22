@@ -79,9 +79,10 @@ run "vms_empty" {
     vms = []
   }
 
-  expect_failures = [
-    terraform_data.check,
-  ]
+  assert {
+    condition     = length(vergeio_network.sandbox) == 0 && length(vergeio_vm_clone.this) == 0
+    error_message = "An empty vms list planned a sandbox network or a clone."
+  }
 }
 
 run "tag_matches_nothing" {
@@ -92,7 +93,8 @@ run "tag_matches_nothing" {
     vms = null
   }
 
-  expect_failures = [
-    terraform_data.check,
-  ]
+  assert {
+    condition     = length(vergeio_network.sandbox) == 0 && length(vergeio_vm_clone.this) == 0
+    error_message = "A tag that matches no VMs planned a sandbox network or a clone."
+  }
 }

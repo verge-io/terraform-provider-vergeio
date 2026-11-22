@@ -255,8 +255,36 @@ func TestReadTenantCopyAfterImport(t *testing.T) {
 	if err := api.readTenantCopy(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
-	if data.Name.ValueString() != "sandbox" || !data.TenantID.IsNull() {
+	if data.Name.ValueString() != "sandbox" || !data.TenantID.IsNull() || data.Isolate.IsNull() || !data.Isolate.ValueBool() {
 		t.Fatalf("read = %#v", data)
+	}
+}
+
+func TestReadTenantCopyStoresLiveIsolation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.URL.Path == "/api/v4/tenants/40" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := testTenantAPI(t, server.URL)
+	data := &TenantCopyResourceModel{Id: types.StringValue("40")}
+	if err := api.readTenantCopy(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Isolate.IsNull() || data.Isolate.ValueBool() {
+		t.Fatalf("isolate = %#v, want false from the live tenant", data.Isolate)
 	}
 }
 
@@ -278,7 +306,7 @@ func TestTenantCopyImportState(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatal(resp.Diagnostics)
 	}
-	if got.Id.ValueString() != "40" || got.TenantID.ValueString() != "7" {
+	if got.Id.ValueString() != "40" || got.TenantID.ValueString() != "7" || got.Isolate.IsNull() || !got.Isolate.ValueBool() {
 		t.Fatalf("imported = %#v", got)
 	}
 }

@@ -14,6 +14,8 @@ Pass `source_type` `tenant` and `tenant_id` to copy a tenant. A tenant sandbox i
 
 `isolate` defaults to true and posts `isolateon` on the copy. The module does not post `isolateoff`. Set `allow_external` to true to skip `isolateon`. The copy then keeps whatever connectivity the clone copied, including an external route when the source has one.
 
+The sandbox network is created only when at least one VM is selected and each of those VMs has the snapshot to clone. A tag or `vms` list that selects nothing plans no network and no clones. Applying that empty selection again removes a sandbox that was already created. That removal is not rejected by the selection check.
+
 Destroy deletes the copy and, for VMs, the sandbox network. It does not delete the source or the snapshot.
 
 ```hcl
@@ -37,7 +39,7 @@ module "pull_request" {
 }
 ```
 
-A runnable root module is in `examples/modules/sandbox`. A remote backend is required. The example uses an HTTP backend with an empty block, and `examples/modules/sandbox/workflows/sandbox.yml` fills it with `-backend-config`. `TF_HTTP_ADDRESS`, `TF_HTTP_USERNAME`, and `TF_HTTP_PASSWORD` are secrets. The address for a pull request is `TF_HTTP_ADDRESS/pr-<number>`, so apply and the later destroy read the same state. A job with only local state cannot destroy the sandbox, because the next job starts empty. The workflow applies that root when a pull request opens or updates, and destroys it when the pull request closes.
+A runnable root module is in `examples/modules/sandbox`. A remote backend is required. The example uses an HTTP backend with an empty block, and `examples/modules/sandbox/workflows/sandbox.yml` fills it with `-backend-config`. `TF_HTTP_ADDRESS`, `TF_HTTP_USERNAME`, and `TF_HTTP_PASSWORD` are secrets. The address for a pull request is `TF_HTTP_ADDRESS/pr-<number>`, so apply and the later destroy read the same state. A job with only local state cannot destroy the sandbox, because the next job starts empty. Apply and destroy share the concurrency group `sandbox-pr-<number>`. A new apply cancels an in-progress apply. Closing the pull request queues destroy without cancelling it, so destroy runs after any apply that was already queued. The workflow applies that root when a pull request opens or updates, and destroys it when the pull request closes.
 
 `terraform test` in this directory plans with a mocked provider. The lab apply test is a separate root in `tests/lab` and is not part of that run. It creates only `tf-acc-` objects:
 
