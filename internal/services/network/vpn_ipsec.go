@@ -5,6 +5,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -60,31 +61,106 @@ func (a *vpnAPI) createIPSec(ctx context.Context, data *ipsecModel) error {
 	// A reused IPsec key still has the previous network's phase 1 rows.
 	// Those rows point at this key as soon as it is issued.
 	if err := deletePhase1sForIPSec(ctx, a.sdk, id); err != nil {
-		return dropCreatedIPSec(ctx, a.sdk, id, fmt.Errorf("phase 1 rows already on IPsec configuration %d were not removed: %w", id, err))
+		return a.abandonIPSec(ctx, data, id, fmt.Errorf("phase 1 rows already on IPsec configuration %d were not removed: %w", id, err))
 	}
 
 	if ipsecCharonConfigured(data) {
 		if _, err := a.sdk.VNetIPSecs.Update(ctx, id, ipsecUpdateRequest(data)); err != nil {
-			return dropCreatedIPSec(ctx, a.sdk, id, fmt.Errorf("advanced settings were not saved: %w", err))
+			return a.abandonIPSec(ctx, data, id, fmt.Errorf("advanced settings were not saved: %w", err))
 		}
 	}
 	if err := a.readIPSec(ctx, data); err != nil {
-		return dropCreatedIPSec(ctx, a.sdk, id, err)
+		return a.abandonIPSec(ctx, data, id, err)
 	}
 	return nil
 }
 
-// dropCreatedIPSec deletes an IPsec row that create wrote but did not store
-// in state. The next apply would create another row, and network destroy
-// stays blocked while this one remains.
-func dropCreatedIPSec(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
-	if err := confirmDeleted(sdk.VNetIPSecs.Delete(ctx, id), namedRow("IPsec configuration", id, ""), func() error {
-		_, getErr := sdk.VNetIPSecs.Get(ctx, id)
-		return getErr
-	}); err != nil {
-		return fmt.Errorf("IPsec configuration %d was created but not stored in state: %w (delete failed: %v)", id, cause, err)
+// createdLeftError means create wrote a row and could not remove it.
+// The resource stores that id so the next apply does not create another one.
+type createdLeftError struct {
+	err error
+}
+
+func (e *createdLeftError) Error() string {
+	if e == nil || e.err == nil {
+		return "created row was left in place"
+	}
+	return e.err.Error()
+}
+
+func (e *createdLeftError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func createdWasLeft(err error) bool {
+	var left *createdLeftError
+	return errors.As(err, &left)
+}
+
+// abandonIPSec deletes phase 2, then phase 1, then the configuration.
+// When a child row stays, the configuration stays too and the error tells
+// the resource to store it. Deleting the configuration first is the trigger
+// that then refuses every later delete.
+func (a *vpnAPI) abandonIPSec(ctx context.Context, data *ipsecModel, id int, cause error) error {
+	if err := deleteOneIPSec(ctx, a.sdk, id); err != nil {
+		if data != nil {
+			data.ID = typesStringID(id)
+			if readErr := a.readIPSec(ctx, data); readErr != nil {
+				data.ID = typesStringID(id)
+			}
+			nullUnknownIPSec(data)
+		}
+		return &createdLeftError{err: fmt.Errorf("IPsec configuration %d was created and is stored in state so the next apply does not create another one. %w Delete phase 2, then phase 1, before destroying configuration %d. If it is not in state, import it with terraform import vergeio_network_ipsec.<name> %d: %v", id, cause, id, id, err)}
+	}
+	if data != nil {
+		data.ID = types.StringNull()
 	}
 	return fmt.Errorf("IPsec configuration %d was created but not stored in state, and the row was removed: %w", id, cause)
+}
+
+func nullUnknownIPSec(data *ipsecModel) {
+	if data == nil {
+		return
+	}
+	data.ID = nullUnknownString(data.ID)
+	data.NetworkID = nullUnknownString(data.NetworkID)
+	data.Enabled = nullUnknownBool(data.Enabled)
+	data.Mode = nullUnknownString(data.Mode)
+	data.UniqueIDs = nullUnknownString(data.UniqueIDs)
+	data.Compress = nullUnknownBool(data.Compress)
+	data.ExcludeNetwork = nullUnknownBool(data.ExcludeNetwork)
+	data.StrongswanConf = nullUnknownString(data.StrongswanConf)
+	data.IPSecConf = nullUnknownString(data.IPSecConf)
+	data.IPSecSecrets = nullUnknownString(data.IPSecSecrets)
+	data.CiscoUnity = nullUnknownBool(data.CiscoUnity)
+	data.AcceptUnencryptedMainMode = nullUnknownBool(data.AcceptUnencryptedMainMode)
+	data.MSSClamp = nullUnknownInt64(data.MSSClamp)
+	data.StrictCRLPolicy = nullUnknownString(data.StrictCRLPolicy)
+	data.MakeBeforeBreak = nullUnknownBool(data.MakeBeforeBreak)
+}
+
+func nullUnknownString(v types.String) types.String {
+	if v.IsUnknown() {
+		return types.StringNull()
+	}
+	return v
+}
+
+func nullUnknownBool(v types.Bool) types.Bool {
+	if v.IsUnknown() {
+		return types.BoolNull()
+	}
+	return v
+}
+
+func nullUnknownInt64(v types.Int64) types.Int64 {
+	if v.IsUnknown() {
+		return types.Int64Null()
+	}
+	return v
 }
 
 func (a *vpnAPI) readIPSec(ctx context.Context, data *ipsecModel) error {

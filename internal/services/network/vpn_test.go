@@ -645,6 +645,155 @@ func TestCreateIPSecConnectionDeletesPhase2AlreadyOnKey(t *testing.T) {
 	}
 }
 
+func TestCreateIPSecLeavesConfigurationWhenLeftoverPhase2Stays(t *testing.T) {
+	var ipsecDeleted bool
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsecs":
+			writeBody(w, `{"$key":5}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeBody(w, `{"$key":5,"vnet":12,"enabled":true,"mode":"normal"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeBody(w, `[{"$key":9,"ipsec":5,"name":"old"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			writeBody(w, `[{"$key":4,"phase1":9,"name":"lan-to-lan","local":"10.0.0.0/24"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 4, "name": "lan-to-lan"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4":
+			writeRefusedDelete(t, w)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			ipsecDeleted = true
+			writeBody(w, `{}`)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	data := &ipsecModel{
+		NetworkID: types.StringValue("12"),
+		Enabled:   types.BoolValue(true),
+	}
+	err := api.createIPSec(t.Context(), data)
+	if !createdWasLeft(err) {
+		t.Fatalf("error = %v, want the configuration kept", err)
+	}
+	if ipsecDeleted {
+		t.Fatal("IPsec configuration was deleted while phase 2 remained")
+	}
+	if data.ID.ValueString() != "5" {
+		t.Fatalf("id = %s, want 5 so the resource can store it", data.ID)
+	}
+	for _, want := range []string{"stored in state", "phase 2", "phase 1", "configuration 5", "terraform import vergeio_network_ipsec"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestCreateIPSecResourceKeepsStateWhenLeftoverPhase2Stays(t *testing.T) {
+	item := configuredVPNResource(t, NewNetworkIPSecResource(), func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsecs":
+			writeBody(w, `{"$key":5}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeBody(w, `{"$key":5,"vnet":12,"enabled":true,"mode":"normal"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeBody(w, `[{"$key":9,"ipsec":5,"name":"old"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			writeBody(w, `[{"$key":4,"phase1":9,"name":"lan-to-lan","local":"10.0.0.0/24"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 4, "name": "lan-to-lan"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4":
+			writeRefusedDelete(t, w)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan"}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			t.Errorf("configuration deleted while phase 2 remained")
+			writeBody(w, `{}`)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	schema := resourceSchema(t, item)
+	plan := tfsdk.Plan{Schema: schema}
+	if diags := plan.Set(t.Context(), &ipsecModel{
+		NetworkID: types.StringValue("12"),
+		Enabled:   types.BoolValue(true),
+		Mode:      types.StringValue("normal"),
+	}); diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &fwresource.CreateResponse{State: tfsdk.State{Schema: schema}}
+	item.Create(t.Context(), fwresource.CreateRequest{Plan: plan}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected create to report the leftover phase 2")
+	}
+	var got ipsecModel
+	if diags := resp.State.Get(t.Context(), &got); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if got.ID.ValueString() != "5" || got.NetworkID.ValueString() != "12" {
+		t.Fatalf("state id=%s network=%s, want configuration 5 kept", got.ID, got.NetworkID)
+	}
+}
+
+func TestCreateIPSecConnectionLeavesPhase1WhenPhase2Stays(t *testing.T) {
+	var phase1Deleted bool
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeBody(w, `{"$key":7}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
+			writeBody(w, `{"$key":7,"ipsec":5,"name":"branch","enabled":true,"remote_gateway":"203.0.113.10"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			writeBody(w, `[{"$key":4,"phase1":7,"name":"stale","local":"10.0.0.0/24"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 4, "name": "stale"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase2s/4":
+			writeRefusedDelete(t, w)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
+			phase1Deleted = true
+			writeBody(w, `{}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeBody(w, `{"$key":5,"vnet":12,"enabled":true}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
+			writeBody(w, `{"$key":12,"name":"lan"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_connections":
+			writeBody(w, `[]`)
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	data := &ipsecConnectionModel{
+		IPSecID:       types.StringValue("5"),
+		Name:          types.StringValue("branch"),
+		RemoteGateway: types.StringValue("203.0.113.10"),
+		Phase2: &ipsecPhase2Model{
+			Name:  types.StringValue("lan"),
+			Local: types.StringValue("192.168.0.0/24"),
+		},
+	}
+	err := api.createIPSecConnection(t.Context(), data)
+	if !createdWasLeft(err) {
+		t.Fatalf("error = %v, want the phase 1 kept", err)
+	}
+	if phase1Deleted {
+		t.Fatal("phase 1 was deleted while phase 2 remained")
+	}
+	if data.ID.ValueString() != "7" {
+		t.Fatalf("id = %s, want 7", data.ID)
+	}
+	for _, want := range []string{"stored in state", "phase 2", "phase 1 7", "terraform import vergeio_network_ipsec_connection"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestCreateIPSecRemovesRowWhenAdvancedUpdateFails(t *testing.T) {
 	var deleted bool
 	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1316,6 +1465,13 @@ func configuredNetworkResource(t *testing.T, url string) *NetworkResource {
 		t.Fatal(resp.Diagnostics)
 	}
 	return item
+}
+
+func resourceSchema(t *testing.T, item fwresource.Resource) schema.Schema {
+	t.Helper()
+	resp := &fwresource.SchemaResponse{}
+	item.Schema(t.Context(), fwresource.SchemaRequest{}, resp)
+	return resp.Schema
 }
 
 func newTestVPN(t *testing.T, h http.HandlerFunc) *vpnAPI {

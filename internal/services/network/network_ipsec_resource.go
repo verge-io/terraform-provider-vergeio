@@ -154,6 +154,11 @@ func (r *NetworkIPSecResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 	if err := r.api.createIPSec(ctx, &data); err != nil {
+		if createdWasLeft(err) {
+			nullUnknownIPSec(&data)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+		}
 		resp.Diagnostics.AddError("Error Creating Network IPsec", err.Error())
 		return
 	}
