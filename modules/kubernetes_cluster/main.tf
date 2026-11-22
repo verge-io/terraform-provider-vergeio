@@ -53,67 +53,6 @@ locals {
     "vm_services",
   ])
 
-  firewall_rules = [
-    for rule in [
-      {
-        key               = "cluster"
-        include           = true
-        name              = "${var.name}-allow-cluster"
-        protocol          = "any"
-        direction         = "incoming"
-        destination_ports = ""
-        source_ip         = var.cidr
-      },
-      {
-        key               = "api"
-        include           = true
-        name              = "${var.name}-allow-api"
-        protocol          = "tcp"
-        direction         = "incoming"
-        destination_ports = "6443"
-        source_ip         = var.api_source_cidr == null ? "" : var.api_source_cidr
-      },
-      {
-        key               = "rke2"
-        include           = true
-        name              = "${var.name}-allow-rke2"
-        protocol          = "tcp"
-        direction         = "incoming"
-        destination_ports = "9345"
-        source_ip         = var.api_source_cidr == null ? "" : var.api_source_cidr
-      },
-      {
-        key               = "https"
-        include           = true
-        name              = "${var.name}-allow-https-out"
-        protocol          = "tcp"
-        direction         = "outgoing"
-        destination_ports = "443"
-        source_ip         = ""
-      },
-      {
-        key               = "ssh"
-        include           = var.ssh_source_cidr != null
-        name              = "${var.name}-allow-ssh"
-        protocol          = "tcp"
-        direction         = "incoming"
-        destination_ports = "22"
-        source_ip         = var.ssh_source_cidr == null ? "" : var.ssh_source_cidr
-      },
-    ] : rule if rule.include
-  ]
-  firewall = {
-    for index, rule in local.firewall_rules : rule.key => {
-      name              = rule.name
-      orderid           = index + 1
-      protocol          = rule.protocol
-      direction         = rule.direction
-      destination_ports = rule.destination_ports
-      source_ip         = rule.source_ip
-    }
-  }
-  firewall_last = length(local.firewall_rules)
-
   service_cluster_ip = cidrhost(var.service_cidr, 1)
   server_dns_names = distinct(concat(
     [for node in local.control_planes : node.name],
@@ -290,42 +229,82 @@ resource "vergeio_network" "cluster" {
   powerstate           = var.network_powerstate
 }
 
-resource "vergeio_network_rule" "staged" {
-  for_each = {
-    for key, rule in local.firewall : key => rule if rule.orderid != local.firewall_last
-  }
-
-  vnet              = vergeio_network.cluster.id
-  name              = each.value.name
-  description       = each.value.name
-  direction         = each.value.direction
-  action            = "accept"
-  protocol          = each.value.protocol
-  source_ip         = each.value.source_ip != "" ? each.value.source_ip : null
-  destination_ports = each.value.destination_ports != "" ? each.value.destination_ports : null
-  enabled           = true
-  orderid           = each.value.orderid
-  apply             = false
+resource "vergeio_network_rule" "cluster" {
+  vnet        = vergeio_network.cluster.id
+  name        = "${var.name}-allow-cluster"
+  description = "${var.name}-allow-cluster"
+  direction   = "incoming"
+  action      = "accept"
+  protocol    = "any"
+  source_ip   = var.cidr
+  enabled     = true
+  orderid     = 1
+  apply       = false
 }
 
-resource "vergeio_network_rule" "apply" {
-  for_each = {
-    for key, rule in local.firewall : key => rule if rule.orderid == local.firewall_last
-  }
+resource "vergeio_network_rule" "api" {
+  vnet              = vergeio_network.cluster.id
+  name              = "${var.name}-allow-api"
+  description       = "${var.name}-allow-api"
+  direction         = "incoming"
+  action            = "accept"
+  protocol          = "tcp"
+  source_ip         = var.api_source_cidr
+  destination_ports = "6443"
+  enabled           = true
+  orderid           = 2
+  apply             = false
+
+  depends_on = [vergeio_network_rule.cluster]
+}
+
+resource "vergeio_network_rule" "rke2" {
+  vnet              = vergeio_network.cluster.id
+  name              = "${var.name}-allow-rke2"
+  description       = "${var.name}-allow-rke2"
+  direction         = "incoming"
+  action            = "accept"
+  protocol          = "tcp"
+  source_ip         = var.api_source_cidr
+  destination_ports = "9345"
+  enabled           = true
+  orderid           = 3
+  apply             = false
+
+  depends_on = [vergeio_network_rule.api]
+}
+
+resource "vergeio_network_rule" "https" {
+  vnet              = vergeio_network.cluster.id
+  name              = "${var.name}-allow-https-out"
+  description       = "${var.name}-allow-https-out"
+  direction         = "outgoing"
+  action            = "accept"
+  protocol          = "tcp"
+  destination_ports = "443"
+  enabled           = true
+  orderid           = 4
+  apply             = var.ssh_source_cidr == null
+
+  depends_on = [vergeio_network_rule.rke2]
+}
+
+resource "vergeio_network_rule" "ssh" {
+  count = var.ssh_source_cidr == null ? 0 : 1
 
   vnet              = vergeio_network.cluster.id
-  name              = each.value.name
-  description       = each.value.name
-  direction         = each.value.direction
+  name              = "${var.name}-allow-ssh"
+  description       = "${var.name}-allow-ssh"
+  direction         = "incoming"
   action            = "accept"
-  protocol          = each.value.protocol
-  source_ip         = each.value.source_ip != "" ? each.value.source_ip : null
-  destination_ports = each.value.destination_ports != "" ? each.value.destination_ports : null
+  protocol          = "tcp"
+  source_ip         = var.ssh_source_cidr
+  destination_ports = "22"
   enabled           = true
-  orderid           = each.value.orderid
+  orderid           = 5
   apply             = true
 
-  depends_on = [vergeio_network_rule.staged]
+  depends_on = [vergeio_network_rule.https]
 }
 
 resource "vergeio_vm" "node" {

@@ -38,8 +38,8 @@ run "image" {
   }
 
   assert {
-    condition     = vergeio_network_rule.staged["cluster"].source_ip == "192.168.100.0/24" && vergeio_network_rule.staged["cluster"].apply == false && vergeio_network_rule.staged["cluster"].orderid == 1 && vergeio_network_rule.staged["api"].orderid == 2 && vergeio_network_rule.staged["api"].destination_ports == "6443" && vergeio_network_rule.staged["rke2"].orderid == 3 && vergeio_network_rule.staged["rke2"].destination_ports == "9345" && vergeio_network_rule.apply["https"].orderid == 4 && vergeio_network_rule.apply["https"].direction == "outgoing" && vergeio_network_rule.apply["https"].destination_ports == "443" && vergeio_network_rule.apply["https"].apply == true && length(vergeio_network_rule.staged) == 3 && length(vergeio_network_rule.apply) == 1
-    error_message = "Firewall rules were not planned as contiguous orderids 1 through 4, with the last rule applying the network."
+    condition     = vergeio_network_rule.cluster.source_ip == "192.168.100.0/24" && vergeio_network_rule.cluster.orderid == 1 && vergeio_network_rule.cluster.apply == false && vergeio_network_rule.api.orderid == 2 && vergeio_network_rule.api.apply == false && vergeio_network_rule.api.destination_ports == "6443" && vergeio_network_rule.rke2.orderid == 3 && vergeio_network_rule.rke2.apply == false && vergeio_network_rule.rke2.destination_ports == "9345" && vergeio_network_rule.https.orderid == 4 && vergeio_network_rule.https.apply == true && vergeio_network_rule.https.direction == "outgoing" && vergeio_network_rule.https.destination_ports == "443" && length(vergeio_network_rule.ssh) == 0
+    error_message = "Firewall rules were not planned as a 1 through 4 chain, with outgoing TCP 443 applying the network."
   }
 
   assert {
@@ -96,6 +96,32 @@ run "certificates" {
   }
 }
 
+run "ssh_on" {
+  command = apply
+
+  variables {
+    ssh_source_cidr = "192.0.2.0/24"
+  }
+
+  assert {
+    condition     = vergeio_network_rule.cluster.orderid == 1 && vergeio_network_rule.api.orderid == 2 && vergeio_network_rule.rke2.orderid == 3 && vergeio_network_rule.https.orderid == 4 && vergeio_network_rule.https.apply == false && length(vergeio_network_rule.ssh) == 1 && vergeio_network_rule.ssh[0].orderid == 5 && vergeio_network_rule.ssh[0].apply == true
+    error_message = "Turning SSH on moved an earlier rule or did not append SSH at orderid 5."
+  }
+}
+
+run "ssh_off" {
+  command = apply
+
+  variables {
+    ssh_source_cidr = null
+  }
+
+  assert {
+    condition     = vergeio_network_rule.cluster.orderid == 1 && vergeio_network_rule.api.orderid == 2 && vergeio_network_rule.rke2.orderid == 3 && vergeio_network_rule.https.orderid == 4 && vergeio_network_rule.https.apply == true && length(vergeio_network_rule.ssh) == 0
+    error_message = "Turning SSH off moved an earlier rule or left the SSH rule in place."
+  }
+}
+
 run "uplink_ssh_and_template" {
   command = plan
 
@@ -114,7 +140,7 @@ run "uplink_ssh_and_template" {
   }
 
   assert {
-    condition     = vergeio_network.cluster.vnet_default_gateway == 3 && vergeio_network_rule.staged["api"].source_ip == "192.0.2.0/24" && vergeio_network_rule.staged["cluster"].orderid == 1 && vergeio_network_rule.staged["api"].orderid == 2 && vergeio_network_rule.staged["rke2"].orderid == 3 && vergeio_network_rule.staged["https"].orderid == 4 && vergeio_network_rule.apply["ssh"].orderid == 5 && vergeio_network_rule.apply["ssh"].destination_ports == "22" && vergeio_network_rule.apply["ssh"].apply == true && length(vergeio_network_rule.staged) == 4 && length(vergeio_vm.node) == 1 && length(vergeio_vm.template) == 1 && vergeio_vm.template[0].name == "edge-template" && vergeio_vm.template[0].guest_agent == true && vergeio_vm.template[0].ram == 4096 && vergeio_vm_nic.template[0].ipaddress == "192.168.100.2" && output.template_vm_name == "edge-template" && output.vergeos_host == "https://10.8.8.26:443" && output.vergeos_hostname == "10.8.8.26" && output.vergeos_verify_ssl == "true" && output.vergeos_insecure == "false"
+    condition     = vergeio_network.cluster.vnet_default_gateway == 3 && vergeio_network_rule.api.source_ip == "192.0.2.0/24" && vergeio_network_rule.cluster.orderid == 1 && vergeio_network_rule.api.orderid == 2 && vergeio_network_rule.rke2.orderid == 3 && vergeio_network_rule.https.orderid == 4 && vergeio_network_rule.https.apply == false && vergeio_network_rule.ssh[0].orderid == 5 && vergeio_network_rule.ssh[0].destination_ports == "22" && vergeio_network_rule.ssh[0].apply == true && length(vergeio_vm.node) == 1 && length(vergeio_vm.template) == 1 && vergeio_vm.template[0].name == "edge-template" && vergeio_vm.template[0].guest_agent == true && vergeio_vm.template[0].ram == 4096 && vergeio_vm_nic.template[0].ipaddress == "192.168.100.2" && output.template_vm_name == "edge-template" && output.vergeos_host == "https://10.8.8.26:443" && output.vergeos_hostname == "10.8.8.26" && output.vergeos_verify_ssl == "true" && output.vergeos_insecure == "false"
     error_message = "The uplink, SSH rule, template, or TLS verification flag was not planned."
   }
 }
