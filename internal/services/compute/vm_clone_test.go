@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -35,8 +36,12 @@ func TestVMCloneSchema(t *testing.T) {
 			t.Fatalf("%s should be required", name)
 		}
 	}
-	if resp.Schema.Attributes["source_vm_id"] == nil || !resp.Schema.Attributes["source_vm_id"].IsComputed() {
-		t.Fatal("source_vm_id should be computed")
+	source, ok := resp.Schema.Attributes["source_vm_id"].(schema.StringAttribute)
+	if !ok || !source.IsComputed() || len(source.PlanModifiers) != 1 {
+		t.Fatal("source_vm_id should be computed and keep its state value")
+	}
+	if !strings.Contains(source.PlanModifiers[0].Description(t.Context()), "will not change") {
+		t.Fatalf("source_vm_id plan modifier = %s", source.PlanModifiers[0].Description(t.Context()))
 	}
 	if !strings.Contains(resp.Schema.MarkdownDescription, "snap_machine") || !strings.Contains(resp.Schema.MarkdownDescription, "preserve_macs") {
 		t.Fatalf("description = %s", resp.Schema.MarkdownDescription)
@@ -337,13 +342,13 @@ func TestCreateVMCloneDeletesCopyWhenNICMoveFailsPartway(t *testing.T) {
 			cloned = true
 			_, _ = w.Write([]byte(`{"$key":1}`))
 		case r.URL.Path == "/api/v4/machine_nics" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(fmt.Sprintf(`[{"$key":5,"machine":80,"name":"lan","vnet":%d},{"$key":6,"machine":80,"name":"wan","vnet":%d}]`, vnets[5], vnets[6])))
+			_, _ = fmt.Fprintf(w, `[{"$key":5,"machine":80,"name":"lan","vnet":%d},{"$key":6,"machine":80,"name":"wan","vnet":%d}]`, vnets[5], vnets[6])
 		case r.URL.Path == "/api/v4/machine_nics/5" && r.Method == http.MethodPut:
 			body := readJSON(t, r)
 			vnets[5] = int(body["vnet"].(float64))
 			_, _ = w.Write([]byte(`{}`))
 		case r.URL.Path == "/api/v4/machine_nics/5" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"$key":5,"machine":80,"name":"lan","vnet":%d}`, vnets[5])))
+			_, _ = fmt.Fprintf(w, `{"$key":5,"machine":80,"name":"lan","vnet":%d}`, vnets[5])
 		case r.URL.Path == "/api/v4/machine_nics/6" && r.Method == http.MethodPut:
 			http.Error(w, "nic update refused", http.StatusInternalServerError)
 		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vms/81":
@@ -370,6 +375,91 @@ func TestCreateVMCloneDeletesCopyWhenNICMoveFailsPartway(t *testing.T) {
 	}
 	if vnets[5] != 6 || vnets[6] != 9 {
 		t.Fatalf("vnets after partial move = %#v", vnets)
+	}
+}
+
+func TestReadAndDeleteVMCloneWithoutSource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.URL.Path == "/api/v4/vms/81" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"$key":81,"machine":80,"name":"copy","is_snapshot":false,"powerstate":false}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vms/81":
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := testVMAPI(t, server.URL)
+	data := &VMCloneResourceModel{Id: types.StringValue("81")}
+	if err := api.readVMClone(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "copy" || !data.SourceVMID.IsNull() {
+		t.Fatalf("read = %#v", data)
+	}
+	if err := api.deleteVMClone(t.Context(), 81, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteVMCloneKillsWhenGuestStaysUp(t *testing.T) {
+	timeout, interval := gracefulShutdownTimeout, gracefulShutdownInterval
+	gracefulShutdownTimeout = 0
+	gracefulShutdownInterval = 0
+	t.Cleanup(func() {
+		gracefulShutdownTimeout = timeout
+		gracefulShutdownInterval = interval
+	})
+
+	running := true
+	var actions []string
+	deleted := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.URL.Path == "/api/v4/vms/81" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprintf(w, `{"$key":81,"name":"copy","is_snapshot":false,"powerstate":%t,"running":%t}`, running, running)
+		case r.URL.Path == "/api/v4/vm_actions" && r.Method == http.MethodPost:
+			body := readJSON(t, r)
+			action, _ := body["action"].(string)
+			actions = append(actions, action)
+			if action == vmActionKill {
+				running = false
+			}
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vms/81":
+			deleted = true
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := testVMAPI(t, server.URL)
+	if err := api.deleteVMClone(t.Context(), 81, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("clone was not deleted")
+	}
+	if len(actions) != 2 || actions[0] != vmActionPowerOff || actions[1] != vmActionKill {
+		t.Fatalf("actions = %#v, want poweroff then kill", actions)
 	}
 }
 

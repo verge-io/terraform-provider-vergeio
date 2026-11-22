@@ -4,6 +4,7 @@
 package tenant
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,7 +16,9 @@ import (
 	"terraform-provider-vergeio/internal/client"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
 func TestTenantCopySchema(t *testing.T) {
@@ -141,6 +144,142 @@ func TestCreateTenantCopyClonesCurrentStateAndIsolatesTheCopy(t *testing.T) {
 	data.Id = types.StringValue("7")
 	if err := api.deleteTenantCopy(t.Context(), data); err == nil {
 		t.Fatal("deleted the source tenant")
+	}
+}
+
+func TestCreateTenantCopyDeletesCopyWhenIsolateFails(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		isolate bool
+		want    string
+	}{
+		{name: "action error", isolate: false, want: "isolate tenant 40"},
+		{name: "still connected", isolate: true, want: "is not isolated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			poll, timeout := tenantCopyPoll, tenantCopyTimeout
+			tenantCopyPoll = time.Millisecond
+			tenantCopyTimeout = 2 * time.Second
+			t.Cleanup(func() {
+				tenantCopyPoll = poll
+				tenantCopyTimeout = timeout
+			})
+
+			var deleted []string
+			cloned := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+				case r.URL.Path == "/api/v4/tenants" && r.Method == http.MethodGet:
+					if !cloned {
+						_, _ = w.Write([]byte(`[]`))
+						return
+					}
+					_, _ = w.Write([]byte(`[{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0}]`))
+				case r.URL.Path == "/api/v4/tenants/40" && r.Method == http.MethodGet:
+					_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0}`))
+				case r.URL.Path == "/api/v4/tenants/7" && r.Method == http.MethodGet:
+					_, _ = w.Write([]byte(`{"$key":7,"name":"source","is_snapshot":false,"isolate":false,"vnet":4}`))
+				case r.URL.Path == "/api/v4/tenant_actions" && r.Method == http.MethodPost:
+					body := readTenantAction(t, r)
+					switch body["action"] {
+					case "clone":
+						cloned = true
+						_, _ = w.Write([]byte(`{"$key":1}`))
+					case "isolateon":
+						if !tc.isolate {
+							http.Error(w, "isolate refused", http.StatusInternalServerError)
+							return
+						}
+						_, _ = w.Write([]byte(`{"$key":1}`))
+					default:
+						t.Errorf("action %#v", body)
+					}
+				case r.URL.Path == "/api/v4/tenant_status":
+					_, _ = w.Write([]byte(`[]`))
+				case r.URL.Path == "/api/v4/tenants/40" && r.Method == http.MethodDelete:
+					deleted = append(deleted, r.URL.Path)
+					_, _ = w.Write([]byte(`{}`))
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			api := testTenantAPI(t, server.URL)
+			data := &TenantCopyResourceModel{
+				TenantID: types.StringValue("7"),
+				Name:     types.StringValue("sandbox"),
+				Isolate:  types.BoolValue(true),
+			}
+			err := api.createTenantCopy(t.Context(), data)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
+			if !data.Id.IsNull() {
+				t.Fatalf("id stored after failed isolate: %s", data.Id)
+			}
+			if len(deleted) != 1 || deleted[0] != "/api/v4/tenants/40" {
+				t.Fatalf("deleted = %#v", deleted)
+			}
+		})
+	}
+}
+
+func TestReadTenantCopyAfterImport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.URL.Path == "/api/v4/tenants/40" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":true}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := testTenantAPI(t, server.URL)
+	data := &TenantCopyResourceModel{Id: types.StringValue("40")}
+	if err := api.readTenantCopy(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Name.ValueString() != "sandbox" || !data.TenantID.IsNull() {
+		t.Fatalf("read = %#v", data)
+	}
+}
+
+func TestTenantCopyImportState(t *testing.T) {
+	ctx := context.Background()
+	item := &TenantCopyResource{}
+	schemaResp := &resource.SchemaResponse{}
+	item.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	resp := &resource.ImportStateResponse{State: tfsdk.State{
+		Schema: schemaResp.Schema,
+		Raw:    tftypes.NewValue(schemaResp.Schema.Type().TerraformType(ctx), nil),
+	}}
+	item.ImportState(ctx, resource.ImportStateRequest{ID: "7/40"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got TenantCopyResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.Id.ValueString() != "40" || got.TenantID.ValueString() != "7" {
+		t.Fatalf("imported = %#v", got)
 	}
 }
 

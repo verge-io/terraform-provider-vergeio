@@ -70,3 +70,29 @@ run "vm_without_tag" {
     terraform_data.check,
   ]
 }
+
+run "vms_empty" {
+  command = plan
+
+  variables {
+    tag = null
+    vms = []
+  }
+
+  expect_failures = [
+    terraform_data.check,
+  ]
+}
+
+run "tag_matches_nothing" {
+  command = plan
+
+  variables {
+    tag = "app/missing"
+    vms = null
+  }
+
+  expect_failures = [
+    terraform_data.check,
+  ]
+}

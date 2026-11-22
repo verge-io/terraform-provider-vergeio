@@ -50,17 +50,19 @@ func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 	if clone.Key.Int() == tenantID || clone.IsSnapshot {
 		return fmt.Errorf("copy %q resolved to tenant %d, which is not a new tenant", name, clone.Key.Int())
 	}
+	copyID := clone.Key.Int()
 	if boolKnownTrue(data.Isolate) && !clone.Isolate {
-		if err := a.sdk.Tenants.IsolateOn(ctx, clone.Key.Int()); err != nil {
-			return fmt.Errorf("isolate tenant %d: %w", clone.Key.Int(), err)
+		if err := a.sdk.Tenants.IsolateOn(ctx, copyID); err != nil {
+			return a.deleteFailedTenantCopy(ctx, copyID, fmt.Errorf("isolate tenant %d: %w", copyID, err))
 		}
-		clone, err = a.sdk.Tenants.Get(ctx, clone.Key.Int())
+		refreshed, err := a.sdk.Tenants.Get(ctx, copyID)
 		if err != nil {
-			return err
+			return a.deleteFailedTenantCopy(ctx, copyID, err)
 		}
-		if !clone.Isolate {
-			return fmt.Errorf("tenant %d is not isolated", clone.Key.Int())
+		if !refreshed.Isolate {
+			return a.deleteFailedTenantCopy(ctx, copyID, fmt.Errorf("tenant %d is not isolated", copyID))
 		}
+		clone = refreshed
 	}
 	data.Id = idString(clone.Key.Int())
 	tflog.Debug(ctx, fmt.Sprintf("copied tenant %d as tenant %d", tenantID, clone.Key.Int()))
@@ -75,18 +77,21 @@ func (a *API) readTenantCopy(ctx context.Context, data *TenantCopyResourceModel)
 	if err != nil {
 		return err
 	}
-	sourceID, err := parseID(data.TenantID, "tenant")
+	sourceID, err := optionalTenantID(data.TenantID)
 	if err != nil {
 		return err
 	}
-	if id == sourceID {
+	if sourceID > 0 && id == sourceID {
 		return fmt.Errorf("copy id %d is the source tenant", id)
 	}
 	got, err := a.sdk.Tenants.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	if got.IsSnapshot || got.Name != strings.TrimSpace(data.Name.ValueString()) {
+	if got.IsSnapshot {
+		return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
+	}
+	if !data.Name.IsNull() && !data.Name.IsUnknown() && got.Name != strings.TrimSpace(data.Name.ValueString()) {
 		return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
 	}
 	data.Id = idString(got.Key.Int())
@@ -99,11 +104,11 @@ func (a *API) deleteTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 	if err != nil {
 		return err
 	}
-	sourceID, err := parseID(data.TenantID, "tenant")
+	sourceID, err := optionalTenantID(data.TenantID)
 	if err != nil {
 		return err
 	}
-	if id == sourceID {
+	if sourceID > 0 && id == sourceID {
 		return fmt.Errorf("refusing to delete source tenant %d", sourceID)
 	}
 	got, err := a.sdk.Tenants.Get(ctx, id)
@@ -117,6 +122,24 @@ func (a *API) deleteTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 		return fmt.Errorf("refusing to delete snapshot tenant %d", id)
 	}
 	return a.deleteTenant(ctx, &TenantResourceModel{Id: data.Id})
+}
+
+// deleteFailedTenantCopy removes a copy that was created and then failed
+// isolation. The id is not stored, so a later apply cannot see it.
+func (a *API) deleteFailedTenantCopy(ctx context.Context, id int, cause error) error {
+	if err := a.deleteTenant(ctx, &TenantResourceModel{Id: idString(id)}); err != nil {
+		return fmt.Errorf("%w; delete tenant %d: %v", cause, id, err)
+	}
+	return cause
+}
+
+// optionalTenantID reads tenant_id. Null and unknown are valid after import,
+// when only the copy id is known.
+func optionalTenantID(value types.String) (int, error) {
+	if value.IsNull() || value.IsUnknown() {
+		return 0, nil
+	}
+	return parseID(value, "tenant")
 }
 
 func waitTenantByName(ctx context.Context, sdk *vergeos.Client, name string) (*vergeos.Tenant, error) {

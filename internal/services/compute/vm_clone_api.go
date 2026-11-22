@@ -6,6 +6,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -147,14 +148,17 @@ func (va *VMApi) readVMClone(ctx context.Context, data *VMCloneResourceModel) er
 	if err != nil {
 		return err
 	}
-	if vm.IsSnapshot || vm.Name != strings.TrimSpace(data.Name.ValueString()) {
+	if vm.IsSnapshot {
 		return &vergeos.NotFoundError{Resource: "VM", ID: id}
 	}
-	sourceID, sourceKnown, err := shared.KnownPositiveID(data.SourceVMID, "source_vm_id")
+	if !data.Name.IsNull() && !data.Name.IsUnknown() && vm.Name != strings.TrimSpace(data.Name.ValueString()) {
+		return &vergeos.NotFoundError{Resource: "VM", ID: id}
+	}
+	sourceID, err := optionalPositiveID(data.SourceVMID)
 	if err != nil {
 		return err
 	}
-	if sourceKnown && sourceID == id {
+	if sourceID > 0 && sourceID == id {
 		return fmt.Errorf("clone id %d is the source VM", id)
 	}
 	data.Id = types.StringValue(fmt.Sprintf("%d", vm.Key.Int()))
@@ -182,7 +186,9 @@ func (va *VMApi) deleteVMClone(ctx context.Context, id, sourceID int) error {
 	if vm.IsSnapshot {
 		return fmt.Errorf("refusing to delete snapshot VM %d", id)
 	}
-	if err := va.sdk.VMs.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	// Same stop as vergeio_vm destroy: one ACPI poweroff, then kill if the
+	// guest is still running. VMService.PowerOff is not used here.
+	if err := va.gracefulPowerOff(ctx, strconv.Itoa(id), vm.Name, gracefulShutdownTimeout, true); err != nil {
 		return err
 	}
 	if err := va.sdk.VMs.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
@@ -252,6 +258,16 @@ func waitVMByName(ctx context.Context, sdk *vergeos.Client, name string) (*verge
 		case <-timer.C:
 		}
 	}
+}
+
+// optionalPositiveID reads source_vm_id. Null and unknown mean the live
+// VM is gone or was not stored, which is valid. A known value must be a
+// positive integer.
+func optionalPositiveID(value types.String) (int, error) {
+	if value.IsNull() || value.IsUnknown() {
+		return 0, nil
+	}
+	return positiveID(value, "source_vm_id")
 }
 
 func positiveID(value types.String, what string) (int, error) {

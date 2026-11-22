@@ -83,8 +83,11 @@ func (r *VMCloneResource) Schema(ctx context.Context, req resource.SchemaRequest
 				},
 			},
 			"source_vm_id": schema.StringAttribute{
-				MarkdownDescription: "VM $key of the live VM the snapshot belongs to. Null when that VM is gone. Destroy does not delete this VM.",
+				MarkdownDescription: "VM $key of the live VM the snapshot belongs to. Null when that VM is gone, and null after import when the source is unknown. Destroy does not delete this VM. Read and destroy work when this is null.",
 				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 		},
 	}
@@ -172,7 +175,7 @@ func (r *VMCloneResource) Delete(ctx context.Context, req resource.DeleteRequest
 		resp.Diagnostics.AddError("Error deleting VM clone", err.Error())
 		return
 	}
-	sourceID, _, err := shared.KnownPositiveID(data.SourceVMID, "source_vm_id")
+	sourceID, err := optionalPositiveID(data.SourceVMID)
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting VM clone", err.Error())
 		return

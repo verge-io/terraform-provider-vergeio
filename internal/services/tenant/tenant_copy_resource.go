@@ -170,5 +170,37 @@ func (r *TenantCopyResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 func (r *TenantCopyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+	sourceID, copyID, err := tenantCopyImportID(req.ID)
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid Tenant Copy Import ID", err.Error())
+		return
+	}
+	if sourceID != "" {
+		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), sourceID)...)
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), copyID)...)
+}
+
+// tenantCopyImportID accepts the copy key, or source/copy so refresh has
+// the source tenant id read compares against.
+func tenantCopyImportID(raw string) (string, string, error) {
+	text := strings.TrimSpace(raw)
+	parts := strings.Split(text, "/")
+	switch len(parts) {
+	case 1:
+		if _, err := parseID(types.StringValue(parts[0]), "tenant"); err != nil {
+			return "", "", fmt.Errorf("import id must be the copy key, or source/copy")
+		}
+		return "", parts[0], nil
+	case 2:
+		if _, err := parseID(types.StringValue(parts[0]), "tenant"); err != nil {
+			return "", "", fmt.Errorf("import id must be the copy key, or source/copy")
+		}
+		if _, err := parseID(types.StringValue(parts[1]), "tenant"); err != nil {
+			return "", "", fmt.Errorf("import id must be the copy key, or source/copy")
+		}
+		return parts[0], parts[1], nil
+	default:
+		return "", "", fmt.Errorf("import id must be the copy key, or source/copy")
+	}
 }

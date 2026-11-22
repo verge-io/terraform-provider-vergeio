@@ -95,8 +95,8 @@ resource "terraform_data" "check" {
     }
 
     precondition {
-      condition     = var.source_type != "vm" || (var.tenant_id == null && var.cidr != null && ((var.vms == null && var.tag != null) || (var.vms != null && var.tag == null && length(var.vms) > 0)) && length(local.chosen_vm_snaps) == length(local.inventory))
-      error_message = "A VM sandbox needs cidr, either tag or vms, at least one VM, and one snapshot on each of those VMs."
+      condition     = var.source_type != "vm" || (var.tenant_id == null && var.cidr != null && ((var.vms == null && var.tag != null) || (var.vms != null && var.tag == null)) && length(local.inventory) > 0 && length(local.chosen_vm_snaps) == length(local.inventory))
+      error_message = "A VM sandbox needs cidr, either tag or vms, at least one selected VM, and one snapshot on each of those VMs. A tag or vms list that selects nothing does not create a network."
     }
 
     precondition {

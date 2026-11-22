@@ -37,7 +37,7 @@ module "pull_request" {
 }
 ```
 
-A runnable root module is in `examples/modules/sandbox`. `examples/modules/sandbox/workflows/sandbox.yml` applies that root when a pull request opens or updates, and destroys it when the pull request closes.
+A runnable root module is in `examples/modules/sandbox`. A remote backend is required. The example uses an HTTP backend with an empty block, and `examples/modules/sandbox/workflows/sandbox.yml` fills it with `-backend-config`. `TF_HTTP_ADDRESS`, `TF_HTTP_USERNAME`, and `TF_HTTP_PASSWORD` are secrets. The address for a pull request is `TF_HTTP_ADDRESS/pr-<number>`, so apply and the later destroy read the same state. A job with only local state cannot destroy the sandbox, because the next job starts empty. The workflow applies that root when a pull request opens or updates, and destroys it when the pull request closes.
 
 `terraform test` in this directory plans with a mocked provider. The lab apply test is a separate root in `tests/lab` and is not part of that run. It creates only `tf-acc-` objects:
 

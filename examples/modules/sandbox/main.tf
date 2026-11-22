@@ -1,6 +1,10 @@
 terraform {
   required_version = ">= 1.11.0"
 
+  # Apply and destroy share this state. The block is filled with
+  # -backend-config. Each pull request uses its own address.
+  backend "http" {}
+
   required_providers {
     vergeio = {
       source  = "verge-io/vergeio"
