@@ -399,6 +399,31 @@ func TestCertificateDeleteForeignDoesNotDeleteUnderTheGate(t *testing.T) {
 	}
 }
 
+func TestCertificateDeleteWaitsAfterARealDelete(t *testing.T) {
+	api, client, fake := gateAPI(t)
+	client.SetCertificateSettle(200 * time.Millisecond)
+	id := fake.seedCertificate(vergeos.Certificate{
+		Domain:  "tf-acc-gate.example.com",
+		Type:    vergeos.CertificateTypeSelfSigned,
+		KeyType: vergeos.CertificateKeyTypeECDSA,
+		Created: 1700000000,
+	})
+	start := time.Now()
+	err := api.deleteCertificate(context.Background(), &certificateModel{
+		ID:      types.StringValue(strconv.Itoa(id)),
+		Created: types.Int64Value(1700000000),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatal("a certificate delete did not wait out the reload")
+	}
+	if _, ok := fake.certs[id]; ok {
+		t.Fatal("certificate was not deleted")
+	}
+}
+
 func TestCertificateUpdateDoesNotExcludeOtherWrites(t *testing.T) {
 	api, client, fake := gateAPI(t)
 	id := fake.seedCertificate(vergeos.Certificate{
