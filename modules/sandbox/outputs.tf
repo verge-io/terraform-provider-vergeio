@@ -13,11 +13,6 @@ output "tenant_id" {
   value       = try(vergeio_tenant_copy.this[0].id, null)
 }
 
-output "snapshot_id" {
-  description = "Tenant snapshot key that was required to exist. The copy is the current tenant. Null for a VM sandbox."
-  value       = try(vergeio_tenant_copy.this[0].snapshot_id, null)
-}
-
 output "vm_ids" {
   description = "Copied VM keys, keyed by the source VM key."
   value       = { for key, vm in vergeio_vm_clone.this : key => vm.id }

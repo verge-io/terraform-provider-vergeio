@@ -90,22 +90,10 @@ run "tenant" {
     tenant_id   = "7"
     cidr        = null
     vms         = null
-    tenant_snapshots = [
-      {
-        id      = "3"
-        name    = "older"
-        created = 10
-      },
-      {
-        id      = "8"
-        name    = "newer"
-        created = 40
-      },
-    ]
   }
 
   assert {
-    condition     = length(vergeio_tenant_copy.this) == 1 && vergeio_tenant_copy.this[0].tenant_id == "7" && vergeio_tenant_copy.this[0].snapshot_id == "8" && vergeio_tenant_copy.this[0].name == "pr-128" && vergeio_tenant_copy.this[0].isolate == true && length(vergeio_network.sandbox) == 0 && length(vergeio_vm_clone.this) == 0 && length(data.vergeio_tenant_snapshots.source) == 0
-    error_message = "The tenant copy was not planned from the newest snapshot, or a sandbox network was planned."
+    condition     = length(vergeio_tenant_copy.this) == 1 && vergeio_tenant_copy.this[0].tenant_id == "7" && vergeio_tenant_copy.this[0].name == "pr-128" && vergeio_tenant_copy.this[0].isolate == true && length(vergeio_network.sandbox) == 0 && length(vergeio_vm_clone.this) == 0
+    error_message = "The tenant copy was not planned from the current tenant, or a sandbox network was planned."
   }
 }

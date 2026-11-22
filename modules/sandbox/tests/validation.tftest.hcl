@@ -43,20 +43,15 @@ run "external_without_network" {
   ]
 }
 
-run "tenant_without_snapshot" {
+run "tenant_snapshot_name" {
   command = plan
 
   variables {
-    source_type = "tenant"
-    tenant_id   = "7"
-    tag         = null
-    cidr        = null
-    tenant_snapshots = [{
-      id      = "3"
-      name    = "nightly"
-      created = 10
-    }]
-    snapshot_name = "missing"
+    source_type   = "tenant"
+    tenant_id     = "7"
+    tag           = null
+    cidr          = null
+    snapshot_name = "nightly"
   }
 
   expect_failures = [

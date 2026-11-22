@@ -29,20 +29,9 @@ func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 	if err != nil {
 		return err
 	}
-	snapshotID, err := parseID(data.SnapshotID, "tenant snapshot")
-	if err != nil {
-		return err
-	}
 	name := strings.TrimSpace(data.Name.ValueString())
 	if name == "" {
 		return fmt.Errorf("name is required")
-	}
-	snap, err := a.sdk.TenantSnapshots.Get(ctx, snapshotID)
-	if err != nil {
-		return err
-	}
-	if snap.Tenant.Int() != tenantID {
-		return fmt.Errorf("snapshot %d belongs to tenant %d, not %d", snapshotID, snap.Tenant.Int(), tenantID)
 	}
 	existing, err := a.sdk.Tenants.GetByName(ctx, name)
 	if err != nil && !vergeos.IsNotFoundError(err) {
@@ -51,9 +40,6 @@ func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 	if existing != nil && existing.Key.Int() > 0 {
 		return fmt.Errorf("tenant %q already exists", name)
 	}
-	// Tenants.Clone copies the current tenant. TenantCloneOptions has name,
-	// no_vnet, no_storage, and no_nodes. It has no snapshot field.
-	// tenant_actions restore with params.snapshot overwrites tenant_id.
 	if err := a.sdk.Tenants.Clone(ctx, tenantID, &vergeos.TenantCloneOptions{Name: name}); err != nil {
 		return err
 	}
@@ -77,7 +63,6 @@ func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 		}
 	}
 	data.Id = idString(clone.Key.Int())
-	data.SnapshotName = types.StringValue(snap.Name)
 	tflog.Debug(ctx, fmt.Sprintf("copied tenant %d as tenant %d", tenantID, clone.Key.Int()))
 	return nil
 }

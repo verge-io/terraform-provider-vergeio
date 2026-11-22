@@ -83,21 +83,6 @@ resource "vergeio_tenant" "source" {
   password_wo         = random_password.tenant.result
   password_wo_version = 1
   powerstate          = false
-
-  lifecycle {
-    action_trigger {
-      events  = [after_create]
-      actions = [action.vergeio_tenant_snapshot.source]
-    }
-  }
-}
-
-action "vergeio_tenant_snapshot" "source" {
-  config {
-    tenant_id         = vergeio_tenant.source.id
-    name              = "tf-acc-sandbox-tenant"
-    retention_seconds = 86400
-  }
 }
 
 module "vms" {
@@ -117,10 +102,9 @@ module "tenant" {
   count  = var.enable_sandbox ? 1 : 0
   source = "../.."
 
-  name          = "tf-acc-sandbox-copy"
-  source_type   = "tenant"
-  tenant_id     = vergeio_tenant.source.id
-  snapshot_name = "tf-acc-sandbox-tenant"
+  name        = "tf-acc-sandbox-copy"
+  source_type = "tenant"
+  tenant_id   = vergeio_tenant.source.id
 }
 
 output "vm_ids" {

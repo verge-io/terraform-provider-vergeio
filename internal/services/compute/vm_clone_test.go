@@ -5,6 +5,7 @@ package compute
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -286,6 +287,89 @@ func TestCreateVMCloneRollsBackWhenNICStaysOnSourceNetwork(t *testing.T) {
 	}
 	if len(deleted) != 1 {
 		t.Fatalf("deleted = %#v err = %v", deleted, err)
+	}
+}
+
+func TestCreateVMCloneDeletesCopyWhenNICMoveFailsPartway(t *testing.T) {
+	poll, timeout := vmClonePoll, vmCloneTimeout
+	vmClonePoll = time.Millisecond
+	vmCloneTimeout = 2 * time.Second
+	t.Cleanup(func() {
+		vmClonePoll = poll
+		vmCloneTimeout = timeout
+	})
+
+	var deleted []string
+	cloned := false
+	vnets := map[int]int{5: 9, 6: 9}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.URL.Path == "/api/v4/machine_snapshots/4":
+			_, _ = w.Write([]byte(`{"$key":4,"machine":40,"snap_machine":90,"name":"nightly"}`))
+		case r.URL.Path == "/api/v4/vms" && r.Method == http.MethodGet:
+			filter := r.URL.Query().Get("filter")
+			switch {
+			case strings.Contains(filter, "machine eq 90"):
+				_, _ = w.Write([]byte(`[{"$key":70,"machine":90,"name":"src-snap","is_snapshot":true}]`))
+			case strings.Contains(filter, "machine eq 40"):
+				_, _ = w.Write([]byte(`[{"$key":15,"machine":40,"name":"src","is_snapshot":false}]`))
+			case strings.Contains(filter, "name eq 'copy'"):
+				if !cloned {
+					_, _ = w.Write([]byte(`[]`))
+					return
+				}
+				_, _ = w.Write([]byte(`[{"$key":81,"machine":80,"name":"copy","is_snapshot":false,"powerstate":false}]`))
+			default:
+				http.NotFound(w, r)
+			}
+		case r.URL.Path == "/api/v4/vms/81" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"$key":81,"machine":80,"name":"copy","is_snapshot":false,"powerstate":false}`))
+		case r.URL.Path == "/api/v4/vms/15":
+			t.Error("clone cleanup touched the source VM")
+			http.Error(w, "source", http.StatusForbidden)
+		case r.URL.Path == "/api/v4/vm_actions":
+			cloned = true
+			_, _ = w.Write([]byte(`{"$key":1}`))
+		case r.URL.Path == "/api/v4/machine_nics" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(fmt.Sprintf(`[{"$key":5,"machine":80,"name":"lan","vnet":%d},{"$key":6,"machine":80,"name":"wan","vnet":%d}]`, vnets[5], vnets[6])))
+		case r.URL.Path == "/api/v4/machine_nics/5" && r.Method == http.MethodPut:
+			body := readJSON(t, r)
+			vnets[5] = int(body["vnet"].(float64))
+			_, _ = w.Write([]byte(`{}`))
+		case r.URL.Path == "/api/v4/machine_nics/5" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"$key":5,"machine":80,"name":"lan","vnet":%d}`, vnets[5])))
+		case r.URL.Path == "/api/v4/machine_nics/6" && r.Method == http.MethodPut:
+			http.Error(w, "nic update refused", http.StatusInternalServerError)
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vms/81":
+			deleted = append(deleted, r.URL.Path)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	api := testVMAPI(t, server.URL)
+	err := api.createVMClone(t.Context(), &VMCloneResourceModel{
+		SnapshotID: types.StringValue("4"),
+		Name:       types.StringValue("copy"),
+		NetworkID:  types.StringValue("6"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "NIC 6") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(deleted) != 1 || deleted[0] != "/api/v4/vms/81" {
+		t.Fatalf("deleted = %#v", deleted)
+	}
+	if vnets[5] != 6 || vnets[6] != 9 {
+		t.Fatalf("vnets after partial move = %#v", vnets)
 	}
 }
 

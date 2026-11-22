@@ -10,7 +10,7 @@ variable "name" {
 
 variable "source_type" {
   type        = string
-  description = "tenant clones a tenant. vm clones every VM that has the tag."
+  description = "tenant clones the tenant's current state. vm clones every VM that has the tag from a snapshot."
 
   validation {
     condition     = contains(["tenant", "vm"], var.source_type)
@@ -20,7 +20,7 @@ variable "source_type" {
 
 variable "tenant_id" {
   type        = string
-  description = "Source tenant key, vergeio_tenant.id. Required when source_type is tenant. The tenant is only read."
+  description = "Source tenant key, vergeio_tenant.id. Required when source_type is tenant. The copy is the tenant's current state, not a snapshot. The tenant is only read."
   default     = null
 
   validation {
@@ -42,7 +42,7 @@ variable "tag" {
 
 variable "snapshot_name" {
   type        = string
-  description = "Snapshot name to clone. Omit it to use the newest snapshot, the one with the greatest created time and then the greatest key. The snapshot is only read."
+  description = "VM snapshot name to clone. Omit it to use the newest snapshot, the one with the greatest created time and then the greatest key. The snapshot is only read. Leave this unset for a tenant sandbox. A tenant sandbox clones the tenant's current state."
   default     = null
 
   validation {
@@ -87,23 +87,6 @@ variable "vms" {
       alltrue([for vm in var.vms : vm.key == floor(vm.key) && vm.key > 0 && length(vm.name) > 0])
     )
     error_message = "vms keys must be unique positive whole numbers, and each VM needs a name."
-  }
-}
-
-variable "tenant_snapshots" {
-  type = list(object({
-    id      = string
-    name    = string
-    created = number
-  }))
-  description = "Snapshots of tenant_id. Omit it to read vergeio_tenant_snapshots. Set it to skip that read."
-  default     = null
-
-  validation {
-    condition = var.tenant_snapshots == null || alltrue([
-      for snap in var.tenant_snapshots : length(snap.id) > 0 && length(snap.name) > 0
-    ])
-    error_message = "Each tenant snapshot needs an id and a name."
   }
 }
 

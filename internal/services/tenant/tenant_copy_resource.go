@@ -27,7 +27,7 @@ var (
 	_ resource.ResourceWithValidateConfig = &TenantCopyResource{}
 )
 
-const tenantCopyDescription = "A copy of a VergeOS tenant, kept in state. Destroy deletes the copy. The source tenant and snapshot_id are only read. The pinned govergeos client clones a tenant with Tenants.Clone. That call takes name, no_vnet, no_storage, and no_nodes. It has no snapshot argument, so the copy is the current tenant. snapshot_id must be a tenant_snapshots row of tenant_id. The tenant_actions restore action sends params.snapshot and overwrites that tenant. This resource does not call it. isolate defaults to true and posts isolateon on the copy. It does not post isolateoff. A cloud snapshot recover (cloud_snapshot_tenant_actions action recover) can create a new tenant from a system snapshot. The pinned client does not expose that call."
+const tenantCopyDescription = "A copy of a VergeOS tenant's current state, kept in state. Destroy deletes the copy. The source tenant is only read. The pinned govergeos client clones a tenant with Tenants.Clone. That call takes name, no_vnet, no_storage, and no_nodes. It has no snapshot argument, so this resource copies the tenant as it is now, not a snapshot. tenant_actions restore sends params.snapshot and overwrites the source tenant. This resource does not call it. A copy from a system snapshot needs cloud_snapshot_tenant_actions action recover. The pinned client does not expose that call. isolate defaults to true and posts isolateon on the copy. It does not post isolateoff."
 
 func NewTenantCopyResource() resource.Resource {
 	return &TenantCopyResource{}
@@ -40,12 +40,10 @@ type TenantCopyResource struct {
 
 // TenantCopyResourceModel is vergeio_tenant_copy.
 type TenantCopyResourceModel struct {
-	Id           types.String `tfsdk:"id"`
-	TenantID     types.String `tfsdk:"tenant_id"`
-	SnapshotID   types.String `tfsdk:"snapshot_id"`
-	Name         types.String `tfsdk:"name"`
-	Isolate      types.Bool   `tfsdk:"isolate"`
-	SnapshotName types.String `tfsdk:"snapshot_name"`
+	Id       types.String `tfsdk:"id"`
+	TenantID types.String `tfsdk:"tenant_id"`
+	Name     types.String `tfsdk:"name"`
+	Isolate  types.Bool   `tfsdk:"isolate"`
 }
 
 func (r *TenantCopyResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -70,13 +68,6 @@ func (r *TenantCopyResource) Schema(ctx context.Context, req resource.SchemaRequ
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"snapshot_id": schema.StringAttribute{
-				MarkdownDescription: "tenant_snapshots key that must belong to tenant_id. The copy is still the current tenant. Changing it replaces the copy. The snapshot row is not modified.",
-				Required:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.RequiresReplace(),
-				},
-			},
 			"name": schema.StringAttribute{
 				MarkdownDescription: "Name of the copy. Changing it replaces the copy.",
 				Required:            true,
@@ -92,10 +83,6 @@ func (r *TenantCopyResource) Schema(ctx context.Context, req resource.SchemaRequ
 				PlanModifiers: []planmodifier.Bool{
 					boolplanmodifier.RequiresReplace(),
 				},
-			},
-			"snapshot_name": schema.StringAttribute{
-				MarkdownDescription: "Name of snapshot_id at create.",
-				Computed:            true,
 			},
 		},
 	}
@@ -130,11 +117,6 @@ func (r *TenantCopyResource) ValidateConfig(ctx context.Context, req resource.Va
 	if !data.TenantID.IsUnknown() {
 		if _, err := parseID(data.TenantID, "tenant"); err != nil {
 			resp.Diagnostics.AddAttributeError(path.Root("tenant_id"), "Invalid Tenant ID", err.Error())
-		}
-	}
-	if !data.SnapshotID.IsUnknown() {
-		if _, err := parseID(data.SnapshotID, "tenant snapshot"); err != nil {
-			resp.Diagnostics.AddAttributeError(path.Root("snapshot_id"), "Invalid Snapshot ID", err.Error())
 		}
 	}
 	if !data.Name.IsUnknown() && strings.TrimSpace(data.Name.ValueString()) == "" {
@@ -173,7 +155,7 @@ func (r *TenantCopyResource) Read(ctx context.Context, req resource.ReadRequest,
 }
 
 func (r *TenantCopyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	resp.Diagnostics.AddError("Tenant Copy Cannot Be Updated", "Changing tenant_id, snapshot_id, name, or isolate replaces the copy.")
+	resp.Diagnostics.AddError("Tenant Copy Cannot Be Updated", "Changing tenant_id, name, or isolate replaces the copy.")
 }
 
 func (r *TenantCopyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

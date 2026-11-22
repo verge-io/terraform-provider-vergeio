@@ -96,7 +96,7 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 * #79 is closed. The Terraform and Ansible guide says which tool owns which object, how a `vergeio_tag_member` on a VM becomes a group in `vergeio.vergeos.vergeos_vms`, and which `VERGEOS_*` variables both tools read.
 
-* #80. `modules/sandbox` copies a tenant, or the VMs that carry one tag, and deletes that copy when the module is destroyed. VM copies come from `machine_snapshots` through `vergeio_vm_clone`, on an internal network with no gateway unless `allow_external` is set. A tenant copy uses `Tenants.Clone` after a `tenant_snapshots` row is read. That call has no snapshot argument, so the copy is the current tenant. Restoring a tenant snapshot overwrites the source, and the module does not do that. The module does no data masking.
+* #80. `modules/sandbox` copies a tenant, or the VMs that carry one tag, and deletes that copy when the module is destroyed. VM copies come from `machine_snapshots` through `vergeio_vm_clone`, on an internal network with no gateway unless `allow_external` is set. A tenant copy uses `Tenants.Clone` and is the tenant's current state. That call has no snapshot argument. Restoring a tenant snapshot overwrites the source, and the module does not do that. A snapshot tenant copy needs `cloud_snapshot_tenant_actions` `recover`, which the pinned govergeos client does not expose. The module does no data masking.
 
 The remaining issues in this section are open.
 

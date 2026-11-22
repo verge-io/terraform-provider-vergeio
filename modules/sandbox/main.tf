@@ -1,6 +1,5 @@
 locals {
-  use_vm_inventory     = var.vms != null
-  use_tenant_inventory = var.tenant_snapshots != null
+  use_vm_inventory = var.vms != null
 
   tagged_vms = flatten([
     for item in data.vergeio_vms.tagged : [
@@ -38,31 +37,7 @@ locals {
     )
   }
 
-  tenant_snaps = local.use_tenant_inventory ? var.tenant_snapshots : flatten([
-    for item in data.vergeio_tenant_snapshots.source : [
-      for snap in item.snapshots : {
-        id      = snap.id
-        name    = snap.name
-        created = snap.created
-      }
-    ]
-  ])
-  tenant_stamps = sort([
-    for snap in local.tenant_snaps : format("%020d/%020d", snap.created, tonumber(snap.id))
-  ])
-  tenant_newest = length(local.tenant_stamps) == 0 ? "" : local.tenant_stamps[length(local.tenant_stamps) - 1]
-  chosen_tenant_snaps = var.source_type != "tenant" ? [] : [
-    for snap in local.tenant_snaps : snap
-    if var.snapshot_name == null ? format("%020d/%020d", snap.created, tonumber(snap.id)) == local.tenant_newest : snap.name == var.snapshot_name
-  ]
-
   sandbox_cidr = coalesce(var.cidr, "192.0.2.0/24")
-}
-
-data "vergeio_tenant_snapshots" "source" {
-  count = var.source_type == "tenant" && !local.use_tenant_inventory ? 1 : 0
-
-  tenant_id = coalesce(var.tenant_id, "1")
 }
 
 data "vergeio_vms" "tagged" {
@@ -105,19 +80,18 @@ resource "vergeio_vm_clone" "this" {
 }
 
 resource "vergeio_tenant_copy" "this" {
-  count = var.source_type == "tenant" && length(local.chosen_tenant_snaps) == 1 ? 1 : 0
+  count = var.source_type == "tenant" ? 1 : 0
 
-  tenant_id   = coalesce(var.tenant_id, "1")
-  snapshot_id = try(local.chosen_tenant_snaps[0].id, "1")
-  name        = var.name
-  isolate     = !var.allow_external
+  tenant_id = coalesce(var.tenant_id, "1")
+  name      = var.name
+  isolate   = !var.allow_external
 }
 
 resource "terraform_data" "check" {
   lifecycle {
     precondition {
-      condition     = var.source_type != "tenant" || (var.tenant_id != null && var.tag == null && var.vms == null && length(local.chosen_tenant_snaps) == 1)
-      error_message = "A tenant sandbox needs tenant_id and exactly one snapshot. Omit snapshot_name to use the newest snapshot. tag and vms select VMs."
+      condition     = var.source_type != "tenant" || (var.tenant_id != null && var.tag == null && var.vms == null && var.snapshot_name == null)
+      error_message = "A tenant sandbox needs tenant_id. It clones the tenant's current state. snapshot_name, tag, and vms are for a VM sandbox."
     }
 
     precondition {

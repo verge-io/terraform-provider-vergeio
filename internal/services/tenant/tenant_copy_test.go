@@ -27,7 +27,7 @@ func TestTenantCopySchema(t *testing.T) {
 	}
 	resp := &resource.SchemaResponse{}
 	item.Schema(t.Context(), resource.SchemaRequest{}, resp)
-	for _, name := range []string{"tenant_id", "snapshot_id", "name"} {
+	for _, name := range []string{"tenant_id", "name"} {
 		attr := resp.Schema.Attributes[name]
 		if attr == nil || !attr.IsRequired() {
 			t.Fatalf("%s should be required", name)
@@ -37,12 +37,15 @@ func TestTenantCopySchema(t *testing.T) {
 	if isolate == nil || !isolate.IsOptional() || !isolate.IsComputed() {
 		t.Fatal("isolate should be optional and computed")
 	}
-	if !strings.Contains(resp.Schema.MarkdownDescription, "no snapshot argument") || !strings.Contains(resp.Schema.MarkdownDescription, "does not call it") {
+	if resp.Schema.Attributes["snapshot_id"] != nil || resp.Schema.Attributes["snapshot_name"] != nil {
+		t.Fatal("snapshot fields should not be arguments")
+	}
+	if !strings.Contains(resp.Schema.MarkdownDescription, "current state") || !strings.Contains(resp.Schema.MarkdownDescription, "does not expose") {
 		t.Fatalf("description = %s", resp.Schema.MarkdownDescription)
 	}
 }
 
-func TestCreateTenantCopyReadsSnapshotAndIsolatesTheCopy(t *testing.T) {
+func TestCreateTenantCopyClonesCurrentStateAndIsolatesTheCopy(t *testing.T) {
 	poll, timeout := tenantCopyPoll, tenantCopyTimeout
 	tenantCopyPoll = time.Millisecond
 	tenantCopyTimeout = 2 * time.Second
@@ -52,7 +55,6 @@ func TestCreateTenantCopyReadsSnapshotAndIsolatesTheCopy(t *testing.T) {
 	})
 
 	var actions []map[string]any
-	var snapshotWrites int
 	cloned := false
 	isolated := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,11 +65,9 @@ func TestCreateTenantCopyReadsSnapshotAndIsolatesTheCopy(t *testing.T) {
 		switch {
 		case r.URL.Path == "/version.json":
 			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
-		case r.URL.Path == "/api/v4/tenant_snapshots/3" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"$key":3,"tenant":7,"name":"nightly","type":"full","created":30}`))
-		case strings.HasPrefix(r.URL.Path, "/api/v4/tenant_snapshots") && r.Method != http.MethodGet:
-			snapshotWrites++
-			http.Error(w, "snapshot write", http.StatusMethodNotAllowed)
+		case strings.HasPrefix(r.URL.Path, "/api/v4/tenant_snapshots"):
+			t.Errorf("tenant copy touched a snapshot: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "snapshot", http.StatusMethodNotAllowed)
 		case r.URL.Path == "/api/v4/tenants" && r.Method == http.MethodGet:
 			if !cloned {
 				_, _ = w.Write([]byte(`[]`))
@@ -111,19 +111,15 @@ func TestCreateTenantCopyReadsSnapshotAndIsolatesTheCopy(t *testing.T) {
 
 	api := testTenantAPI(t, server.URL)
 	data := &TenantCopyResourceModel{
-		TenantID:   types.StringValue("7"),
-		SnapshotID: types.StringValue("3"),
-		Name:       types.StringValue("sandbox"),
-		Isolate:    types.BoolValue(true),
+		TenantID: types.StringValue("7"),
+		Name:     types.StringValue("sandbox"),
+		Isolate:  types.BoolValue(true),
 	}
 	if err := api.createTenantCopy(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
-	if data.Id.ValueString() != "40" || data.SnapshotName.ValueString() != "nightly" {
+	if data.Id.ValueString() != "40" {
 		t.Fatalf("copy = %#v", data)
-	}
-	if snapshotWrites != 0 {
-		t.Fatalf("snapshot writes = %d", snapshotWrites)
 	}
 	if len(actions) != 2 || actions[0]["action"] != "clone" || actions[0]["tenant"] != float64(7) {
 		t.Fatalf("actions = %#v", actions)

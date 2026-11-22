@@ -41,7 +41,7 @@ variable "cidr" {
 
 variable "snapshot_name" {
   type        = string
-  description = "Snapshot name. Omit to use the newest snapshot."
+  description = "VM snapshot name. Omit to use the newest snapshot. Leave unset for a tenant sandbox. A tenant sandbox clones the tenant's current state."
   default     = null
 }
 
