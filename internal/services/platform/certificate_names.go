@@ -134,7 +134,27 @@ func firstNonEmpty(values ...string) string {
 // filled in, or until the timeout. A read does the same only while the
 // row is still new. A read error is returned as-is. The timeout returns
 // an error. An empty result is not stored as success.
-func (a *API) loadCertificate(ctx context.Context, id int, wait bool, want string) (*vergeos.Certificate, certificateDetail, error) {
+// ensureCertificateOwned returns NotFound when the stored key now points at
+// another certificate (created mismatch). Skip the check when created is
+// unset (import, or state written before this check existed). A nil data
+// is a create, which has no stored created time yet.
+func ensureCertificateOwned(data *certificateModel, cert *vergeos.Certificate) error {
+	if data == nil {
+		return nil
+	}
+	if cert == nil {
+		return fmt.Errorf("certificate read returned no row")
+	}
+	if !knownInt(data.Created) || data.Created.ValueInt64() == 0 {
+		return nil
+	}
+	if cert.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "Certificate", ID: cert.Key.Int()}
+	}
+	return nil
+}
+
+func (a *API) loadCertificate(ctx context.Context, id int, wait bool, want string, owned *certificateModel) (*vergeos.Certificate, certificateDetail, error) {
 	timeout := a.certificateNameTimeout
 	if timeout <= 0 {
 		timeout = certificateNameTimeout
@@ -148,6 +168,9 @@ func (a *API) loadCertificate(ctx context.Context, id int, wait bool, want strin
 	for {
 		cert, row, err := a.fetchCertificate(ctx, id)
 		if err != nil {
+			return nil, certificateDetail{}, err
+		}
+		if err := ensureCertificateOwned(owned, cert); err != nil {
 			return nil, certificateDetail{}, err
 		}
 		domain, domainName, domainList := certificateNameFields(cert, row)

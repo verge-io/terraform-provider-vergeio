@@ -102,7 +102,7 @@ resource "vergeio_certificate" "acme" {
 ### Read-Only
 
 - `autocreated` (Boolean) Whether VergeOS created this certificate on its own.
-- `created` (Number) Time the certificate was created, as seconds since the epoch.
+- `created` (Number) Unix time when VergeOS created the certificate. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another certificate, and refresh drops this resource. A description change on the same certificate still updates in place.
 - `domain` (String) Primary domain reported by VergeOS.
 - `expires` (Number) Expiration time, as seconds since the epoch.
 - `id` (String) Certificate key assigned by VergeOS.
