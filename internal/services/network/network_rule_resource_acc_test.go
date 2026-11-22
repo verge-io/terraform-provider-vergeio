@@ -21,7 +21,7 @@ func TestAccNetworkRule_OrderID(t *testing.T) {
 	ruleB := acctest.Name("rule-b")
 	ruleC := acctest.Name("rule-c")
 	created := testAccNetworkRuleOrderConfig(networkName, ruleA, ruleB, ruleC, 1, 2, 3)
-	moved := testAccNetworkRuleOrderConfig(networkName, ruleA, ruleB, ruleC, 3, 1, 2)
+	swapped := testAccNetworkRuleOrderConfig(networkName, ruleA, ruleB, ruleC, 3, 2, 1)
 	spaced := testAccNetworkRuleOrderConfig(networkName, ruleA, ruleB, ruleC, 10, 20, 30)
 
 	resource.Test(t, resource.TestCase{
@@ -50,15 +50,15 @@ func TestAccNetworkRule_OrderID(t *testing.T) {
 				},
 			},
 			{
-				Config: moved,
+				Config: swapped,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("vergeio_network_rule.a", "orderid", "3"),
-					resource.TestCheckResourceAttr("vergeio_network_rule.b", "orderid", "1"),
-					resource.TestCheckResourceAttr("vergeio_network_rule.c", "orderid", "2"),
+					resource.TestCheckResourceAttr("vergeio_network_rule.b", "orderid", "2"),
+					resource.TestCheckResourceAttr("vergeio_network_rule.c", "orderid", "1"),
 				),
 			},
 			{
-				Config: moved,
+				Config: swapped,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
@@ -110,6 +110,8 @@ resource "vergeio_network_rule" "b" {
   destination_ports = "80"
   orderid           = %d
   apply             = false
+
+  depends_on = [vergeio_network_rule.a]
 }
 
 resource "vergeio_network_rule" "c" {
@@ -119,6 +121,8 @@ resource "vergeio_network_rule" "c" {
   destination_ports = "53"
   orderid           = %d
   apply             = false
+
+  depends_on = [vergeio_network_rule.b]
 }
 `, networkName, ruleA, orderA, ruleB, orderB, ruleC, orderC))
 }
