@@ -104,7 +104,7 @@ jobs:
       - name: Validate and test modules
         run: |
           set -eu
-          for module in modules/tenant modules/network_segment modules/vm modules/baseline modules/fleet modules/vergeos_lab; do
+          for module in modules/tenant modules/network_segment modules/vm modules/baseline modules/fleet modules/vergeos_lab modules/sandbox; do
             terraform -chdir="$module" init -backend=false
             terraform -chdir="$module" validate
             # tests/lab is not loaded. terraform test does not recurse.
@@ -113,7 +113,7 @@ jobs:
       - name: Validate examples
         run: |
           set -eu
-          for example in examples/modules/tenant examples/modules/network_segment examples/modules/vm examples/modules/baseline examples/modules/fleet examples/modules/vergeos_lab; do
+          for example in examples/modules/tenant examples/modules/network_segment examples/modules/vm examples/modules/baseline examples/modules/fleet examples/modules/vergeos_lab examples/modules/sandbox; do
             terraform -chdir="$example" init -backend=false
             terraform -chdir="$example" validate
           done

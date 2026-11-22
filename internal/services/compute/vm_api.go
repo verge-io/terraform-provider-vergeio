@@ -1478,12 +1478,27 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	isSnapshotFilterSet := !data.IsSnapshot.IsNull()
 	isSnapshotFilter := data.IsSnapshot.ValueBool()
 	kept := make([]vergeos.VM, 0, len(vms))
-	machineIDs := make([]int, 0, len(vms))
 	for _, vm := range vms {
 		if isSnapshotFilterSet && isSnapshotFilter != vm.IsSnapshot {
 			continue
 		}
 		kept = append(kept, vm)
+	}
+	if tag := strings.TrimSpace(data.Tag.ValueString()); !data.Tag.IsNull() && !data.Tag.IsUnknown() && tag != "" {
+		keys, err := shared.TagMemberKeys(ctx, va.sdk, tag, "vms")
+		if err != nil {
+			return err
+		}
+		matched := make([]vergeos.VM, 0, len(kept))
+		for _, vm := range kept {
+			if _, ok := keys[strconv.Itoa(vm.Key.Int())]; ok {
+				matched = append(matched, vm)
+			}
+		}
+		kept = matched
+	}
+	machineIDs := make([]int, 0, len(kept))
+	for _, vm := range kept {
 		machineIDs = append(machineIDs, vm.Machine)
 	}
 

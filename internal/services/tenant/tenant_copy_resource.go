@@ -1,0 +1,192 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MIT
+
+package tenant
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"terraform-provider-vergeio/internal/client"
+
+	"github.com/hashicorp/terraform-plugin-framework/path"
+	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/verge-io/govergeos"
+)
+
+var (
+	_ resource.Resource                   = &TenantCopyResource{}
+	_ resource.ResourceWithImportState    = &TenantCopyResource{}
+	_ resource.ResourceWithValidateConfig = &TenantCopyResource{}
+)
+
+const tenantCopyDescription = "A copy of a VergeOS tenant, kept in state. Destroy deletes the copy. The source tenant and snapshot_id are only read. The pinned govergeos client clones a tenant with Tenants.Clone. That call takes name, no_vnet, no_storage, and no_nodes. It has no snapshot argument, so the copy is the current tenant. snapshot_id must be a tenant_snapshots row of tenant_id. The tenant_actions restore action sends params.snapshot and overwrites that tenant. This resource does not call it. isolate defaults to true and posts isolateon on the copy. It does not post isolateoff. A cloud snapshot recover (cloud_snapshot_tenant_actions action recover) can create a new tenant from a system snapshot. The pinned client does not expose that call."
+
+func NewTenantCopyResource() resource.Resource {
+	return &TenantCopyResource{}
+}
+
+// TenantCopyResource is vergeio_tenant_copy.
+type TenantCopyResource struct {
+	api *API
+}
+
+// TenantCopyResourceModel is vergeio_tenant_copy.
+type TenantCopyResourceModel struct {
+	Id           types.String `tfsdk:"id"`
+	TenantID     types.String `tfsdk:"tenant_id"`
+	SnapshotID   types.String `tfsdk:"snapshot_id"`
+	Name         types.String `tfsdk:"name"`
+	Isolate      types.Bool   `tfsdk:"isolate"`
+	SnapshotName types.String `tfsdk:"snapshot_name"`
+}
+
+func (r *TenantCopyResource) Metadata(ctx context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_tenant_copy"
+}
+
+func (r *TenantCopyResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: tenantCopyDescription,
+		Attributes: map[string]schema.Attribute{
+			"id": schema.StringAttribute{
+				MarkdownDescription: "Tenant key of the copy.",
+				Computed:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"tenant_id": schema.StringAttribute{
+				MarkdownDescription: "Source tenant key, the same value as vergeio_tenant.id. Changing it replaces the copy. This tenant is not modified.",
+				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"snapshot_id": schema.StringAttribute{
+				MarkdownDescription: "tenant_snapshots key that must belong to tenant_id. The copy is still the current tenant. Changing it replaces the copy. The snapshot row is not modified.",
+				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"name": schema.StringAttribute{
+				MarkdownDescription: "Name of the copy. Changing it replaces the copy.",
+				Required:            true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"isolate": schema.BoolAttribute{
+				MarkdownDescription: "Post isolateon on the copy when it is not already isolated. Defaults to true. false leaves the connectivity the clone copied. This resource does not post isolateoff.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.RequiresReplace(),
+				},
+			},
+			"snapshot_name": schema.StringAttribute{
+				MarkdownDescription: "Name of snapshot_id at create.",
+				Computed:            true,
+			},
+		},
+	}
+}
+
+func (r *TenantCopyResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
+	client, ok := req.ProviderData.(*vergeio.Client)
+	if !ok {
+		resp.Diagnostics.AddError(
+			"Unexpected Resource Configure Type",
+			fmt.Sprintf("Expected *vergeio.Client, got: %T. Please report this issue to the provider developers.", req.ProviderData),
+		)
+		return
+	}
+	api, err := NewAPI(client)
+	if err != nil {
+		resp.Diagnostics.AddError("Unable to Create VergeOS API Client", err.Error())
+		return
+	}
+	r.api = api
+}
+
+func (r *TenantCopyResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var data TenantCopyResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !data.TenantID.IsUnknown() {
+		if _, err := parseID(data.TenantID, "tenant"); err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("tenant_id"), "Invalid Tenant ID", err.Error())
+		}
+	}
+	if !data.SnapshotID.IsUnknown() {
+		if _, err := parseID(data.SnapshotID, "tenant snapshot"); err != nil {
+			resp.Diagnostics.AddAttributeError(path.Root("snapshot_id"), "Invalid Snapshot ID", err.Error())
+		}
+	}
+	if !data.Name.IsUnknown() && strings.TrimSpace(data.Name.ValueString()) == "" {
+		resp.Diagnostics.AddAttributeError(path.Root("name"), "Invalid Copy Name", "name is required")
+	}
+}
+
+func (r *TenantCopyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var data TenantCopyResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := r.api.createTenantCopy(ctx, &data); err != nil {
+		resp.Diagnostics.AddError("Error creating tenant copy", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func (r *TenantCopyResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var data TenantCopyResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := r.api.readTenantCopy(ctx, &data); err != nil {
+		if vergeos.IsNotFoundError(err) {
+			resp.State.RemoveResource(ctx)
+			return
+		}
+		resp.Diagnostics.AddError("Error reading tenant copy", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+func (r *TenantCopyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	resp.Diagnostics.AddError("Tenant Copy Cannot Be Updated", "Changing tenant_id, snapshot_id, name, or isolate replaces the copy.")
+}
+
+func (r *TenantCopyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var data TenantCopyResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if err := r.api.deleteTenantCopy(ctx, &data); err != nil {
+		resp.Diagnostics.AddError("Error deleting tenant copy", err.Error())
+	}
+}
+
+func (r *TenantCopyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
