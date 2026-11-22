@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -617,6 +618,7 @@ func (f *ruleFixture) deleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(f.rules, key)
+	f.compactOrders()
 	f.needFW = true
 	w.WriteHeader(http.StatusOK)
 }
@@ -713,6 +715,30 @@ func (f *ruleFixture) deleteAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(f.aliases, key)
 	w.WriteHeader(http.StatusOK)
+}
+
+func (f *ruleFixture) compactOrders() {
+	type slot struct {
+		key   int
+		order int
+	}
+	var slots []slot
+	for id, rule := range f.rules {
+		system, _ := rule["system_rule"].(bool)
+		if system {
+			continue
+		}
+		slots = append(slots, slot{key: id, order: intFrom(rule["orderid"])})
+	}
+	sort.Slice(slots, func(i, j int) bool {
+		if slots[i].order != slots[j].order {
+			return slots[i].order < slots[j].order
+		}
+		return slots[i].key < slots[j].key
+	})
+	for i, item := range slots {
+		f.rules[item.key]["orderid"] = i + 1
+	}
 }
 
 func (f *ruleFixture) reorder(key int, requested *int) {
@@ -982,6 +1008,94 @@ func TestSyncRuleOrderParallelMove(t *testing.T) {
 	}
 	if len(got) != 3 || got[0].Name != "tf-acc-b" || got[0].OrderID != 1 || got[1].Name != "tf-acc-c" || got[1].OrderID != 2 || got[2].Name != "tf-acc-a" || got[2].OrderID != 3 {
 		t.Fatalf("rules = %+v", got)
+	}
+}
+
+func TestOrderRoomSkipsUnreachableWaiters(t *testing.T) {
+	const vnetID = 3371
+	t.Cleanup(func() { networkRuleOrderGates.Delete(vnetID) })
+	gate := networkRuleOrderGate(vnetID)
+	first := gate.join(true, 2)
+	second := gate.join(true, 2)
+	defer gate.leave(first)
+	defer gate.leave(second)
+	if room := gate.room(first, 0); room != 0 {
+		t.Fatalf("room = %d, want 0", room)
+	}
+	reachable := gate.join(true, 1)
+	defer gate.leave(reachable)
+	if room := gate.room(reachable, 0); room != 0 {
+		t.Fatalf("room = %d, want 0", room)
+	}
+	if room := gate.room(first, 0); room != 2 {
+		t.Fatalf("room = %d, want 2", room)
+	}
+}
+
+func TestSyncRuleOrderDuplicateCreateRejects(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	start := time.Now()
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for _, name := range []string{"tf-acc-a", "tf-acc-b"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			_, _, err := api.syncRule(t.Context(), 91, 0, orderedRule(name, 2), true)
+			if err == nil || !strings.Contains(err.Error(), "1 through 1") {
+				errCh <- fmt.Errorf("%s: %v", name, err)
+			}
+		}(name)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("unreachable creates took %s", time.Since(start))
+	}
+}
+
+func TestSyncRuleOrderDeleteKeepsReachablePosition(t *testing.T) {
+	for range 20 {
+		fix := newRuleFixture(t, true)
+		fix.seed(apiRule(12, "tf-acc-a", 1), apiRule(13, "tf-acc-b", 2), apiRule(14, "tf-acc-c", 3))
+		api := newRuleTestAPI(t, fix.serve)
+		var wg sync.WaitGroup
+		errCh := make(chan error, 2)
+		var got firewallRule
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := api.deleteRule(t.Context(), 92, 14, true); err != nil {
+				errCh <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			rule, _, err := api.syncRule(t.Context(), 92, 12, orderedRule("tf-acc-a", 2), true)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			got = rule
+		}()
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			t.Error(err)
+		}
+		if t.Failed() {
+			return
+		}
+		if got.Key != 12 || got.OrderID != 2 {
+			t.Fatalf("moved = %+v", got)
+		}
+		if _, ok := fix.rule(14); ok {
+			t.Fatal("deleted rule still exists")
+		}
 	}
 }
 

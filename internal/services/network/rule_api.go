@@ -67,6 +67,11 @@ func stagedFirewallNotice(network *vergeos.Network, id int) *firewallNotice {
 
 // syncRuleSet writes the authoritative non-system rule list and applies once.
 func (a *RuleApi) syncRuleSet(ctx context.Context, vnetID int, desired []firewallRule, apply bool) ([]firewallRule, *firewallNotice, error) {
+	gate := networkRuleOrderGate(vnetID)
+	worker := gate.joinRemoving()
+	defer gate.leave(worker)
+	gate.place.Lock()
+	defer gate.place.Unlock()
 	if _, err := a.sdk.Networks.Get(ctx, vnetID); err != nil {
 		if vergeos.IsNotFoundError(err) && len(desired) == 0 {
 			return nil, nil, nil
@@ -99,7 +104,11 @@ func (a *RuleApi) syncRuleSet(ctx context.Context, vnetID int, desired []firewal
 func (a *RuleApi) syncRule(ctx context.Context, vnetID, existingKey int, desired firewallRule, apply bool) (firewallRule, *firewallNotice, error) {
 	ordered := desired.Optional != nil && desired.Optional.Order
 	gate := networkRuleOrderGate(vnetID)
-	worker := gate.join(ordered)
+	want := 0
+	if ordered {
+		want = desired.OrderID
+	}
+	worker := gate.join(ordered, want)
 	defer gate.leave(worker)
 	if existingKey > 0 {
 		gate.markCreated(worker)
@@ -175,10 +184,24 @@ func (a *RuleApi) syncOrderedRule(ctx context.Context, worker *orderWorker, vnet
 		}
 		gate.place.Lock()
 		rule, settled, stepWrote, err := a.placeRuleOrder(ctx, gate, worker, vnetID, existingKey, desired)
-		gate.place.Unlock()
 		if err != nil {
+			gate.place.Unlock()
 			return firewallRule{}, nil, err
 		}
+		if settled {
+			got, getErr := a.sdk.VNetRules.Get(ctx, rule.Key)
+			if getErr != nil {
+				gate.place.Unlock()
+				return firewallRule{}, nil, getErr
+			}
+			if got.OrderID != desired.OrderID || gate.hasRemoving(worker) {
+				gate.setRest(worker, false)
+				settled = false
+			} else {
+				saved = ruleFromAPI(*got)
+			}
+		}
+		gate.place.Unlock()
 		if stepWrote {
 			wrote = true
 		}
@@ -188,24 +211,13 @@ func (a *RuleApi) syncOrderedRule(ctx context.Context, worker *orderWorker, vnet
 			}
 			continue
 		}
-		saved = rule
 		break
 	}
 	notice, err := a.finishApply(ctx, vnetID, wrote, apply)
 	if err != nil {
 		return firewallRule{}, nil, err
 	}
-	got, err := a.sdk.VNetRules.Get(ctx, saved.Key)
-	if err != nil {
-		return firewallRule{}, nil, err
-	}
-	if got.OrderID != desired.OrderID {
-		return firewallRule{}, nil, fmt.Errorf(
-			"firewall rule %q is at orderid %d after apply, not %d; leave orderid unset, or use vergeio_network_rules to own the order",
-			got.Name, got.OrderID, desired.OrderID,
-		)
-	}
-	return ruleFromAPI(*got), notice, nil
+	return saved, notice, nil
 }
 
 func (a *RuleApi) placeRuleOrder(ctx context.Context, gate *orderGate, worker *orderWorker, vnetID, existingKey int, desired firewallRule) (firewallRule, bool, bool, error) {
@@ -217,6 +229,10 @@ func (a *RuleApi) placeRuleOrder(ctx context.Context, gate *orderGate, worker *o
 	if err != nil {
 		return firewallRule{}, false, false, err
 	}
+	if gate.hasRemoving(worker) {
+		gate.setRest(worker, false)
+		return firewallRule{}, false, false, nil
+	}
 	count := nonSystemCount(current)
 	span := count
 	if found == nil {
@@ -224,7 +240,7 @@ func (a *RuleApi) placeRuleOrder(ctx context.Context, gate *orderGate, worker *o
 	} else {
 		gate.markCreated(worker)
 	}
-	extra := gate.room(worker)
+	extra := gate.room(worker, count)
 	limit := span + extra
 	if err := rejectRuleOrder(desired.Name, desired.OrderID, limit); err != nil {
 		return firewallRule{}, false, false, err
@@ -290,24 +306,37 @@ func (a *RuleApi) deleteRule(ctx context.Context, vnetID, key int, apply bool) (
 	if key <= 0 {
 		return a.finishApply(ctx, vnetID, false, apply)
 	}
+	gate := networkRuleOrderGate(vnetID)
+	worker := gate.joinRemoving()
+	defer gate.leave(worker)
+	wrote, err := a.deleteOrderedRule(ctx, gate, key)
+	if err != nil {
+		return nil, err
+	}
+	return a.finishApply(ctx, vnetID, wrote, apply)
+}
+
+func (a *RuleApi) deleteOrderedRule(ctx context.Context, gate *orderGate, key int) (bool, error) {
+	gate.place.Lock()
+	defer gate.place.Unlock()
 	rule, err := a.sdk.VNetRules.Get(ctx, key)
 	if err != nil {
 		if vergeos.IsNotFoundError(err) {
-			return a.finishApply(ctx, vnetID, false, apply)
+			return false, nil
 		}
-		return nil, err
+		return false, err
 	}
 	if rule.SystemRule {
-		return nil, &systemRuleError{Name: rule.Name}
+		return false, &systemRuleError{Name: rule.Name}
 	}
 	raw := a.sdk.VNetRules.Delete(ctx, key)
 	if err := confirmDeleted(raw, namedRow("firewall rule", key, rule.Name), func() error {
 		_, getErr := a.sdk.VNetRules.Get(ctx, key)
 		return getErr
 	}); err != nil {
-		return nil, err
+		return false, err
 	}
-	return a.finishApply(ctx, vnetID, raw == nil, apply)
+	return raw == nil, nil
 }
 
 func (a *RuleApi) managedRules(ctx context.Context, vnetID int) ([]firewallRule, error) {

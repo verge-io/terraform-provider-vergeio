@@ -5,6 +5,7 @@ package network
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 )
@@ -21,10 +22,12 @@ type orderGate struct {
 }
 
 type orderWorker struct {
-	ordered bool
-	created bool
-	atRest  bool
-	written bool
+	ordered  bool
+	created  bool
+	removing bool
+	atRest   bool
+	written  bool
+	want     int
 }
 
 var networkRuleOrderGates sync.Map
@@ -38,8 +41,8 @@ func networkRuleOrderGate(vnetID int) *orderGate {
 	return actual.(*orderGate)
 }
 
-func (g *orderGate) join(ordered bool) *orderWorker {
-	worker := &orderWorker{ordered: ordered}
+func (g *orderGate) join(ordered bool, want int) *orderWorker {
+	worker := &orderWorker{ordered: ordered, want: want}
 	g.mu.Lock()
 	g.workers[worker] = struct{}{}
 	g.mu.Unlock()
@@ -58,16 +61,52 @@ func (g *orderGate) markCreated(worker *orderWorker) {
 	g.mu.Unlock()
 }
 
-func (g *orderGate) room(self *orderWorker) int {
+func (g *orderGate) joinRemoving() *orderWorker {
+	worker := &orderWorker{removing: true}
+	g.mu.Lock()
+	g.workers[worker] = struct{}{}
+	g.mu.Unlock()
+	return worker
+}
+
+func (g *orderGate) hasRemoving(self *orderWorker) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	n := 0
 	for worker := range g.workers {
-		if worker != self && !worker.created {
-			n++
+		if worker != self && worker.removing {
+			return true
 		}
 	}
-	return n
+	return false
+}
+
+func (g *orderGate) room(self *orderWorker, currentCount int) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	type candidate struct {
+		ordered bool
+		want    int
+	}
+	var candidates []candidate
+	for worker := range g.workers {
+		if worker == self || worker.created || worker.removing {
+			continue
+		}
+		candidates = append(candidates, candidate{ordered: worker.ordered, want: worker.want})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].ordered != candidates[j].ordered {
+			return !candidates[i].ordered
+		}
+		return candidates[i].want < candidates[j].want
+	})
+	accepted := 0
+	for _, candidate := range candidates {
+		if !candidate.ordered || candidate.want <= currentCount+1+accepted {
+			accepted++
+		}
+	}
+	return accepted
 }
 
 func (g *orderGate) setRest(worker *orderWorker, rest bool) bool {
@@ -81,6 +120,9 @@ func (g *orderGate) setRest(worker *orderWorker, rest bool) bool {
 	}
 	worker.atRest = true
 	for other := range g.workers {
+		if other != worker && other.removing {
+			return false
+		}
 		if !other.created || (other.ordered && !other.atRest) {
 			return false
 		}
