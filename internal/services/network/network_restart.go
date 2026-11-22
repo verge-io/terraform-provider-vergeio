@@ -6,7 +6,6 @@ package network
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -114,12 +113,9 @@ func pendingRestartNoticeFor(data *NetworkResourceModel, running, restartOnChang
 // until the flag clears. data.NeedRestart is set from the network after that
 // wait, or from the post-update read when the restart is skipped.
 func (nc *NetworkApi) reconcileStagedRestart(ctx context.Context, data *NetworkResourceModel) (pendingRestartNotice, error) {
-	if data.Id.IsNull() || data.Id.IsUnknown() || data.Id.ValueString() == "" {
-		return pendingRestartNotice{}, fmt.Errorf("missing network id")
-	}
-	networkID, err := strconv.Atoi(data.Id.ValueString())
+	networkID, err := parseID(data.Id, "network")
 	if err != nil {
-		return pendingRestartNotice{}, fmt.Errorf("invalid network ID format: %v", err)
+		return pendingRestartNotice{}, err
 	}
 
 	network, err := nc.sdk.Networks.Get(ctx, networkID)

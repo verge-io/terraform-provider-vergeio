@@ -1,5 +1,5 @@
 
-# Networks data source fetches the Network from the VergeIO. 
+# Nodes data source fetches the Nodes from the VergeIO. 
 
 data "vergeio_nodes" "all" {
 }
@@ -9,9 +9,9 @@ output "nodes" {
 
 # Add a filter to see information on a specific node
 
-data "vergeio_nodes" "all" {
+data "vergeio_nodes" "node1" {
   filter_name = "node1"
 }
-output "nodes" {
-  value = data.vergeio_nodes.all
+output "node1" {
+  value = data.vergeio_nodes.node1
 }

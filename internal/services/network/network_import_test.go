@@ -69,3 +69,69 @@ func assertImportIDPassthrough(t *testing.T, resp *fwresource.ImportStateRespons
 		t.Fatalf("id = %q, want %q", got.ValueString(), id)
 	}
 }
+
+func TestParseID(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   types.String
+		want    int
+		wantErr string
+	}{
+		{
+			name:  "valid integer",
+			input: types.StringValue("42"),
+			want:  42,
+		},
+		{
+			name:  "trimmed whitespace",
+			input: types.StringValue(" 1 "),
+			want:  1,
+		},
+		{
+			name:    "non-numeric",
+			input:   types.StringValue("abc"),
+			wantErr: `network id "abc" is not a positive integer`,
+		},
+		{
+			name:    "zero",
+			input:   types.StringValue("0"),
+			wantErr: `network id "0" is not a positive integer`,
+		},
+		{
+			name:    "negative",
+			input:   types.StringValue("-5"),
+			wantErr: `network id "-5" is not a positive integer`,
+		},
+		{
+			name:    "null",
+			input:   types.StringNull(),
+			wantErr: "network id is empty",
+		},
+		{
+			name:    "unknown",
+			input:   types.StringUnknown(),
+			wantErr: "network id is empty",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseID(tc.input, "network")
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("parseID(%v) expected error %q, got nil", tc.input, tc.wantErr)
+				}
+				if err.Error() != tc.wantErr {
+					t.Fatalf("parseID(%v) error = %q, want %q", tc.input, err.Error(), tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseID(%v) unexpected error: %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Fatalf("parseID(%v) = %d, want %d", tc.input, got, tc.want)
+			}
+		})
+	}
+}

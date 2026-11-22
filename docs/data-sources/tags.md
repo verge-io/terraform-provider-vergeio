@@ -60,7 +60,7 @@ data "vergeio_tags" "backup_true" {
 # category_name selects the category when the id is not known.
 # It cannot be combined with category_filter.
 
-data "vergeio_tags" "powerup_true" {
+data "vergeio_tags" "powerup_by_name" {
   filter        = "true"
   category_name = "powerup"
 }
@@ -87,10 +87,10 @@ resource "vergeio_tag_member" "vm_powerup" {
 ### Read category fields
 
 ```terraform
-data "vergeio_tags" "all" {}
+data "vergeio_tags" "categories" {}
 
 output "tags_with_categories" {
-  value = [for tag in data.vergeio_tags.all.tags : {
+  value = [for tag in data.vergeio_tags.categories.tags : {
     id            = tag.key
     name          = tag.name
     category_id   = tag.category
