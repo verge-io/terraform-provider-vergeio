@@ -31,6 +31,7 @@ func TestCertificateAcceptanceConfigParses(t *testing.T) {
 	for _, src := range []string{
 		testAccCertificateSelfSigned("tf-acc-cert.local", "first"),
 		testAccCertificateSelfSigned("tf-acc-cert.local", "second"),
+		testAccCertificateSelfSignedList("tf-acc-cert.local", "tf-acc-cert.local,tf-acc-cert-api.local", "first"),
 		testAccCertificateManual("tf-acc-cert.local", "uploaded", pub, priv),
 		testAccCertificateManual("tf-acc-cert.local", "replaced", pub, priv),
 	} {
@@ -95,6 +96,105 @@ func TestAccCertificate_SelfSigned(t *testing.T) {
 				// configured domain_name through applyDomainName. Import has
 				// no prior value, so the issued name can differ.
 				ImportStateVerifyIgnore: []string{"created", "modified", "expires", "domain_name"},
+			},
+		},
+	})
+}
+
+func TestAccCertificate_SelfSignedDomainListReplace(t *testing.T) {
+	domain := acctest.Name("certnames") + ".local"
+	extra := acctest.Name("certnames") + ".local"
+	if err := acctest.RequirePrefix(domain); err != nil {
+		t.Fatal(err)
+	}
+	if err := acctest.RequirePrefix(extra); err != nil {
+		t.Fatal(err)
+	}
+	list := domain + "," + extra
+	created := testAccCertificateSelfSigned(domain, "UI certificate")
+	withNames := testAccCertificateSelfSignedList(domain, list, "UI certificate")
+	described := testAccCertificateSelfSignedList(domain, list, "Replacement UI certificate")
+	var createdID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckCertificateDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: created,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_name", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_list", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "type", "self_signed"),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "key_type", "ecdsa"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_certificate.test"]
+						if !ok || rs.Primary.ID == "" {
+							return fmt.Errorf("certificate id is empty")
+						}
+						createdID = rs.Primary.ID
+						return nil
+					},
+				),
+			},
+			{
+				Config: created,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				Config: withNames,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_certificate.test", plancheck.ResourceActionReplace),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_name", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain", domain),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_list", list),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "type", "self_signed"),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "key_type", "ecdsa"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_certificate.test"]
+						if !ok || rs.Primary.ID == "" || rs.Primary.ID == createdID {
+							id := ""
+							if ok {
+								id = rs.Primary.ID
+							}
+							return fmt.Errorf("certificate id %q was not replaced (previous %q)", id, createdID)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				Config: withNames,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
+			},
+			{
+				Config: described,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_certificate.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "description", "Replacement UI certificate"),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_list", list),
+					resource.TestCheckResourceAttr("vergeio_certificate.test", "domain_name", domain),
+				),
+			},
+			{
+				Config: described,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{plancheck.ExpectEmptyPlan()},
+				},
 			},
 		},
 	})
@@ -175,6 +275,18 @@ resource "vergeio_certificate" "test" {
   description = %q
 }
 `, domain, description))
+}
+
+func testAccCertificateSelfSignedList(domain, list, description string) string {
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_certificate" "test" {
+  type        = "self_signed"
+  domain_name = %q
+  domain_list = %q
+  key_type    = "ecdsa"
+  description = %q
+}
+`, domain, list, description))
 }
 
 func testAccCertificateManual(domain, description, pub, priv string) string {

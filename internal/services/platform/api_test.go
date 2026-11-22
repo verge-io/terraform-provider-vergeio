@@ -476,16 +476,16 @@ func TestCertificateUpdatePutsDomainNameFirst(t *testing.T) {
 	api := testAPI(t, server.URL)
 	state := &certificateModel{
 		ID:         types.StringValue("1"),
-		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		Type:       types.StringValue(vergeos.CertificateTypeLetsEncrypt),
 		DomainName: types.StringValue("tf-acc-ui.local"),
 		DomainList: types.StringValue("tf-acc-ui.local"),
-		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+		Contact:    types.Int64Value(9),
+		AgreeTOS:   types.BoolValue(true),
 	}
 	fake.seedCertificate(vergeos.Certificate{
 		Domain:      "tf-acc-ui.local",
 		DomainList:  "tf-acc-ui.local",
-		Type:        vergeos.CertificateTypeSelfSigned,
-		KeyType:     vergeos.CertificateKeyTypeECDSA,
+		Type:        vergeos.CertificateTypeLetsEncrypt,
 		Description: "UI certificate",
 		Created:     1700000000,
 	})
@@ -500,6 +500,53 @@ func TestCertificateUpdatePutsDomainNameFirst(t *testing.T) {
 	}
 	if plan.DomainList.ValueString() != "alt.example, tf-acc-ui.local" {
 		t.Fatalf("domain_list = %q", plan.DomainList.ValueString())
+	}
+}
+
+func TestCertificateSelfSignedUpdateRefusesIssuedFields(t *testing.T) {
+	fake := newPlatformFake()
+	server := httptest.NewServer(fake)
+	t.Cleanup(server.Close)
+	api := testAPI(t, server.URL)
+	state := &certificateModel{
+		ID:         types.StringValue("1"),
+		Type:       types.StringValue(vergeos.CertificateTypeSelfSigned),
+		DomainName: types.StringValue("tf-acc-ui.local"),
+		DomainList: types.StringValue("tf-acc-ui.local"),
+		KeyType:    types.StringValue(vergeos.CertificateKeyTypeECDSA),
+		Created:    types.Int64Value(1700000000),
+	}
+	fake.seedCertificate(vergeos.Certificate{
+		Domain:     "tf-acc-ui.local",
+		DomainList: "tf-acc-ui.local",
+		Type:       vergeos.CertificateTypeSelfSigned,
+		KeyType:    vergeos.CertificateKeyTypeECDSA,
+		Created:    1700000000,
+	})
+	fake.setDomainName(1, "tf-acc-ui.local")
+
+	names := *state
+	names.DomainList = types.StringValue("tf-acc-ui.local,tf-acc-api.local")
+	if err := api.updateCertificate(context.Background(), &names, state, "", "", "tf-acc-ui.local"); err == nil {
+		t.Fatal("self_signed domain_list update succeeded")
+	}
+	key := *state
+	key.KeyType = types.StringValue(vergeos.CertificateKeyTypeRSA)
+	key.RSAKeySize = types.StringValue("2048")
+	if err := api.updateCertificate(context.Background(), &key, state, "", "", "tf-acc-ui.local"); err == nil {
+		t.Fatal("self_signed key_type update succeeded")
+	}
+	if fake.certUpdateBody != "" {
+		t.Fatalf("update body = %s", fake.certUpdateBody)
+	}
+
+	described := *state
+	described.Description = types.StringValue("UI certificate")
+	if err := api.updateCertificate(context.Background(), &described, state, "", "", "tf-acc-ui.local"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fake.certUpdateBody, `"description":"UI certificate"`) || strings.Contains(fake.certUpdateBody, "domainlist") || strings.Contains(fake.certUpdateBody, "key_type") {
+		t.Fatalf("update body = %s", fake.certUpdateBody)
 	}
 }
 
