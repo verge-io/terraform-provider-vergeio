@@ -100,6 +100,23 @@ locals {
     },
   )
   firewall_last = max([for rule in local.firewall : rule.orderid]...)
+
+  service_cluster_ip = cidrhost(var.service_cidr, 1)
+  server_dns_names = distinct(concat(
+    [for node in local.control_planes : node.name],
+    [
+      "kubernetes",
+      "kubernetes.default",
+      "kubernetes.default.svc",
+      "kubernetes.default.svc.${var.cluster_domain}",
+      "localhost",
+    ],
+  ))
+  server_ip_addresses = distinct(concat(
+    [for node in local.control_planes : node.ip],
+    local.load_balancer_ips,
+    [local.service_cluster_ip, "127.0.0.1"],
+  ))
 }
 
 resource "tls_private_key" "ca" {
@@ -137,8 +154,8 @@ resource "tls_cert_request" "server" {
     common_name = "kubernetes"
   }
 
-  dns_names    = [for node in local.control_planes : node.name]
-  ip_addresses = [for node in local.control_planes : node.ip]
+  dns_names    = local.server_dns_names
+  ip_addresses = local.server_ip_addresses
 }
 
 resource "tls_locally_signed_cert" "server" {

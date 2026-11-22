@@ -26,12 +26,6 @@ provider "kubernetes" {
   client_key             = module.cluster.client_key
 }
 
-data "kubernetes_namespace" "kube_system" {
-  metadata {
-    name = "kube-system"
-  }
-}
-
 provider "helm" {
   kubernetes = {
     host                   = module.cluster.endpoint

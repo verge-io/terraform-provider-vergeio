@@ -36,22 +36,6 @@ provider "kubernetes" {
   config_path = var.downstream_kubeconfig_path
 }
 
-data "kubernetes_namespace" "cattle_system" {
-  provider = kubernetes.management
-
-  metadata {
-    name = "cattle-system"
-  }
-}
-
-data "kubernetes_namespace" "kube_system" {
-  provider = kubernetes.downstream
-
-  metadata {
-    name = "kube-system"
-  }
-}
-
 provider "helm" {
   alias = "downstream"
   kubernetes = {

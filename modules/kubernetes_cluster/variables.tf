@@ -208,6 +208,28 @@ variable "create_template" {
   default     = false
 }
 
+variable "service_cidr" {
+  type        = string
+  description = "Kubernetes service CIDR. The first host is a subject alternative name on the API server certificate. Kubeadm's default is 10.96.0.0/12, and its first address is 10.96.0.1."
+  default     = "10.96.0.0/12"
+
+  validation {
+    condition     = can(cidrhost(var.service_cidr, 0)) && try(cidrhost(var.service_cidr, 0) == split("/", var.service_cidr)[0], false) && can(cidrhost(var.service_cidr, 1))
+    error_message = "service_cidr must be a network address in CIDR notation that contains a first host, such as 10.96.0.0/12."
+  }
+}
+
+variable "cluster_domain" {
+  type        = string
+  description = "Kubernetes cluster DNS domain. The API server certificate includes kubernetes.default.svc.<cluster_domain>. Kubeadm's default is cluster.local."
+  default     = "cluster.local"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", var.cluster_domain))
+    error_message = "cluster_domain must be a DNS name such as cluster.local."
+  }
+}
+
 variable "load_balancer_pool_size" {
   type        = number
   description = "Number of addresses reserved for the cloud controller load balancer pool, starting at host 200. These addresses are not assigned to nodes and are not in the DHCP pool."

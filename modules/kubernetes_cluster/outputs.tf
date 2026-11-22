@@ -115,9 +115,11 @@ output "vergeos_hostname" {
 }
 
 output "vergeos_api_key" {
-  description = "Bearer token for the chart value vergeos.apiKey. VergeOS returns it once, and vergeio_api_key stores it because store_token is true."
+  description = "Bearer token for the chart value vergeos.apiKey. VergeOS returns it once, and vergeio_api_key stores it because store_token is true. The token is not returned until the API user's grants exist."
   value       = vergeio_api_key.csi.token
   sensitive   = true
+
+  depends_on = [vergeio_permission.api]
 }
 
 output "vergeos_verify_ssl" {

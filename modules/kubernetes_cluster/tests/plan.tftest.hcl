@@ -46,6 +46,23 @@ run "image" {
     condition     = output.endpoint == "https://192.168.100.10:6443" && output.vergeos_host == "https://vergeos.example.com" && output.vergeos_hostname == "vergeos.example.com" && output.vergeos_verify_ssl == "false" && output.vergeos_insecure == "true" && output.load_balancer_ips[0] == "192.168.100.200" && output.load_balancer_ips[1] == "192.168.100.201"
     error_message = "Helm and kubernetes outputs were not planned from the first control plane and the published chart defaults."
   }
+
+  assert {
+    condition = (
+      contains(tls_cert_request.server.dns_names, "edge-cp-1") &&
+      contains(tls_cert_request.server.dns_names, "kubernetes") &&
+      contains(tls_cert_request.server.dns_names, "kubernetes.default") &&
+      contains(tls_cert_request.server.dns_names, "kubernetes.default.svc") &&
+      contains(tls_cert_request.server.dns_names, "kubernetes.default.svc.cluster.local") &&
+      contains(tls_cert_request.server.dns_names, "localhost") &&
+      contains(tls_cert_request.server.ip_addresses, "192.168.100.10") &&
+      contains(tls_cert_request.server.ip_addresses, "192.168.100.200") &&
+      contains(tls_cert_request.server.ip_addresses, "192.168.100.201") &&
+      contains(tls_cert_request.server.ip_addresses, "10.96.0.1") &&
+      contains(tls_cert_request.server.ip_addresses, "127.0.0.1")
+    )
+    error_message = "The API server certificate does not name the control plane, the load balancer addresses, the in-cluster API names, or localhost."
+  }
 }
 
 run "certificates" {
