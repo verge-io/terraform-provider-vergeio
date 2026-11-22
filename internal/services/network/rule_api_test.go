@@ -455,6 +455,7 @@ type ruleFixture struct {
 	applies        int
 	action         string
 	actionVNet     int
+	onApply        func()
 }
 
 func newRuleFixture(t *testing.T, running bool) *ruleFixture {
@@ -644,6 +645,11 @@ func (f *ruleFixture) getNetwork(w http.ResponseWriter) {
 func (f *ruleFixture) apply(w http.ResponseWriter, r *http.Request) {
 	if vergeio.AnswerCredentialCheck(w, r) {
 		return
+	}
+	if f.onApply != nil {
+		f.mu.Unlock()
+		f.onApply()
+		f.mu.Lock()
 	}
 
 	body := readMap(f.t, r)
@@ -1096,6 +1102,65 @@ func TestSyncRuleOrderDeleteKeepsReachablePosition(t *testing.T) {
 		if _, ok := fix.rule(14); ok {
 			t.Fatal("deleted rule still exists")
 		}
+	}
+}
+
+func TestSyncRuleOrderProceedsWhileDeleteApplies(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	fix.seed(apiRule(12, "tf-acc-a", 1), apiRule(13, "tf-acc-b", 2), apiRule(14, "tf-acc-c", 3))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	var hold sync.Mutex
+	firstApply := true
+	fix.onApply = func() {
+		hold.Lock()
+		block := firstApply
+		firstApply = false
+		hold.Unlock()
+		if !block {
+			return
+		}
+		close(entered)
+		<-release
+	}
+	api := newRuleTestAPI(t, fix.serve)
+	deleteDone := make(chan error, 1)
+	go func() {
+		_, err := api.deleteRule(t.Context(), 93, 14, true)
+		deleteDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delete did not reach firewall apply")
+	}
+	syncDone := make(chan error, 1)
+	go func() {
+		rule, _, err := api.syncRule(t.Context(), 93, 12, orderedRule("tf-acc-a", 2), true)
+		if err != nil {
+			syncDone <- err
+			return
+		}
+		if rule.OrderID != 2 {
+			syncDone <- fmt.Errorf("orderid = %d, want 2", rule.OrderID)
+			return
+		}
+		syncDone <- nil
+	}()
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("order move waited for firewall apply")
+	}
+	unblock()
+	if err := <-deleteDone; err != nil {
+		t.Fatal(err)
 	}
 }
 

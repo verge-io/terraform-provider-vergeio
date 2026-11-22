@@ -69,27 +69,12 @@ func stagedFirewallNotice(network *vergeos.Network, id int) *firewallNotice {
 func (a *RuleApi) syncRuleSet(ctx context.Context, vnetID int, desired []firewallRule, apply bool) ([]firewallRule, *firewallNotice, error) {
 	gate := networkRuleOrderGate(vnetID)
 	worker := gate.joinRemoving()
-	defer gate.leave(worker)
-	gate.place.Lock()
-	defer gate.place.Unlock()
-	if _, err := a.sdk.Networks.Get(ctx, vnetID); err != nil {
-		if vergeos.IsNotFoundError(err) && len(desired) == 0 {
-			return nil, nil, nil
-		}
+	wrote, skip, err := a.writeRuleSet(ctx, gate, vnetID, desired)
+	gate.leave(worker)
+	if err != nil || skip {
 		return nil, nil, err
 	}
-	current, err := a.sdk.VNetRules.ListByNetwork(ctx, vnetID)
-	if err != nil {
-		return nil, nil, err
-	}
-	changes, err := planRuleChanges(vnetID, current, desired, true)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := a.applyChanges(ctx, changes); err != nil {
-		return nil, nil, err
-	}
-	notice, err := a.finishApply(ctx, vnetID, len(changes) > 0, apply)
+	notice, err := a.finishApply(ctx, vnetID, wrote, apply)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -98,6 +83,29 @@ func (a *RuleApi) syncRuleSet(ctx context.Context, vnetID int, desired []firewal
 		return nil, nil, err
 	}
 	return rules, notice, nil
+}
+
+func (a *RuleApi) writeRuleSet(ctx context.Context, gate *orderGate, vnetID int, desired []firewallRule) (bool, bool, error) {
+	gate.place.Lock()
+	defer gate.place.Unlock()
+	if _, err := a.sdk.Networks.Get(ctx, vnetID); err != nil {
+		if vergeos.IsNotFoundError(err) && len(desired) == 0 {
+			return false, true, nil
+		}
+		return false, false, err
+	}
+	current, err := a.sdk.VNetRules.ListByNetwork(ctx, vnetID)
+	if err != nil {
+		return false, false, err
+	}
+	changes, err := planRuleChanges(vnetID, current, desired, true)
+	if err != nil {
+		return false, false, err
+	}
+	if err := a.applyChanges(ctx, changes); err != nil {
+		return false, false, err
+	}
+	return len(changes) > 0, false, nil
 }
 
 // syncRule creates or updates one rule, then applies when apply is true.
@@ -308,8 +316,8 @@ func (a *RuleApi) deleteRule(ctx context.Context, vnetID, key int, apply bool) (
 	}
 	gate := networkRuleOrderGate(vnetID)
 	worker := gate.joinRemoving()
-	defer gate.leave(worker)
 	wrote, err := a.deleteOrderedRule(ctx, gate, key)
+	gate.leave(worker)
 	if err != nil {
 		return nil, err
 	}
