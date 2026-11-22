@@ -6,11 +6,15 @@ package vergeio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -324,4 +328,280 @@ func (t *closeCountingTransport) RoundTrip(*http.Request) (*http.Response, error
 
 func (t *closeCountingTransport) CloseIdleConnections() {
 	t.closed.Add(1)
+}
+
+func TestDefaultCertificateSettleCoversDeferredReload(t *testing.T) {
+	if certificateReloadGap < 3*time.Second {
+		t.Fatalf("reload gap = %s, want at least 3s", certificateReloadGap)
+	}
+	if certificateReloadDuration < 600*time.Millisecond {
+		t.Fatalf("reload duration = %s, want at least 600ms", certificateReloadDuration)
+	}
+	if defaultCertificateSettle < certificateReloadGap+certificateReloadDuration {
+		t.Fatalf("settle = %s, want at least %s", defaultCertificateSettle, certificateReloadGap+certificateReloadDuration)
+	}
+	if defaultCertificateSettle <= 1500*time.Millisecond {
+		t.Fatalf("settle = %s still ends before a deferred reload", defaultCertificateSettle)
+	}
+}
+
+func TestCertificateReloadError(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	refused := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "reset", err: reset, want: true},
+		{name: "refused", err: refused, want: true},
+		{name: "eof", err: io.EOF, want: true},
+		{name: "reset text", err: errors.New("read tcp 10.0.0.1:443: connection reset by peer"), want: true},
+		{name: "refused text", err: errors.New("dial tcp 10.0.0.1:443: connect: connection refused"), want: true},
+		{name: "probe timeout", err: context.DeadlineExceeded, want: true},
+		{name: "dial timeout", err: timeoutNetError{}, want: true},
+		{name: "canceled", err: context.Canceled, want: false},
+		{name: "api status", err: Error{StatusCode: http.StatusInternalServerError, VergeError: "no"}, want: false},
+		{name: "tls", err: errors.New("tls: handshake failure"), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := certificateReloadError(tc.err); got != tc.want {
+				t.Fatalf("certificateReloadError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWritesWaitUntilCertificateAPIAnswers(t *testing.T) {
+	reset := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	transport := &scriptedTransport{
+		outcomes: []error{reset, nil},
+		onCall: func(n int) {
+			if n == 1 {
+				close(entered)
+				<-release
+			}
+		},
+	}
+	client := certificateProbeClient(t, transport)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- client.WithCertificateMutation(context.Background(), func(context.Context) error {
+			return nil
+		})
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("version probe did not start")
+	}
+
+	acquired := make(chan struct{})
+	go func() {
+		client.mutationGate.RLock()
+		close(acquired)
+		client.mutationGate.RUnlock()
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("a write acquired the gate while the API was still resetting connections")
+	case <-time.After(40 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("write did not acquire the gate after the API answered")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if transport.calls < 2 {
+		t.Fatalf("probes = %d, want at least 2", transport.calls)
+	}
+}
+
+func TestCertificateReadyRetriesClosedConnections(t *testing.T) {
+	cases := []struct {
+		name    string
+		outcome error
+	}{
+		{name: "reset", outcome: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}},
+		{name: "refused", outcome: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}},
+		{name: "eof", outcome: io.EOF},
+		{name: "reset text", outcome: errors.New("read tcp 10.0.0.1:443: connection reset by peer")},
+		{name: "probe timeout", outcome: context.DeadlineExceeded},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			transport := &scriptedTransport{outcomes: []error{tc.outcome, nil}}
+			client := certificateProbeClient(t, transport)
+			if err := client.WithCertificateMutation(context.Background(), func(context.Context) error {
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if transport.calls != 2 {
+				t.Fatalf("probes = %d, want 2", transport.calls)
+			}
+		})
+	}
+}
+
+func TestCertificateReadyAcceptsAnHTTPResponse(t *testing.T) {
+	transport := &scriptedTransport{outcomes: []error{statusError(http.StatusInternalServerError)}}
+	client := certificateProbeClient(t, transport)
+	client.certificateReadyTimeout = time.Second
+
+	start := time.Now()
+	if err := client.WithCertificateMutation(context.Background(), func(context.Context) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("probes = %d, want 1", transport.calls)
+	}
+	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
+		t.Fatalf("hold = %s, want the settle plus one answered probe", elapsed)
+	}
+}
+
+func TestCertificateReadyReturnsOtherErrors(t *testing.T) {
+	transport := &scriptedTransport{outcomes: []error{errors.New("tls: handshake failure"), nil}}
+	client := certificateProbeClient(t, transport)
+	err := client.WithCertificateMutation(context.Background(), func(context.Context) error {
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "tls: handshake failure") {
+		t.Fatal(err)
+	}
+	if transport.calls != 1 {
+		t.Fatalf("probes = %d, want 1", transport.calls)
+	}
+}
+
+func TestCertificateReadyGivesUp(t *testing.T) {
+	transport := &resetTransport{}
+	client := certificateProbeClient(t, transport)
+	client.certificateSettle = 5 * time.Millisecond
+	client.certificateReadyTimeout = 40 * time.Millisecond
+	client.certificateReadyInterval = 5 * time.Millisecond
+
+	err := client.WithCertificateMutation(context.Background(), func(context.Context) error {
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "API did not accept connections after the certificate change") {
+		t.Fatal(err)
+	}
+	if !certificateReloadError(err) {
+		t.Fatalf("error = %v, want the connection reset", err)
+	}
+	if transport.calls.Load() < 2 {
+		t.Fatalf("probes = %d, want more than one", transport.calls.Load())
+	}
+}
+
+func TestCertificateReadyStopsWhenContextIsCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	transport := &resetTransport{}
+	client := certificateProbeClient(t, transport)
+	client.certificateSettle = time.Second
+	client.certificateReadyTimeout = time.Second
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	start := time.Now()
+	err := client.WithCertificateMutation(ctx, func(context.Context) error { return nil })
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatal("quiet wait ignored context cancellation")
+	}
+	if transport.calls.Load() != 0 {
+		t.Fatalf("probes = %d, want 0", transport.calls.Load())
+	}
+}
+
+func TestCertificateReadStaysInsideTheGate(t *testing.T) {
+	client := NewClient("https://example.test", "user", "pass", true)
+	client.certificateSettle = 20 * time.Millisecond
+
+	started := make(chan struct{})
+	acquired := make(chan struct{})
+	go func() {
+		<-started
+		client.mutationGate.RLock()
+		close(acquired)
+		client.mutationGate.RUnlock()
+	}()
+
+	err := client.WithCertificateMutationAfter(context.Background(), func(context.Context) error {
+		return nil
+	}, func(context.Context) error {
+		close(started)
+		select {
+		case <-acquired:
+			return errors.New("write entered during the certificate read")
+		case <-time.After(50 * time.Millisecond):
+			return nil
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("write did not acquire the gate after the certificate read")
+	}
+}
+
+func TestCertificateReadDoesNotRunWhileTheAPIIsDown(t *testing.T) {
+	transport := &resetTransport{}
+	client := certificateProbeClient(t, transport)
+	client.certificateSettle = 5 * time.Millisecond
+	client.certificateReadyTimeout = 25 * time.Millisecond
+	client.certificateReadyInterval = 5 * time.Millisecond
+
+	called := false
+	err := client.WithCertificateMutationAfter(context.Background(), func(context.Context) error {
+		return nil
+	}, func(context.Context) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "API did not accept connections after the certificate change") {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("certificate read ran while the API was down")
+	}
+}
+
+func certificateProbeClient(t *testing.T, transport http.RoundTripper) *Client {
+	t.Helper()
+	client := NewClient("https://example.test", "user", "pass", true)
+	client.httpClient.Transport = transport
+	client.certificateSettle = 15 * time.Millisecond
+	client.certificateReadyTimeout = time.Second
+	client.certificateReadyInterval = 5 * time.Millisecond
+	client.certificateProbeTimeout = 50 * time.Millisecond
+	return client
+}
+
+type resetTransport struct {
+	calls atomic.Int32
+}
+
+func (t *resetTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	t.calls.Add(1)
+	return nil, &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}
 }

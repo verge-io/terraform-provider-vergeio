@@ -452,45 +452,35 @@ func (a *API) createCertificate(ctx context.Context, data *certificateModel, pri
 		Contact:     contact,
 		AgreeTOS:    boolPtr(data.AgreeTOS),
 	}
-	id, err := a.createCertificateRow(ctx, req)
-	if id > 0 {
-		data.ID = idString(id)
+	if a.http == nil {
+		return fmt.Errorf("vergeio client is nil")
 	}
-	if err != nil {
-		if id > 0 {
-			return fmt.Errorf("certificate %d was created: %w", id, err)
-		}
-		return err
-	}
-	cert, row, err := a.loadCertificate(ctx, id, true, domainName, nil)
-	if err != nil {
-		return fmt.Errorf("certificate %d was created: %w", id, err)
-	}
-	gotDomain, gotName, gotList := certificateNameFields(cert, row)
-	if data.Type.ValueString() == vergeos.CertificateTypeSelfSigned &&
-		!certificateIssuedFor(domainName, gotDomain, gotName, gotList) {
-		return fmt.Errorf("certificate %d was created: %w", id, certificateWrongNameError(id, domainName, gotDomain, gotName, gotList))
-	}
-	if err := a.applyCertificate(ctx, data, cert, row, *data, domainName); err != nil {
-		return fmt.Errorf("certificate %d was created: %w", id, err)
-	}
-	return nil
-}
-
-// createCertificateRow posts the certificate and returns the new key.
-// The key comes from the create response, so a later Get that omits $key
-// cannot drop the id after VergeOS has already stored the row.
-func (a *API) createCertificateRow(ctx context.Context, req *vergeos.CertificateCreateRequest) (int, error) {
-	if a == nil || a.http == nil {
-		return 0, fmt.Errorf("vergeio client is nil")
-	}
+	// The key comes from the create response, so a later Get that omits $key
+	// cannot drop the id after VergeOS has already stored the row.
 	var id int
-	err := a.http.WithCertificateMutation(ctx, func(ctx context.Context) error {
+	err = a.http.WithCertificateMutationAfter(ctx, func(ctx context.Context) error {
 		created, postErr := a.postCertificate(ctx, req)
 		id = created
+		if created > 0 {
+			data.ID = idString(created)
+		}
 		return postErr
+	}, func(ctx context.Context) error {
+		cert, row, loadErr := a.loadCertificate(ctx, id, true, domainName, nil)
+		if loadErr != nil {
+			return loadErr
+		}
+		gotDomain, gotName, gotList := certificateNameFields(cert, row)
+		if data.Type.ValueString() == vergeos.CertificateTypeSelfSigned &&
+			!certificateIssuedFor(domainName, gotDomain, gotName, gotList) {
+			return certificateWrongNameError(id, domainName, gotDomain, gotName, gotList)
+		}
+		return a.applyCertificate(ctx, data, cert, row, *data, domainName)
 	})
-	return id, err
+	if err != nil && id > 0 {
+		return fmt.Errorf("certificate %d was created: %w", id, err)
+	}
+	return err
 }
 
 func (a *API) postCertificate(ctx context.Context, req *vergeos.CertificateCreateRequest) (int, error) {
