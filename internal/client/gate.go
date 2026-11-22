@@ -98,6 +98,44 @@ func (c *Client) WithCertificateMutation(ctx context.Context, fn func(context.Co
 	return c.WithCertificateMutationAfter(ctx, fn, nil)
 }
 
+// WithOptionalCertificateMutation runs fn while other writes wait. The reload
+// wait runs only when fn reports that it changed a certificate. A read that
+// finds a foreign row, or a read that fails, does not wait.
+func (c *Client) WithOptionalCertificateMutation(ctx context.Context, fn func(context.Context) (bool, error)) error {
+	if c == nil {
+		return errors.New("vergeio client is nil")
+	}
+	if ctx == nil {
+		return errors.New("missing request context")
+	}
+	if fn == nil {
+		return errors.New("missing certificate operation")
+	}
+	c.mutationGate.Lock()
+	defer c.mutationGate.Unlock()
+	defer c.closeIdleConnections()
+
+	gated := context.WithValue(ctx, certificateGateKey{}, struct{}{})
+	changed, err := fn(gated)
+	if ctx.Err() != nil {
+		if err != nil {
+			return err
+		}
+		return ctx.Err()
+	}
+	if !changed {
+		return err
+	}
+	quietErr := c.waitCertificateQuiet(ctx)
+	if err != nil {
+		if quietErr != nil {
+			return errors.Join(err, quietErr)
+		}
+		return err
+	}
+	return quietErr
+}
+
 // WithCertificateMutationAfter runs change, waits out the web server reload,
 // then runs after while other writes are still held. after is the
 // certificate read that follows create. The next certificate change has to

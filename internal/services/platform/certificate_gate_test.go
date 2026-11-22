@@ -319,6 +319,7 @@ func TestCertificateDeleteReadsIdentityInsideTheGate(t *testing.T) {
 
 func TestCertificateDeleteForeignDoesNotDeleteUnderTheGate(t *testing.T) {
 	api, client, fake := gateAPI(t)
+	client.SetCertificateSettle(2 * time.Second)
 	id := fake.seedCertificate(vergeos.Certificate{
 		Domain:  "tf-acc-gate.example.com",
 		Type:    vergeos.CertificateTypeSelfSigned,
@@ -373,6 +374,7 @@ func TestCertificateDeleteForeignDoesNotDeleteUnderTheGate(t *testing.T) {
 	}
 
 	close(releaseGet)
+	released := time.Now()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -380,6 +382,9 @@ func TestCertificateDeleteForeignDoesNotDeleteUnderTheGate(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("certificate delete did not finish")
+	}
+	if time.Since(released) > time.Second {
+		t.Fatal("a foreign certificate delete waited out the reload")
 	}
 	if deletes != 0 {
 		t.Fatalf("deleted the foreign certificate %d times", deletes)
