@@ -39,6 +39,7 @@ Changing `category` replaces the tag. VergeOS does not move a tag to another cat
 ### Read-Only
 
 - `category_name` (String) Name of the tag category, read from VergeOS. Refreshed when this tag is applied, including after the category is renamed.
+- `created` (Number) Unix time when VergeOS created the tag. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another tag, and refresh drops this resource. A name change on the same tag still updates in place.
 - `id` (String) Tag key assigned by VergeOS.
 
 ## Import

@@ -121,7 +121,7 @@ func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest,
 				},
 			},
 			"created": schema.Int64Attribute{
-				MarkdownDescription: "Unix time when VergeOS created the key.",
+				MarkdownDescription: "Unix time when VergeOS created the key. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another API key, including one for the same user, and refresh drops this resource. A name change on the same key still updates in place.",
 				Computed:            true,
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
@@ -215,6 +215,9 @@ func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if plan.Created.IsNull() || plan.Created.IsUnknown() {
+		plan.Created = state.Created
 	}
 	if err := r.api.updateAPIKey(ctx, &plan, &state); err != nil {
 		resp.Diagnostics.AddError("Error updating API key", err.Error())

@@ -153,7 +153,7 @@ func (r *certificateResource) Schema(ctx context.Context, req resource.SchemaReq
 			"valid":        volatileBool("Whether VergeOS considers the certificate valid."),
 			"autocreated":  volatileBool("Whether VergeOS created this certificate on its own."),
 			"expires":      timestampAttr("Expiration time, as seconds since the epoch."),
-			"created":      timestampAttr("Time the certificate was created, as seconds since the epoch."),
+			"created":      timestampAttr("Unix time when VergeOS created the certificate. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another certificate, and refresh drops this resource. A description change on the same certificate still updates in place."),
 			"modified":     timestampAttr("Time the certificate was last modified, as seconds since the epoch."),
 		},
 	}
@@ -439,7 +439,7 @@ func (a *API) createCertificate(ctx context.Context, data *certificateModel, pri
 		}
 		return err
 	}
-	cert, row, err := a.loadCertificate(ctx, id, true, domainName)
+	cert, row, err := a.loadCertificate(ctx, id, true, domainName, nil)
 	if err != nil {
 		return fmt.Errorf("certificate %d was created: %w", id, err)
 	}
@@ -516,7 +516,7 @@ func (a *API) readCertificate(ctx context.Context, data *certificateModel) error
 	if err != nil {
 		return err
 	}
-	cert, row, err := a.loadCertificate(ctx, id, false, stringValue(data.DomainName))
+	cert, row, err := a.loadCertificate(ctx, id, false, stringValue(data.DomainName), data)
 	if err != nil {
 		return err
 	}
@@ -543,6 +543,16 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 	id, err := parseID(state.ID, "certificate")
 	if err != nil {
 		return err
+	}
+	current, err := a.sdk.Certificates.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureCertificateOwned(state, certificateWithID(current, id)); err != nil {
+		return err
+	}
+	if !knownInt(plan.Created) {
+		plan.Created = state.Created
 	}
 	contact, err := changedIntPtr(plan.Contact, state.Contact)
 	if err != nil {
@@ -580,7 +590,7 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 		}
 	}
 	plan.ID = state.ID
-	cert, row, err := a.loadCertificate(ctx, id, false, stringValue(plan.DomainName))
+	cert, row, err := a.loadCertificate(ctx, id, false, stringValue(plan.DomainName), plan)
 	if err != nil {
 		return err
 	}

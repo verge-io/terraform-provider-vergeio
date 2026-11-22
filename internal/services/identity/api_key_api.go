@@ -144,6 +144,26 @@ func apiKeyReused(data *APIKeyResourceModel, key *vergeos.UserAPIKey) bool {
 	return int(data.UserID.ValueInt32()) != got
 }
 
+// ensureAPIKeyOwned returns NotFound when the stored key now points at
+// another API key. A different user is another key. The same user with a
+// different created time is another key. Skip the created check when created
+// is unset (import, or state written before this check existed).
+func ensureAPIKeyOwned(data *APIKeyResourceModel, key *vergeos.UserAPIKey) error {
+	if data == nil || key == nil {
+		return fmt.Errorf("API key read returned no row")
+	}
+	if apiKeyReused(data, key) {
+		return &vergeos.NotFoundError{Resource: "UserAPIKey", ID: key.Key.Int()}
+	}
+	if data.Created.IsNull() || data.Created.IsUnknown() || data.Created.ValueInt64() == 0 {
+		return nil
+	}
+	if key.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "UserAPIKey", ID: key.Key.Int()}
+	}
+	return nil
+}
+
 func (api *APIKeyApi) createAPIKey(ctx context.Context, data *APIKeyResourceModel) error {
 	// The token is returned only here. It is discarded. The managed resource
 	// does not store it. Ephemeral vergeio_api_key is the token used in a run.
@@ -168,8 +188,8 @@ func (api *APIKeyApi) readAPIKey(ctx context.Context, data *APIKeyResourceModel)
 	if err != nil {
 		return err
 	}
-	if apiKeyReused(data, key) {
-		return errStaleIdentity
+	if err := ensureAPIKeyOwned(data, key); err != nil {
+		return err
 	}
 	applyAPIKey(data, key)
 	tflog.Debug(ctx, fmt.Sprintf("read API key %d", id))
@@ -179,6 +199,13 @@ func (api *APIKeyApi) readAPIKey(ctx context.Context, data *APIKeyResourceModel)
 func (api *APIKeyApi) updateAPIKey(ctx context.Context, plan, state *APIKeyResourceModel) error {
 	id, err := parseID(state.Id, "API key")
 	if err != nil {
+		return err
+	}
+	current, err := api.sdk.UserAPIKeys.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureAPIKeyOwned(state, current); err != nil {
 		return err
 	}
 	plan.Id = state.Id

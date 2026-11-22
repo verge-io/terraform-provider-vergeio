@@ -38,12 +38,29 @@ func tagUpdateRequest(plan, state *TagResourceModel) *vergeos.TagUpdateRequest {
 	return req
 }
 
+// ensureTagOwned returns NotFound when the stored key now points at another
+// tag (created mismatch). Skip the check when created is unset (import, or
+// state written before this field existed).
+func ensureTagOwned(data *TagResourceModel, tag *vergeos.Tag) error {
+	if data == nil || tag == nil {
+		return fmt.Errorf("tag read returned no row")
+	}
+	if data.Created.IsNull() || data.Created.IsUnknown() || data.Created.ValueInt64() == 0 {
+		return nil
+	}
+	if tag.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "Tag", ID: tag.Key.Int()}
+	}
+	return nil
+}
+
 func applyTag(data *TagResourceModel, tag *vergeos.Tag) {
 	data.Id = idString(tag.Key.Int())
 	data.Name = types.StringValue(tag.Name)
 	data.Description = types.StringValue(tag.Description)
 	data.Category = types.Int32Value(int32(tag.Category.Int()))
 	data.CategoryName = types.StringValue(tag.CategoryDisplay)
+	data.Created = types.Int64Value(tag.Created)
 }
 
 func (ta *TagsApi) createTag(ctx context.Context, data *TagResourceModel) error {
@@ -77,6 +94,9 @@ func (ta *TagsApi) readTag(ctx context.Context, data *TagResourceModel) error {
 	if tag == nil || tag.Key.Int() <= 0 {
 		return fmt.Errorf("read tag %d: response was empty", id)
 	}
+	if err := ensureTagOwned(data, tag); err != nil {
+		return err
+	}
 	applyTag(data, tag)
 	tflog.Debug(ctx, fmt.Sprintf("read tag %d", id))
 	return nil
@@ -106,6 +126,13 @@ func (ta *TagsApi) ensureSDK() error {
 func (ta *TagsApi) updateTag(ctx context.Context, plan, state *TagResourceModel) error {
 	id, err := parseID(state.Id, "tag")
 	if err != nil {
+		return err
+	}
+	current, err := ta.sdk.Tags.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureTagOwned(state, current); err != nil {
 		return err
 	}
 	plan.Id = state.Id
