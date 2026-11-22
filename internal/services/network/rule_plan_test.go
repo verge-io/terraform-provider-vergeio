@@ -277,6 +277,67 @@ func planRuleAttribute(t *testing.T, ctx context.Context, rulesSchema schema.Sch
 	}
 }
 
+func TestSingleRuleOrderPlan(t *testing.T) {
+	base := firewallRuleModel{
+		nestedFirewallRuleModel: nestedFirewallRuleModel{
+			ID:      types.StringValue("14"),
+			Name:    types.StringValue("allow-ssh"),
+			OrderID: types.Int32Value(2),
+		},
+		VNet:  types.StringValue("3"),
+		Apply: types.BoolValue(true),
+	}
+	if singleRuleOrderBecomesUnknown(base, base, base) {
+		t.Fatal("configured orderid became unknown")
+	}
+	omitted := base
+	omitted.OrderID = types.Int32Null()
+	if singleRuleOrderBecomesUnknown(omitted, base, base) {
+		t.Fatal("omitted orderid changed with no other difference")
+	}
+	changed := base
+	changed.Description = types.StringValue("ssh")
+	if !singleRuleOrderBecomesUnknown(omitted, changed, base) {
+		t.Fatal("omitted orderid stayed known when the rule changed")
+	}
+
+	ctx := t.Context()
+	res := &NetworkRuleResource{}
+	var schemaResp resource.SchemaResponse
+	res.Schema(ctx, resource.SchemaRequest{}, &schemaResp)
+	configModel := omitted
+	configModel.Description = types.StringValue("ssh")
+	configValue := tfsdk.Plan{Schema: schemaResp.Schema}
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := configValue.Set(ctx, &configModel); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if diags := plan.Set(ctx, &changed); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if diags := state.Set(ctx, &base); diags.HasError() {
+		t.Fatal(diags)
+	}
+	config := tfsdk.Config{Schema: schemaResp.Schema, Raw: configValue.Raw}
+	resp := &resource.ModifyPlanResponse{Plan: plan}
+	res.ModifyPlan(ctx, resource.ModifyPlanRequest{
+		Config: config,
+		Plan:   plan,
+		State:  state,
+	}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var planned firewallRuleModel
+	if diags := resp.Plan.Get(ctx, &planned); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if !planned.OrderID.IsUnknown() {
+		t.Fatalf("orderid = %s, want unknown", planned.OrderID)
+	}
+}
+
 func describeModifiers(mods []planmodifier.String) string {
 	if len(mods) == 0 {
 		return ""

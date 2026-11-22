@@ -5,6 +5,7 @@ package network
 
 import (
 	"context"
+	"reflect"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -253,6 +254,15 @@ func attributeName(attrPath path.Path) string {
 		return ""
 	}
 	return string(name)
+}
+
+func singleRuleOrderBecomesUnknown(config, plan, state firewallRuleModel) bool {
+	if knownInt(config.OrderID) {
+		return false
+	}
+	plan.OrderID = types.Int32Null()
+	state.OrderID = types.Int32Null()
+	return !reflect.DeepEqual(plan, state)
 }
 
 func ruleIDPlanModifiers(mode ruleSchemaMode) []planmodifier.String {

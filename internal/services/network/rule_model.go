@@ -168,7 +168,7 @@ func rulePin(mode ruleSchemaMode) schema.StringAttribute {
 func ruleOrder(mode ruleSchemaMode) schema.Attribute {
 	if mode == ruleSchemaSingle {
 		return schema.Int32Attribute{
-			MarkdownDescription: "Explicit orderid. Omit to leave the current position unchanged. Lower is earlier.",
+			MarkdownDescription: "Position from 1 through the number of non-system rules on the network. VergeOS renumbers rules to 1..n and drops any other value. A position in that range is written to the rule and is where it ends up after apply. A position outside it fails apply instead of saving a different number. Applied one at a time, a higher position fails until that many rules exist. Omit to keep the position VergeOS assigns. When orderid is omitted and this rule changes, the plan leaves the position unknown because other rules in the same apply can renumber it. Refresh reads the position VergeOS has, so a move made by another rule shows up on the next plan when orderid is set. Prefer vergeio_network_rules when one configuration owns the list.",
 			Optional:            true,
 			Computed:            true,
 		}

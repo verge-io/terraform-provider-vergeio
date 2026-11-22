@@ -23,6 +23,7 @@ import (
 
 var _ resource.Resource = &NetworkRuleResource{}
 var _ resource.ResourceWithImportState = &NetworkRuleResource{}
+var _ resource.ResourceWithModifyPlan = &NetworkRuleResource{}
 
 func NewNetworkRuleResource() resource.Resource {
 	return &NetworkRuleResource{}
@@ -56,6 +57,21 @@ func (r *NetworkRuleResource) Schema(ctx context.Context, req resource.SchemaReq
 		MarkdownDescription: "One firewall rule on a VergeOS network. The rule is matched by name. apply defaults to true and refreshes the network once after a change. System rules cannot be changed or deleted. Do not use this resource on a network that also has vergeio_network_rules.",
 		Attributes:          attributes,
 	}
+}
+
+func (r *NetworkRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || req.State.Raw.IsNull() || req.Config.Raw.IsNull() {
+		return
+	}
+	var config, plan, state firewallRuleModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() || !singleRuleOrderBecomesUnknown(config, plan, state) {
+		return
+	}
+	plan.OrderID = types.Int32Unknown()
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, &plan)...)
 }
 
 func (r *NetworkRuleResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {

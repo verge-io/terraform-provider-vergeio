@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"terraform-provider-vergeio/internal/client"
 
@@ -96,36 +97,190 @@ func (a *RuleApi) syncRuleSet(ctx context.Context, vnetID int, desired []firewal
 
 // syncRule creates or updates one rule, then applies when apply is true.
 func (a *RuleApi) syncRule(ctx context.Context, vnetID, existingKey int, desired firewallRule, apply bool) (firewallRule, *firewallNotice, error) {
+	ordered := desired.Optional != nil && desired.Optional.Order
+	gate := networkRuleOrderGate(vnetID)
+	worker := gate.join(ordered)
+	defer gate.leave(worker)
+	if existingKey > 0 {
+		gate.markCreated(worker)
+	}
+	if !ordered {
+		rule, wrote, err := a.writeUnorderedRule(ctx, gate, worker, vnetID, existingKey, desired)
+		if err != nil {
+			return firewallRule{}, nil, err
+		}
+		notice, err := a.finishApply(ctx, vnetID, wrote, apply)
+		if err != nil {
+			return firewallRule{}, nil, err
+		}
+		return rule, notice, nil
+	}
+	return a.syncOrderedRule(ctx, worker, vnetID, existingKey, desired, apply)
+}
+
+func (a *RuleApi) writeUnorderedRule(ctx context.Context, gate *orderGate, worker *orderWorker, vnetID, existingKey int, desired firewallRule) (firewallRule, bool, error) {
+	gate.place.Lock()
+	defer gate.place.Unlock()
+	rule, wrote, err := a.writeSingleRule(ctx, vnetID, existingKey, desired)
+	if err != nil {
+		return firewallRule{}, false, err
+	}
+	gate.markCreated(worker)
+	return rule, wrote, nil
+}
+
+func (a *RuleApi) writeSingleRule(ctx context.Context, vnetID, existingKey int, desired firewallRule) (firewallRule, bool, error) {
 	current, err := a.sdk.VNetRules.ListByNetwork(ctx, vnetID)
 	if err != nil {
-		return firewallRule{}, nil, err
+		return firewallRule{}, false, err
 	}
 	changes, err := planSingleRule(vnetID, current, existingKey, desired)
 	if err != nil {
-		return firewallRule{}, nil, err
+		return firewallRule{}, false, err
 	}
 	if err := a.applyChanges(ctx, changes); err != nil {
-		return firewallRule{}, nil, err
-	}
-	notice, err := a.finishApply(ctx, vnetID, len(changes) > 0, apply)
-	if err != nil {
-		return firewallRule{}, nil, err
+		return firewallRule{}, false, err
 	}
 	updated, err := a.sdk.VNetRules.ListByNetwork(ctx, vnetID)
 	if err != nil {
-		return firewallRule{}, nil, err
+		return firewallRule{}, false, err
 	}
 	found, err := findRuleByName(updated, strings.TrimSpace(desired.Name))
 	if err != nil {
-		return firewallRule{}, nil, err
+		return firewallRule{}, false, err
 	}
 	if found == nil {
-		return firewallRule{}, nil, fmt.Errorf("firewall rule %q was not found after sync", desired.Name)
+		return firewallRule{}, false, fmt.Errorf("firewall rule %q was not found after sync", desired.Name)
 	}
 	if found.SystemRule {
-		return firewallRule{}, nil, &systemRuleError{Name: found.Name}
+		return firewallRule{}, false, &systemRuleError{Name: found.Name}
 	}
-	return ruleFromAPI(*found), notice, nil
+	return ruleFromAPI(*found), len(changes) > 0, nil
+}
+
+func (a *RuleApi) syncOrderedRule(ctx context.Context, worker *orderWorker, vnetID, existingKey int, desired firewallRule, apply bool) (firewallRule, *firewallNotice, error) {
+	gate := networkRuleOrderGate(vnetID)
+	deadline := time.Now().Add(ruleOrderWait)
+	var wrote bool
+	var saved firewallRule
+	for {
+		if err := ctx.Err(); err != nil {
+			return firewallRule{}, nil, err
+		}
+		if time.Now().After(deadline) {
+			return firewallRule{}, nil, fmt.Errorf(
+				"firewall rule %q did not stay at orderid %d; another rule on this network is using that position; leave orderid unset, or use vergeio_network_rules to own the order",
+				strings.TrimSpace(desired.Name), desired.OrderID,
+			)
+		}
+		gate.place.Lock()
+		rule, settled, stepWrote, err := a.placeRuleOrder(ctx, gate, worker, vnetID, existingKey, desired)
+		gate.place.Unlock()
+		if err != nil {
+			return firewallRule{}, nil, err
+		}
+		if stepWrote {
+			wrote = true
+		}
+		if !settled {
+			if err := waitRuleOrder(ctx, ruleOrderPoll); err != nil {
+				return firewallRule{}, nil, err
+			}
+			continue
+		}
+		saved = rule
+		break
+	}
+	notice, err := a.finishApply(ctx, vnetID, wrote, apply)
+	if err != nil {
+		return firewallRule{}, nil, err
+	}
+	got, err := a.sdk.VNetRules.Get(ctx, saved.Key)
+	if err != nil {
+		return firewallRule{}, nil, err
+	}
+	if got.OrderID != desired.OrderID {
+		return firewallRule{}, nil, fmt.Errorf(
+			"firewall rule %q is at orderid %d after apply, not %d; leave orderid unset, or use vergeio_network_rules to own the order",
+			got.Name, got.OrderID, desired.OrderID,
+		)
+	}
+	return ruleFromAPI(*got), notice, nil
+}
+
+func (a *RuleApi) placeRuleOrder(ctx context.Context, gate *orderGate, worker *orderWorker, vnetID, existingKey int, desired firewallRule) (firewallRule, bool, bool, error) {
+	current, err := a.sdk.VNetRules.ListByNetwork(ctx, vnetID)
+	if err != nil {
+		return firewallRule{}, false, false, err
+	}
+	found, err := findManagedRule(current, existingKey, desired.Name)
+	if err != nil {
+		return firewallRule{}, false, false, err
+	}
+	count := nonSystemCount(current)
+	span := count
+	if found == nil {
+		span++
+	} else {
+		gate.markCreated(worker)
+	}
+	extra := gate.room(worker)
+	limit := span + extra
+	if err := rejectRuleOrder(desired.Name, desired.OrderID, limit); err != nil {
+		return firewallRule{}, false, false, err
+	}
+	if desired.OrderID > span {
+		gate.setRest(worker, false)
+		return firewallRule{}, false, false, nil
+	}
+
+	var rule firewallRule
+	wrote := false
+	if !worker.written {
+		rule, wrote, err = a.writeSingleRule(ctx, vnetID, existingKey, desired)
+		if err != nil {
+			return firewallRule{}, false, false, err
+		}
+		worker.written = true
+		gate.markCreated(worker)
+	} else if found == nil {
+		return firewallRule{}, false, false, fmt.Errorf("firewall rule %q was not found after sync", desired.Name)
+	} else {
+		rule = ruleFromAPI(*found)
+	}
+	if rule.OrderID != desired.OrderID {
+		gate.setRest(worker, false)
+		order := desired.OrderID
+		tflog.Debug(ctx, fmt.Sprintf("Moving firewall rule %d on network %d to orderid %d", rule.Key, vnetID, order))
+		if _, err := a.sdk.VNetRules.Update(ctx, rule.Key, &vergeos.VNetRuleUpdateRequest{OrderID: &order}); err != nil {
+			return firewallRule{}, false, wrote, err
+		}
+		moved, err := a.sdk.VNetRules.Get(ctx, rule.Key)
+		if err != nil {
+			return firewallRule{}, false, wrote, err
+		}
+		rule = ruleFromAPI(*moved)
+		wrote = true
+		if rule.OrderID != desired.OrderID {
+			return rule, false, wrote, nil
+		}
+	}
+	return rule, gate.setRest(worker, true), wrote, nil
+}
+
+func findManagedRule(rules []vergeos.VNetRule, key int, name string) (*vergeos.VNetRule, error) {
+	if key > 0 {
+		for i := range rules {
+			if rules[i].Key.Int() != key {
+				continue
+			}
+			if rules[i].SystemRule {
+				return nil, &systemRuleError{Name: rules[i].Name}
+			}
+			return &rules[i], nil
+		}
+	}
+	return findRuleByName(rules, strings.TrimSpace(name))
 }
 
 // deleteRule removes one rule. A system rule is refused. A missing rule is
