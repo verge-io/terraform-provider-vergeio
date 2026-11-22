@@ -5,6 +5,7 @@ package network
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -144,32 +145,135 @@ func (a *vpnAPI) noteIPSecStatus(ctx context.Context, phase1ID int) {
 	tflog.Debug(ctx, fmt.Sprintf("IPsec phase 1 %d has %d active security association(s)", phase1ID, len(conns)))
 }
 
-// networkIDForIPSec reads the network on an IPsec configuration. Zero means
-// the lookup did not produce a network id. The caller skips a warning then,
-// so a failed lookup does not fail the read of a row that is still there.
-func (a *vpnAPI) networkIDForIPSec(ctx context.Context, ipsecID int) int {
-	if a == nil || a.sdk == nil || ipsecID <= 0 {
-		return 0
-	}
-	row, err := a.sdk.VNetIPSecs.Get(ctx, ipsecID)
-	if err != nil || row == nil {
-		return 0
-	}
-	return row.VNet.Int()
+// parentMissingError means the IPsec row is still readable and its parent is
+// gone. It unwraps to NotFoundError so refresh removes the resource.
+type parentMissingError struct {
+	summary string
+	detail  string
+	missing error
 }
 
-// parentNetworkWarning is set when the child row is still readable and the
-// parent network is gone. Any other lookup result is left alone.
-func (a *vpnAPI) parentNetworkWarning(ctx context.Context, networkID int, row string) (string, string) {
+func (e *parentMissingError) Error() string {
+	if e == nil {
+		return "parent is gone"
+	}
+	return e.detail
+}
+
+func (e *parentMissingError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.missing
+}
+
+func parentMissingDetail(err error) (string, string, bool) {
+	var missing *parentMissingError
+	if !errors.As(err, &missing) || missing == nil || missing.detail == "" {
+		return "", "", false
+	}
+	return missing.summary, missing.detail, true
+}
+
+func networkGoneError(networkID int, row string) error {
+	return &parentMissingError{
+		summary: "Parent network was deleted outside Terraform",
+		detail: fmt.Sprintf(
+			"Network %d is gone and %s is still on the system. VergeOS leaves these rows behind when the network is deleted outside Terraform, and it refuses to delete them until a network with key %d exists. Refresh removes this resource from state. The next apply creates it on the new network. Creating that network deletes IPsec rows that already point at the new key, so the recreated network does not keep the old configuration. terraform destroy -refresh=false cannot delete these rows until a network with that key exists.",
+			networkID, row, networkID,
+		),
+		missing: &vergeos.NotFoundError{Resource: "Network", ID: networkID},
+	}
+}
+
+func ipsecGoneError(ipsecID int, row string) error {
+	return &parentMissingError{
+		summary: "IPsec configuration was deleted outside Terraform",
+		detail: fmt.Sprintf(
+			"IPsec configuration %d is gone and %s is still on the system. VergeOS can leave the phase 1 and phase 2 rows behind. Refresh removes this resource from state. The next apply creates the connection again. Creating the IPsec configuration deletes phase 1 rows that already point at the new key, and creating the connection deletes phase 2 rows that already point at the new phase 1.",
+			ipsecID, row,
+		),
+		missing: &vergeos.NotFoundError{Resource: "VNetIPSec", ID: ipsecID},
+	}
+}
+
+// absentNetwork reports that the parent network is gone. Any other lookup
+// result is ignored so a failed read of the network does not fail the read
+// of a row that is still there.
+func (a *vpnAPI) absentNetwork(ctx context.Context, networkID int, row string) error {
 	if a == nil || a.sdk == nil || networkID <= 0 || strings.TrimSpace(row) == "" {
-		return "", ""
+		return nil
 	}
 	_, err := a.sdk.Networks.Get(ctx, networkID)
 	if !vergeos.IsNotFoundError(err) {
-		return "", ""
+		return nil
 	}
-	return "Parent network was deleted outside Terraform",
-		fmt.Sprintf("Network %d is gone and %s is still on the system. VergeOS leaves these rows behind when the network is deleted outside Terraform, and a later delete of the row is refused while it remains.", networkID, row)
+	return networkGoneError(networkID, row)
+}
+
+// absentIPSecParent reports that the IPsec configuration or its network is
+// gone. A lookup that fails for any other reason is ignored.
+func (a *vpnAPI) absentIPSecParent(ctx context.Context, ipsecID int, row string) error {
+	if a == nil || a.sdk == nil || ipsecID <= 0 || strings.TrimSpace(row) == "" {
+		return nil
+	}
+	ipsec, err := a.sdk.VNetIPSecs.Get(ctx, ipsecID)
+	if vergeos.IsNotFoundError(err) {
+		return ipsecGoneError(ipsecID, row)
+	}
+	if err != nil || ipsec == nil {
+		return nil
+	}
+	return a.absentNetwork(ctx, ipsec.VNet.Int(), row)
+}
+
+// requireNetwork is the update check. A missing network is the same error
+// refresh uses. Any other lookup error is returned.
+func (a *vpnAPI) requireNetwork(ctx context.Context, networkID int, row string) error {
+	if a == nil || a.sdk == nil {
+		return fmt.Errorf("vergeos client is nil")
+	}
+	if networkID <= 0 {
+		return fmt.Errorf("network id is required")
+	}
+	_, err := a.sdk.Networks.Get(ctx, networkID)
+	if err == nil {
+		return nil
+	}
+	if vergeos.IsNotFoundError(err) {
+		return networkGoneError(networkID, row)
+	}
+	return err
+}
+
+// requireIPSecParent is the connection update check.
+func (a *vpnAPI) requireIPSecParent(ctx context.Context, ipsecID int, row string) error {
+	if a == nil || a.sdk == nil {
+		return fmt.Errorf("vergeos client is nil")
+	}
+	if ipsecID <= 0 {
+		return fmt.Errorf("ipsec id is required")
+	}
+	ipsec, err := a.sdk.VNetIPSecs.Get(ctx, ipsecID)
+	if vergeos.IsNotFoundError(err) {
+		return ipsecGoneError(ipsecID, row)
+	}
+	if err != nil {
+		return err
+	}
+	if ipsec == nil {
+		return fmt.Errorf("IPsec configuration %d read returned no row", ipsecID)
+	}
+	return a.requireNetwork(ctx, ipsec.VNet.Int(), row)
+}
+
+// explainIPSecDelete adds the recovery step when VergeOS refused a delete
+// and the row is still there. Other errors are unchanged.
+func explainIPSecDelete(err error) error {
+	if err == nil || !strings.Contains(err.Error(), "VergeOS refused the delete") {
+		return err
+	}
+	return fmt.Errorf("%w. Refresh removes this resource from state when the parent network or IPsec configuration is gone. The next apply creates it again. Creating the network deletes IPsec rows that already point at the new key, so a recreated network does not keep the old configuration. terraform destroy -refresh=false cannot delete these rows until a network with that key exists", err)
 }
 
 func stringState() []planmodifier.String {

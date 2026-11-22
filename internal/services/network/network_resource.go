@@ -78,8 +78,7 @@ func (r *NetworkResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
-		MarkdownDescription: "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network.",
+		MarkdownDescription: "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network. Create deletes IPsec rows that already point at the new key, so a reused network key does not keep an IPsec configuration from a network that was deleted.",
 		// Version 1 stores powerstate as a bool. Version 0 stored the
 		// strings "true" and "false".
 		Version: 1,

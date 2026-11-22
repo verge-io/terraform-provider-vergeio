@@ -42,6 +42,9 @@ func TestDeleteIPSecConnection404KeepsStateWhenRowRemains(t *testing.T) {
 
 	resp := deleteImported(t, item, "7")
 	assertRefusedDiagnostic(t, resp.Diagnostics, "IPsec phase 2 8 (lan-to-lan)")
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "Refresh removes this resource from state") {
+		t.Fatalf("detail = %s", resp.Diagnostics.Errors()[0].Detail())
+	}
 	if got := stateID(t, resp.State); got != "7" {
 		t.Fatalf("state id = %q, want the connection kept", got)
 	}
@@ -88,6 +91,9 @@ func TestDeleteIPSec404KeepsStateWhenRowRemains(t *testing.T) {
 
 	resp := deleteImported(t, item, "5")
 	assertRefusedDiagnostic(t, resp.Diagnostics, "IPsec configuration 5")
+	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "Refresh removes this resource from state") {
+		t.Fatalf("detail = %s", resp.Diagnostics.Errors()[0].Detail())
+	}
 	if got := stateID(t, resp.State); got != "5" {
 		t.Fatalf("state id = %q, want the configuration kept", got)
 	}
@@ -296,9 +302,7 @@ func TestReadIPSecWarnsWhenParentNetworkGone(t *testing.T) {
 		t.Fatal(resp.Diagnostics)
 	}
 	assertParentWarning(t, resp.Diagnostics, "IPsec configuration 5", "14")
-	if got := stateID(t, resp.State); got != "5" {
-		t.Fatalf("state id = %q", got)
-	}
+	assertStateRemoved(t, resp.State)
 }
 
 func TestReadIPSecConnectionWarnsWhenParentNetworkGone(t *testing.T) {
@@ -309,9 +313,7 @@ func TestReadIPSecConnectionWarnsWhenParentNetworkGone(t *testing.T) {
 		t.Fatal(resp.Diagnostics)
 	}
 	assertParentWarning(t, resp.Diagnostics, "IPsec phase 1 7", "14")
-	if got := stateID(t, resp.State); got != "7" {
-		t.Fatalf("state id = %q", got)
-	}
+	assertStateRemoved(t, resp.State)
 }
 
 func TestReadIPSecSkipsWarningWhenParentLookupIsUnclear(t *testing.T) {
@@ -346,6 +348,191 @@ func TestReadIPSecSkipsWarningWhenParentLookupIsUnclear(t *testing.T) {
 				t.Fatalf("warnings = %v", resp.Diagnostics)
 			}
 		})
+	}
+}
+
+func TestReadIPSecConnectionDropsWhenIPSecGone(t *testing.T) {
+	item := configuredVPNResource(t, NewNetworkIPSecConnectionResource(), func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"$key": 7, "ipsec": 5, "name": "bugtest-conn", "enabled": true, "remote_gateway": "203.0.113.10",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeJSON(t, w, http.StatusNotFound, map[string]any{"err": "not found"})
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	resp := readImported(t, item, "7")
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	warnings := resp.Diagnostics.Warnings()
+	if len(warnings) != 1 || warnings[0].Summary() != "IPsec configuration was deleted outside Terraform" {
+		t.Fatalf("warnings = %#v", warnings)
+	}
+	for _, want := range []string{"IPsec configuration 5", "IPsec phase 1 7", "Refresh removes this resource from state", "phase 1 rows"} {
+		if !strings.Contains(warnings[0].Detail(), want) {
+			t.Errorf("warning missing %q: %s", want, warnings[0].Detail())
+		}
+	}
+	assertStateRemoved(t, resp.State)
+}
+
+func TestReadIPSecConnectionKeepsRowWhenIPSecLookupFails(t *testing.T) {
+	item := configuredVPNResource(t, NewNetworkIPSecConnectionResource(), func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
+			writeJSON(t, w, http.StatusOK, map[string]any{
+				"$key": 7, "ipsec": 5, "name": "bugtest-conn", "enabled": true, "remote_gateway": "203.0.113.10",
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeJSON(t, w, http.StatusInternalServerError, map[string]any{"err": "lookup failed"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			writeJSON(t, w, http.StatusOK, []map[string]any{{
+				"$key": 8, "phase1": 7, "name": "lan-to-lan", "enabled": true,
+				"local": "10.251.9.0/24", "remote": "198.51.100.0/24",
+			}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_connections":
+			writeJSON(t, w, http.StatusOK, []any{})
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	resp := readImported(t, item, "7")
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if resp.Diagnostics.WarningsCount() != 0 {
+		t.Fatalf("warnings = %v", resp.Diagnostics)
+	}
+	if got := stateID(t, resp.State); got != "7" {
+		t.Fatalf("state id = %q", got)
+	}
+}
+
+func TestDeleteIPSecSkipsForeignNetwork(t *testing.T) {
+	var deleted bool
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 5, "vnet": 99, "enabled": true})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			deleted = true
+			writeJSON(t, w, http.StatusOK, map[string]any{})
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	if err := api.deleteIPSec(t.Context(), &ipsecModel{
+		ID:        types.StringValue("5"),
+		NetworkID: types.StringValue("14"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Fatal("deleted an IPsec configuration on another network")
+	}
+}
+
+func TestDeleteIPSecDeletesMatchingNetwork(t *testing.T) {
+	var deleted bool
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 5, "vnet": 14, "enabled": true})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			writeJSON(t, w, http.StatusOK, []any{})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			deleted = true
+			writeJSON(t, w, http.StatusOK, map[string]any{})
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	if err := api.deleteIPSec(t.Context(), &ipsecModel{
+		ID:        types.StringValue("5"),
+		NetworkID: types.StringValue("14"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !deleted {
+		t.Fatal("matching IPsec configuration was not deleted")
+	}
+}
+
+func TestDeleteIPSecConnectionSkipsForeignIPSec(t *testing.T) {
+	var deleted bool
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s/7":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 7, "ipsec": 99, "name": "other"})
+		case r.Method == http.MethodDelete:
+			deleted = true
+			writeJSON(t, w, http.StatusOK, map[string]any{})
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	if err := api.deleteIPSecConnection(t.Context(), &ipsecConnectionModel{
+		ID:      types.StringValue("7"),
+		IPSecID: types.StringValue("5"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if deleted {
+		t.Fatal("deleted a phase 1 on another IPsec configuration")
+	}
+}
+
+func TestReadIPSecForeignNetworkIsNotFound(t *testing.T) {
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5" {
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 5, "vnet": 99, "enabled": true})
+			return
+		}
+		unexpectedAPI(t, w, r)
+	})
+
+	err := api.readIPSec(t.Context(), &ipsecModel{
+		ID:        types.StringValue("5"),
+		NetworkID: types.StringValue("14"),
+	})
+	if !vergeos.IsNotFoundError(err) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestUpdateIPSecRefusesForeignNetwork(t *testing.T) {
+	var updated bool
+	api := newTestVPN(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			writeJSON(t, w, http.StatusOK, map[string]any{"$key": 5, "vnet": 99, "enabled": true})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vnet_ipsecs/5":
+			updated = true
+			writeJSON(t, w, http.StatusOK, map[string]any{})
+		default:
+			unexpectedAPI(t, w, r)
+		}
+	})
+
+	err := api.updateIPSec(t.Context(), &ipsecModel{
+		ID:        types.StringValue("5"),
+		NetworkID: types.StringValue("14"),
+		Enabled:   types.BoolValue(false),
+	})
+	if !vergeos.IsNotFoundError(err) {
+		t.Fatalf("error = %v", err)
+	}
+	if updated {
+		t.Fatal("updated an IPsec configuration on another network")
 	}
 }
 
@@ -474,10 +661,17 @@ func assertParentWarning(t *testing.T, diags diag.Diagnostics, row, networkID st
 		t.Fatalf("summary = %q", warnings[0].Summary())
 	}
 	detail := warnings[0].Detail()
-	for _, want := range []string{"Network " + networkID, row, "deleted outside Terraform"} {
+	for _, want := range []string{"Network " + networkID, row, "deleted outside Terraform", "Refresh removes this resource from state", "new key"} {
 		if !strings.Contains(detail, want) {
 			t.Errorf("warning missing %q: %s", want, detail)
 		}
+	}
+}
+
+func assertStateRemoved(t *testing.T, state tfsdk.State) {
+	t.Helper()
+	if !state.Raw.IsNull() {
+		t.Fatal("resource was kept in state")
 	}
 }
 
