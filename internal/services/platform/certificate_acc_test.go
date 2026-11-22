@@ -114,7 +114,7 @@ func TestAccCertificate_SelfSignedDomainListReplace(t *testing.T) {
 	created := testAccCertificateSelfSigned(domain, "UI certificate")
 	withNames := testAccCertificateSelfSignedList(domain, list, "UI certificate")
 	described := testAccCertificateSelfSignedList(domain, list, "Replacement UI certificate")
-	var createdID string
+	var previousCreated string
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { acctest.PreCheck(t) },
@@ -130,11 +130,11 @@ func TestAccCertificate_SelfSignedDomainListReplace(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "type", "self_signed"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "key_type", "ecdsa"),
 					func(s *terraform.State) error {
-						rs, ok := s.RootModule().Resources["vergeio_certificate.test"]
-						if !ok || rs.Primary.ID == "" {
-							return fmt.Errorf("certificate id is empty")
+						stamp, err := certificateCreated(s)
+						if err != nil {
+							return err
 						}
-						createdID = rs.Primary.ID
+						previousCreated = stamp
 						return nil
 					},
 				),
@@ -159,13 +159,12 @@ func TestAccCertificate_SelfSignedDomainListReplace(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "type", "self_signed"),
 					resource.TestCheckResourceAttr("vergeio_certificate.test", "key_type", "ecdsa"),
 					func(s *terraform.State) error {
-						rs, ok := s.RootModule().Resources["vergeio_certificate.test"]
-						if !ok || rs.Primary.ID == "" || rs.Primary.ID == createdID {
-							id := ""
-							if ok {
-								id = rs.Primary.ID
-							}
-							return fmt.Errorf("certificate id %q was not replaced (previous %q)", id, createdID)
+						stamp, err := certificateCreated(s)
+						if err != nil {
+							return err
+						}
+						if stamp == previousCreated {
+							return fmt.Errorf("certificate created %q was not replaced (previous %q)", stamp, previousCreated)
 						}
 						return nil
 					},
@@ -253,6 +252,72 @@ func TestAccCertificate_Manual(t *testing.T) {
 			},
 		},
 	})
+}
+
+func certificateCreated(s *terraform.State) (string, error) {
+	rs, ok := s.RootModule().Resources["vergeio_certificate.test"]
+	if !ok || rs == nil || rs.Primary == nil {
+		return "", fmt.Errorf("certificate missing from state")
+	}
+	created := rs.Primary.Attributes["created"]
+	if created == "" || created == "0" {
+		return "", fmt.Errorf("created is %q; the ownership check cannot tell rows apart", created)
+	}
+	return created, nil
+}
+
+func TestCertificateReplaceCheckUsesCreated(t *testing.T) {
+	first := certificateState("5", "1700000000")
+	stamp, err := certificateCreated(first)
+	if err != nil || stamp != "1700000000" {
+		t.Fatalf("created = %q err=%v", stamp, err)
+	}
+	reused := certificateState("5", "1800000000")
+	got, err := certificateCreated(reused)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == stamp {
+		t.Fatal("a reused key with a new created time looked like the same row")
+	}
+	same, err := certificateCreated(certificateState("9", "1700000000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if same != stamp {
+		t.Fatal("created changed when the row did not")
+	}
+	if _, err := certificateCreated(certificateState("5", "0")); err == nil {
+		t.Fatal("created 0 should fail the ownership check")
+	}
+	if _, err := certificateCreated(&terraform.State{Modules: []*terraform.ModuleState{{
+		Path:      []string{"root"},
+		Resources: map[string]*terraform.ResourceState{},
+	}}}); err == nil {
+		t.Fatal("missing certificate should fail the ownership check")
+	}
+}
+
+func certificateState(id, created string) *terraform.State {
+	return &terraform.State{
+		Modules: []*terraform.ModuleState{
+			{
+				Path: []string{"root"},
+				Resources: map[string]*terraform.ResourceState{
+					"vergeio_certificate.test": {
+						Type: "vergeio_certificate",
+						Primary: &terraform.InstanceState{
+							ID: id,
+							Attributes: map[string]string{
+								"id":      id,
+								"created": created,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func testAccCheckCertificateDestroy(s *terraform.State) error {
