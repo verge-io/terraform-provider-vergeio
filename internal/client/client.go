@@ -55,10 +55,14 @@ type Client struct {
 	sdk   *vergeos.Client
 
 	// mutationGate keeps certificate create and delete from overlapping other
-	// writes. VergeOS closes open API connections about half a second after
-	// those two calls. Writers take the read side.
-	mutationGate      sync.RWMutex
-	certificateSettle time.Duration
+	// writes. VergeOS reloads the web server after those calls and closes
+	// open connections. A second change within a few seconds defers that
+	// reload. Writers take the read side until the deferred restart is over.
+	mutationGate             sync.RWMutex
+	certificateSettle        time.Duration
+	certificateReadyTimeout  time.Duration
+	certificateReadyInterval time.Duration
+	certificateProbeTimeout  time.Duration
 
 	directRetryAttempts int
 	directRetryBackoff  time.Duration
