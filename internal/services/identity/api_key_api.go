@@ -166,9 +166,7 @@ func ensureAPIKeyOwned(data *APIKeyResourceModel, key *vergeos.UserAPIKey) error
 }
 
 func (api *APIKeyApi) createAPIKey(ctx context.Context, data *APIKeyResourceModel) error {
-	// The token is returned only here. It is discarded. The managed resource
-	// does not store it. Ephemeral vergeio_api_key is the token used in a run.
-	created, _, err := api.sdk.UserAPIKeys.Create(ctx, apiKeyCreateRequest(data))
+	created, token, err := api.sdk.UserAPIKeys.Create(ctx, apiKeyCreateRequest(data))
 	if err != nil {
 		return err
 	}
@@ -176,6 +174,15 @@ func (api *APIKeyApi) createAPIKey(ctx context.Context, data *APIKeyResourceMode
 		return fmt.Errorf("VergeOS did not return an API key id")
 	}
 	applyAPIKey(data, created)
+	if !storeAPIKeyToken(data.StoreToken) {
+		data.Token = types.StringNull()
+		tflog.Debug(ctx, fmt.Sprintf("created API key %s", data.Id.ValueString()))
+		return nil
+	}
+	if token == "" {
+		return fmt.Errorf("VergeOS did not return an API key token")
+	}
+	data.Token = types.StringValue(token)
 	tflog.Debug(ctx, fmt.Sprintf("created API key %s", data.Id.ValueString()))
 	return nil
 }
@@ -185,6 +192,7 @@ func (api *APIKeyApi) readAPIKey(ctx context.Context, data *APIKeyResourceModel)
 	if err != nil {
 		return err
 	}
+	previousToken := data.Token
 	key, err := api.sdk.UserAPIKeys.Get(ctx, id)
 	if err != nil {
 		return err
@@ -193,8 +201,23 @@ func (api *APIKeyApi) readAPIKey(ctx context.Context, data *APIKeyResourceModel)
 		return err
 	}
 	applyAPIKey(data, key)
+	data.Token = preservedAPIKeyToken(data.StoreToken, previousToken)
 	tflog.Debug(ctx, fmt.Sprintf("read API key %d", id))
 	return nil
+}
+
+func storeAPIKeyToken(store types.Bool) bool {
+	return !store.IsNull() && !store.IsUnknown() && store.ValueBool()
+}
+
+func preservedAPIKeyToken(store types.Bool, previous types.String) types.String {
+	if !storeAPIKeyToken(store) {
+		return types.StringNull()
+	}
+	if previous.IsNull() || previous.IsUnknown() || previous.ValueString() == "" {
+		return types.StringNull()
+	}
+	return previous
 }
 
 func (api *APIKeyApi) updateAPIKey(ctx context.Context, plan, state *APIKeyResourceModel) error {
