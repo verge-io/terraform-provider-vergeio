@@ -148,3 +148,71 @@ func TestSnapshotProfileReadKeepsSameNameAndImport(t *testing.T) {
 		t.Fatalf("import read should keep the row: %v null=%t", importedResp.Diagnostics, importedResp.State.Raw.IsNull())
 	}
 }
+
+func TestSnapshotProfileDeleteChecksName(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		periods    string
+		storedName string
+		wantDelete bool
+		wantErr    bool
+	}{
+		{name: "foreign", status: http.StatusOK, body: `{"$key":9,"name":"other","description":"other"}`, periods: `[{"$key":7,"profile":9,"name":"daily","retention":60}]`, storedName: "mine"},
+		{name: "same", status: http.StatusOK, body: `{"$key":9,"name":"mine","description":"edited"}`, periods: `[]`, storedName: "mine", wantDelete: true},
+		{name: "missing", status: http.StatusNotFound, periods: `[]`, storedName: "mine", wantDelete: true},
+		{name: "read error", status: http.StatusInternalServerError, storedName: "mine", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.2.2"}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v4/snapshot_profiles/9":
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v4/snapshot_profile_periods":
+					_, _ = w.Write([]byte(tc.periods))
+				case r.Method == http.MethodDelete:
+					deletes++
+					if tc.status == http.StatusNotFound && r.URL.Path == "/api/v4/snapshot_profiles/9" {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					_, _ = w.Write([]byte(`{"response":"OK"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			ctx := context.Background()
+			item := configuredSnapshotProfile(t, server.URL)
+			schemaResp := &fwresource.SchemaResponse{}
+			item.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+			state := tfsdk.State{Schema: schemaResp.Schema}
+			diags := state.Set(ctx, &SnapshotProfileResourceModel{
+				Id:   types.StringValue("9"),
+				Name: types.StringValue(tc.storedName),
+			})
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			resp := &fwresource.DeleteResponse{}
+			item.Delete(ctx, fwresource.DeleteRequest{State: state}, resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("error = %v, want error %t", resp.Diagnostics, tc.wantErr)
+			}
+			if deletes > 0 != tc.wantDelete {
+				t.Fatalf("deletes = %d, want delete %t", deletes, tc.wantDelete)
+			}
+		})
+	}
+}

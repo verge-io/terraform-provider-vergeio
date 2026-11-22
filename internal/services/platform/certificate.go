@@ -153,7 +153,7 @@ func (r *certificateResource) Schema(ctx context.Context, req resource.SchemaReq
 			"valid":        volatileBool("Whether VergeOS considers the certificate valid."),
 			"autocreated":  volatileBool("Whether VergeOS created this certificate on its own."),
 			"expires":      timestampAttr("Expiration time, as seconds since the epoch."),
-			"created":      timestampAttr("Unix time when VergeOS created the certificate. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another certificate, and refresh drops this resource. A description change on the same certificate still updates in place."),
+			"created":      timestampAttr("Unix time when VergeOS created the certificate. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another certificate, and refresh drops this resource. Destroy without a refresh leaves the other row. A description change on the same certificate still updates in place."),
 			"modified":     timestampAttr("Time the certificate was last modified, as seconds since the epoch."),
 		},
 	}
@@ -277,16 +277,11 @@ func (r *certificateResource) Delete(ctx context.Context, req resource.DeleteReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := parseID(data.ID, "certificate")
-	if err != nil {
+	if err := r.api.deleteCertificate(ctx, &data); err != nil {
 		resp.Diagnostics.AddError("Error deleting certificate", err.Error())
 		return
 	}
-	if err := r.api.deleteCertificate(ctx, id); err != nil {
-		resp.Diagnostics.AddError("Error deleting certificate", err.Error())
-		return
-	}
-	tflog.Debug(ctx, fmt.Sprintf("deleted certificate %d", id))
+	tflog.Debug(ctx, fmt.Sprintf("deleted certificate %s", data.ID.ValueString()))
 }
 
 func (r *certificateResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -614,14 +609,26 @@ func (a *API) updateCertificate(ctx context.Context, plan, state *certificateMod
 	return a.applyCertificate(ctx, plan, cert, row, *plan, configuredDomain)
 }
 
-func (a *API) deleteCertificate(ctx context.Context, id int) error {
+func (a *API) deleteCertificate(ctx context.Context, data *certificateModel) error {
 	if err := a.requireSDK(); err != nil {
+		return err
+	}
+	id, err := parseID(data.ID, "certificate")
+	if err != nil {
 		return err
 	}
 	if a.http == nil {
 		return fmt.Errorf("vergeio client is nil")
 	}
-	return a.http.WithCertificateMutation(ctx, func(ctx context.Context) error {
-		return ignoreMissing(a.sdk.Certificates.Delete(ctx, id))
+	return a.http.WithOptionalCertificateMutation(ctx, func(ctx context.Context) (bool, error) {
+		current, getErr := a.sdk.Certificates.Get(ctx, id)
+		foreign, err := shared.ForeignRow(getErr, ensureCertificateOwned(data, current))
+		if err != nil {
+			return false, err
+		}
+		if foreign {
+			return false, nil
+		}
+		return true, ignoreMissing(a.sdk.Certificates.Delete(ctx, id))
 	})
 }

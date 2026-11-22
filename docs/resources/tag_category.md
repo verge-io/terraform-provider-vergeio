@@ -67,7 +67,7 @@ resource "vergeio_tag_category" "environment" {
 
 ### Read-Only
 
-- `created` (Number) Unix time when VergeOS created the category. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another category, and refresh drops this resource. A name change on the same category still updates in place.
+- `created` (Number) Unix time when VergeOS created the category. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another category, and refresh drops this resource. Destroy without a refresh leaves the other row. A name change on the same category still updates in place.
 - `id` (String) Tag category key assigned by VergeOS.
 
 ## Import

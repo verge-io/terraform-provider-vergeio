@@ -173,6 +173,75 @@ func TestAPIKeyReadKeepsSameCreatedAndImport(t *testing.T) {
 	}
 }
 
+func TestAPIKeyDeleteChecksCreatedAndUser(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		userID     int32
+		created    int64
+		wantDelete bool
+		wantErr    bool
+	}{
+		{name: "same user different created", status: http.StatusOK, body: `{"$key":3,"user":10,"name":"other","created":1800000000}`, userID: 10, created: 1700000000},
+		{name: "different user same created", status: http.StatusOK, body: `{"$key":3,"user":11,"name":"other","created":1700000000}`, userID: 10, created: 1700000000},
+		{name: "same", status: http.StatusOK, body: `{"$key":3,"user":10,"name":"renamed","created":1700000000}`, userID: 10, created: 1700000000, wantDelete: true},
+		{name: "missing", status: http.StatusNotFound, userID: 10, created: 1700000000, wantDelete: true},
+		{name: "read error", status: http.StatusInternalServerError, userID: 10, created: 1700000000, wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deletes int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.2.2"}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v4/user_api_keys/3":
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/user_api_keys/3":
+					deletes++
+					if tc.status == http.StatusNotFound {
+						w.WriteHeader(http.StatusNotFound)
+						return
+					}
+					_, _ = w.Write([]byte(`{"response":"OK"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			ctx := context.Background()
+			item := configuredAPIKeyResource(t, server.URL)
+			schemaResp := &fwresource.SchemaResponse{}
+			item.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+			state := tfsdk.State{Schema: schemaResp.Schema}
+			diags := state.Set(ctx, &APIKeyResourceModel{
+				Id:      types.StringValue("3"),
+				UserID:  types.Int32Value(tc.userID),
+				Name:    types.StringValue("mine"),
+				Created: types.Int64Value(tc.created),
+			})
+			if diags.HasError() {
+				t.Fatal(diags)
+			}
+			resp := &fwresource.DeleteResponse{}
+			item.Delete(ctx, fwresource.DeleteRequest{State: state}, resp)
+			if resp.Diagnostics.HasError() != tc.wantErr {
+				t.Fatalf("error = %v, want error %t", resp.Diagnostics, tc.wantErr)
+			}
+			if deletes > 0 != tc.wantDelete {
+				t.Fatalf("deletes = %d, want delete %t", deletes, tc.wantDelete)
+			}
+		})
+	}
+}
+
 func configuredAPIKeyResource(t *testing.T, url string) *APIKeyResource {
 	t.Helper()
 	item := &APIKeyResource{}

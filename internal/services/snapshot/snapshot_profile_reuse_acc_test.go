@@ -115,6 +115,107 @@ func TestAccSnapshotProfile_KeyReuseDoesNotAdoptForeign(t *testing.T) {
 	})
 }
 
+// TestAccSnapshotProfile_KeyReuseDestroyRefreshOff covers #322. Destroy
+// with refresh off must leave the profile that now holds the stored key.
+// snapshot_profiles has no created time, so the unique name is the identity.
+func TestAccSnapshotProfile_KeyReuseDestroyRefreshOff(t *testing.T) {
+	acctest.PreCheck(t)
+	name := acctest.Name("snap-kr322")
+	foreignName := acctest.Name("snap-kr322-f")
+	config := testAccSnapshotProfileOnly(name, "mine")
+
+	var managedKey int
+	var foreignKey int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignKey <= 0 {
+			return
+		}
+		_ = deleteSnapshotProfile(context.Background(), client, foreignKey)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		AdditionalCLIOptions:     acctest.PlanWithoutRefresh(),
+		CheckDestroy:             testAccCheckSnapshotProfileKeyReuseDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_snapshot_profile.test", "id"),
+					func(s *terraform.State) error {
+						id, err := acctest.ResourceID(s, "vergeio_snapshot_profile.test")
+						if err != nil {
+							return err
+						}
+						managedKey = id
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := deleteSnapshotProfile(ctx, client, managedKey); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed snapshot profile %d: %v", managedKey, err)
+					}
+					acctest.WaitUntilMissing(t, func() error {
+						_, err := client.SnapshotProfiles.Get(ctx, managedKey)
+						return err
+					}, fmt.Sprintf("snapshot profile %d", managedKey))
+					created, err := client.SnapshotProfiles.Create(ctx, &vergeos.SnapshotProfileCreateRequest{
+						Name:        foreignName,
+						Description: "belongs to someone else",
+					})
+					if err != nil {
+						t.Fatalf("create foreign snapshot profile: %v", err)
+					}
+					foreignKey = created.Key.Int()
+					keyReused = foreignKey == managedKey
+					t.Logf("managed snapshot profile key=%d; foreign key=%d name=%s reused=%v", managedKey, foreignKey, created.Name, keyReused)
+				},
+				Config: acctest.Config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_snapshot_profile.test", plancheck.ResourceActionDestroy),
+					},
+				},
+				Check: func(*terraform.State) error {
+					if err := acctest.ForeignPresent(foreignKey, foreignName, keyReused, func(ctx context.Context) (string, error) {
+						client, err := acctest.SDKClient()
+						if err != nil {
+							return "", err
+						}
+						got, err := client.SnapshotProfiles.Get(ctx, foreignKey)
+						if err != nil {
+							return "", err
+						}
+						return got.Name, nil
+					}); err != nil {
+						return err
+					}
+					client, err := acctest.SDKClient()
+					if err != nil {
+						return err
+					}
+					if err := deleteSnapshotProfile(context.Background(), client, foreignKey); err != nil && !vergeos.IsNotFoundError(err) {
+						return fmt.Errorf("delete foreign snapshot profile %d: %w", foreignKey, err)
+					}
+					foreignKey = 0
+					return nil
+				},
+			},
+		},
+	})
+}
+
 func deleteSnapshotProfile(ctx context.Context, client *vergeos.Client, id int) error {
 	periods, err := client.SnapshotProfilePeriods.ListByProfile(ctx, id)
 	if err != nil && !vergeos.IsNotFoundError(err) {

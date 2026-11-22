@@ -69,7 +69,7 @@ func (r *webhookURLResource) Schema(ctx context.Context, req resource.SchemaRequ
 		MarkdownDescription: webhookURLDescription,
 		Attributes: map[string]schema.Attribute{
 			"id":   idAttr("Webhook destination key assigned by VergeOS."),
-			"name": schema.StringAttribute{MarkdownDescription: "Destination name. Must be unique. 1 to 128 characters. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform.", Required: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 128)}},
+			"name": schema.StringAttribute{MarkdownDescription: "Destination name. Must be unique. 1 to 128 characters. VergeOS reuses keys, and this table has no readonly id. Refresh drops a row whose name differs, including a rename made outside Terraform. Destroy without a refresh leaves that row.", Required: true, Validators: []validator.String{stringvalidator.LengthBetween(1, 128)}},
 			"url": schema.StringAttribute{
 				MarkdownDescription: "HTTP or HTTPS endpoint that receives the POST.",
 				Required:            true,
@@ -176,16 +176,11 @@ func (r *webhookURLResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	id, err := parseID(data.ID, "webhook destination")
-	if err != nil {
+	if err := r.api.deleteWebhookURL(ctx, &data); err != nil {
 		resp.Diagnostics.AddError("Error deleting webhook destination", err.Error())
 		return
 	}
-	if err := r.api.deleteWebhookURL(ctx, id); err != nil {
-		resp.Diagnostics.AddError("Error deleting webhook destination", err.Error())
-		return
-	}
-	tflog.Debug(ctx, fmt.Sprintf("deleted webhook destination %d", id))
+	tflog.Debug(ctx, fmt.Sprintf("deleted webhook destination %s", data.ID.ValueString()))
 }
 
 func (r *webhookURLResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -320,9 +315,21 @@ func (a *API) updateWebhookURL(ctx context.Context, plan, state *webhookURLModel
 	return nil
 }
 
-func (a *API) deleteWebhookURL(ctx context.Context, id int) error {
+func (a *API) deleteWebhookURL(ctx context.Context, data *webhookURLModel) error {
 	if err := a.requireSDK(); err != nil {
 		return err
+	}
+	id, err := parseID(data.ID, "webhook destination")
+	if err != nil {
+		return err
+	}
+	current, getErr := a.sdk.WebhookURLs.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureWebhookURLOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	if err := a.deleteWebhookDeliveries(ctx, id); err != nil {
 		return err

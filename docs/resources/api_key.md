@@ -60,7 +60,7 @@ resource "vergeio_api_key" "ci" {
 
 ### Read-Only
 
-- `created` (Number) Unix time when VergeOS created the key. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another API key, including one for the same user, and refresh drops this resource. A name change on the same key still updates in place.
+- `created` (Number) Unix time when VergeOS created the key. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another API key, including one for the same user, and refresh drops this resource. Destroy without a refresh leaves the other row. A name change on the same key still updates in place.
 - `id` (String) API key id assigned by VergeOS.
 - `lastlogin_ip` (String) IP address of the last use. Empty when the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.
 - `lastlogin_stamp` (Number) Unix time of the last use. Zero means the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.

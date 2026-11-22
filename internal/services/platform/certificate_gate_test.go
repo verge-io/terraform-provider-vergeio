@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -176,7 +177,7 @@ func TestCertificateDeleteHoldsTheGate(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- api.deleteCertificate(context.Background(), id)
+		done <- api.deleteCertificate(context.Background(), &certificateModel{ID: types.StringValue(strconv.Itoa(id))})
 	}()
 	select {
 	case <-entered:
@@ -217,6 +218,209 @@ func TestCertificateDeleteHoldsTheGate(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("certificate delete did not finish")
+	}
+}
+
+func TestCertificateDeleteReadsIdentityInsideTheGate(t *testing.T) {
+	api, client, fake := gateAPI(t)
+	id := fake.seedCertificate(vergeos.Certificate{
+		Domain:  "tf-acc-gate.example.com",
+		Type:    vergeos.CertificateTypeSelfSigned,
+		KeyType: vergeos.CertificateKeyTypeECDSA,
+		Created: 1700000000,
+	})
+	getEntered := make(chan struct{})
+	releaseGet := make(chan struct{})
+	deleteEntered := make(chan struct{})
+	releaseDelete := make(chan struct{})
+	var getOnce, deleteOnce sync.Once
+	otherEntered := make(chan struct{})
+	fake.pause = func(r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/certificates/"):
+			getOnce.Do(func() { close(getEntered) })
+			<-releaseGet
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v4/certificates/"):
+			deleteOnce.Do(func() { close(deleteEntered) })
+			<-releaseDelete
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/webhook_urls":
+			close(otherEntered)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- api.deleteCertificate(context.Background(), &certificateModel{
+			ID:      types.StringValue(strconv.Itoa(id)),
+			Created: types.Int64Value(1700000000),
+		})
+	}()
+	select {
+	case <-getEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("certificate identity read did not reach the API")
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		resp, err := client.Post(context.Background(), "api/v4/webhook_urls", bytes.NewBufferString(`{"name":"tf-acc-hook","url":"https://example.com/hook"}`))
+		if err != nil {
+			writeDone <- err
+			return
+		}
+		writeDone <- resp.Body.Close()
+	}()
+	select {
+	case <-otherEntered:
+		t.Fatal("webhook create ran during the certificate identity read")
+	case err := <-writeDone:
+		t.Fatalf("webhook create finished during the certificate identity read: %v", err)
+	case <-deleteEntered:
+		t.Fatal("certificate delete ran before the identity read finished")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(releaseGet)
+	select {
+	case <-deleteEntered:
+	case <-otherEntered:
+		t.Fatal("webhook create ran between the identity read and the delete")
+	case err := <-writeDone:
+		t.Fatalf("webhook create finished between the identity read and the delete: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("certificate delete did not follow the identity read under the same hold")
+	}
+	select {
+	case <-otherEntered:
+		t.Fatal("webhook create ran while the certificate delete held the gate")
+	case err := <-writeDone:
+		t.Fatalf("webhook create finished while the certificate delete held the gate: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(releaseDelete)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("certificate delete did not finish")
+	}
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook create did not finish after the certificate gate opened")
+	}
+}
+
+func TestCertificateDeleteForeignDoesNotDeleteUnderTheGate(t *testing.T) {
+	api, client, fake := gateAPI(t)
+	client.SetCertificateSettle(2 * time.Second)
+	id := fake.seedCertificate(vergeos.Certificate{
+		Domain:  "tf-acc-gate.example.com",
+		Type:    vergeos.CertificateTypeSelfSigned,
+		KeyType: vergeos.CertificateKeyTypeECDSA,
+		Created: 1800000000,
+	})
+	getEntered := make(chan struct{})
+	releaseGet := make(chan struct{})
+	var once sync.Once
+	var deletes int
+	otherEntered := make(chan struct{})
+	fake.pause = func(r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/certificates/"):
+			once.Do(func() { close(getEntered) })
+			<-releaseGet
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v4/certificates/"):
+			deletes++
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/webhook_urls":
+			close(otherEntered)
+		}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- api.deleteCertificate(context.Background(), &certificateModel{
+			ID:      types.StringValue(strconv.Itoa(id)),
+			Created: types.Int64Value(1700000000),
+		})
+	}()
+	select {
+	case <-getEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("certificate identity read did not reach the API")
+	}
+
+	writeDone := make(chan error, 1)
+	go func() {
+		resp, err := client.Post(context.Background(), "api/v4/webhook_urls", bytes.NewBufferString(`{"name":"tf-acc-hook","url":"https://example.com/hook"}`))
+		if err != nil {
+			writeDone <- err
+			return
+		}
+		writeDone <- resp.Body.Close()
+	}()
+	select {
+	case <-otherEntered:
+		t.Fatal("webhook create ran during the certificate identity read")
+	case err := <-writeDone:
+		t.Fatalf("webhook create finished during the certificate identity read: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	close(releaseGet)
+	released := time.Now()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("certificate delete did not finish")
+	}
+	if time.Since(released) > time.Second {
+		t.Fatal("a foreign certificate delete waited out the reload")
+	}
+	if deletes != 0 {
+		t.Fatalf("deleted the foreign certificate %d times", deletes)
+	}
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook create did not finish after the identity read")
+	}
+}
+
+func TestCertificateDeleteWaitsAfterARealDelete(t *testing.T) {
+	api, client, fake := gateAPI(t)
+	client.SetCertificateSettle(200 * time.Millisecond)
+	id := fake.seedCertificate(vergeos.Certificate{
+		Domain:  "tf-acc-gate.example.com",
+		Type:    vergeos.CertificateTypeSelfSigned,
+		KeyType: vergeos.CertificateKeyTypeECDSA,
+		Created: 1700000000,
+	})
+	start := time.Now()
+	err := api.deleteCertificate(context.Background(), &certificateModel{
+		ID:      types.StringValue(strconv.Itoa(id)),
+		Created: types.Int64Value(1700000000),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatal("a certificate delete did not wait out the reload")
+	}
+	if _, ok := fake.certs[id]; ok {
+		t.Fatal("certificate was not deleted")
 	}
 }
 

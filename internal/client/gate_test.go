@@ -530,6 +530,72 @@ func TestCertificateReadyStopsWhenContextIsCanceled(t *testing.T) {
 	}
 }
 
+func TestOptionalCertificateMutationSkipsReloadWhenUnchanged(t *testing.T) {
+	client := NewClient("https://example.test", "user", "pass", true)
+	client.certificateSettle = 2 * time.Second
+
+	started := make(chan struct{})
+	acquired := make(chan struct{})
+	go func() {
+		<-started
+		client.mutationGate.RLock()
+		close(acquired)
+		client.mutationGate.RUnlock()
+	}()
+
+	start := time.Now()
+	err := client.WithOptionalCertificateMutation(context.Background(), func(context.Context) (bool, error) {
+		close(started)
+		select {
+		case <-acquired:
+			return false, errors.New("write entered during the certificate read")
+		case <-time.After(50 * time.Millisecond):
+			return false, nil
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("an unchanged certificate operation waited out the reload")
+	}
+	select {
+	case <-acquired:
+	case <-time.After(2 * time.Second):
+		t.Fatal("write did not acquire the gate after the unchanged operation")
+	}
+}
+
+func TestOptionalCertificateMutationReturnsReadErrorWithoutWaiting(t *testing.T) {
+	client := NewClient("https://example.test", "user", "pass", true)
+	client.certificateSettle = 2 * time.Second
+	start := time.Now()
+	err := client.WithOptionalCertificateMutation(context.Background(), func(context.Context) (bool, error) {
+		return false, errors.New("read failed")
+	})
+	if err == nil || err.Error() != "read failed" {
+		t.Fatalf("error = %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatal("a failed certificate read waited out the reload")
+	}
+}
+
+func TestOptionalCertificateMutationWaitsAfterAChange(t *testing.T) {
+	client := NewClient("https://example.test", "user", "pass", true)
+	client.certificateSettle = 200 * time.Millisecond
+	start := time.Now()
+	err := client.WithOptionalCertificateMutation(context.Background(), func(context.Context) (bool, error) {
+		return true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatal("a certificate change did not wait out the reload")
+	}
+}
+
 func TestCertificateReadStaysInsideTheGate(t *testing.T) {
 	client := NewClient("https://example.test", "user", "pass", true)
 	client.certificateSettle = 20 * time.Millisecond

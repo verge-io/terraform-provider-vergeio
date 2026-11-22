@@ -288,6 +288,107 @@ resource "vergeio_webhook_url" "test" {
 `, name))
 }
 
+// TestAccWebhookURL_KeyReuseDestroyRefreshOff covers #322. Destroy with
+// refresh off must leave the destination that now holds the stored key.
+// webhook_urls has no created time, so the unique name is the identity.
+func TestAccWebhookURL_KeyReuseDestroyRefreshOff(t *testing.T) {
+	acctest.PreCheck(t)
+	name := acctest.Name("hook-kr322")
+	foreignName := acctest.Name("hook-kr322-f")
+	config := testAccWebhookURLOnly(name, "https://example.com/tf-acc-mine")
+
+	var managedKey int
+	var foreignKey int
+	var keyReused bool
+
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || foreignKey <= 0 {
+			return
+		}
+		_ = client.WebhookURLs.Delete(context.Background(), foreignKey)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		AdditionalCLIOptions:     acctest.PlanWithoutRefresh(),
+		CheckDestroy:             testAccCheckWebhookURLDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: config,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_webhook_url.test", "id"),
+					func(s *terraform.State) error {
+						id, err := acctest.ResourceID(s, "vergeio_webhook_url.test")
+						if err != nil {
+							return err
+						}
+						managedKey = id
+						return nil
+					},
+				),
+			},
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					ctx := context.Background()
+					if err := client.WebhookURLs.Delete(ctx, managedKey); err != nil && !vergeos.IsNotFoundError(err) {
+						t.Fatalf("delete managed webhook url %d: %v", managedKey, err)
+					}
+					acctest.WaitUntilMissing(t, func() error {
+						_, err := client.WebhookURLs.Get(ctx, managedKey)
+						return err
+					}, fmt.Sprintf("webhook url %d", managedKey))
+					created, err := client.WebhookURLs.Create(ctx, &vergeos.WebhookURLCreateRequest{
+						Name: foreignName,
+						URL:  "https://example.com/tf-acc-other",
+					})
+					if err != nil {
+						t.Fatalf("create foreign webhook url: %v", err)
+					}
+					foreignKey = created.Key.Int()
+					keyReused = foreignKey == managedKey
+					t.Logf("managed webhook url key=%d; foreign key=%d name=%s reused=%v", managedKey, foreignKey, created.Name, keyReused)
+				},
+				Config: acctest.Config(""),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_webhook_url.test", plancheck.ResourceActionDestroy),
+					},
+				},
+				Check: func(*terraform.State) error {
+					if err := acctest.ForeignPresent(foreignKey, foreignName, keyReused, func(ctx context.Context) (string, error) {
+						client, err := acctest.SDKClient()
+						if err != nil {
+							return "", err
+						}
+						got, err := client.WebhookURLs.Get(ctx, foreignKey)
+						if err != nil {
+							return "", err
+						}
+						return got.Name, nil
+					}); err != nil {
+						return err
+					}
+					client, err := acctest.SDKClient()
+					if err != nil {
+						return err
+					}
+					if err := client.WebhookURLs.Delete(context.Background(), foreignKey); err != nil && !vergeos.IsNotFoundError(err) {
+						return fmt.Errorf("delete foreign webhook url %d: %w", foreignKey, err)
+					}
+					foreignKey = 0
+					return nil
+				},
+			},
+		},
+	})
+}
+
 func testAccWebhookURLOnly(name, rawURL string) string {
 	if err := acctest.RequirePrefix(name); err != nil {
 		panic(err)

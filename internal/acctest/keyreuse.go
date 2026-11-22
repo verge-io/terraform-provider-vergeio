@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/verge-io/govergeos"
 )
@@ -62,6 +63,25 @@ func ForeignUntouched(s *terraform.State, address string, foreignKey int, keyReu
 	}
 	if gotKey == managedID {
 		return fmt.Errorf("managed id %d matches foreign id", managedID)
+	}
+	return nil
+}
+
+// PlanWithoutRefresh is the plan flag for terraform destroy -refresh=false.
+func PlanWithoutRefresh() *resource.AdditionalCLIOptions {
+	return &resource.AdditionalCLIOptions{
+		Plan: resource.PlanOptions{NoRefresh: true},
+	}
+}
+
+// ForeignPresent fails when the outside row is missing or was renamed.
+func ForeignPresent(foreignKey int, foreignName string, keyReused bool, lookup func(context.Context) (string, error)) error {
+	name, err := lookup(context.Background())
+	if err != nil {
+		return fmt.Errorf("foreign row %d missing after destroy -refresh=false (key reused=%v): %w", foreignKey, keyReused, err)
+	}
+	if name != foreignName {
+		return fmt.Errorf("foreign name = %q, want %q (key reused=%v)", name, foreignName, keyReused)
 	}
 	return nil
 }
