@@ -3,14 +3,14 @@
 page_title: "vergeio_api_key Resource - vergeio"
 subcategory: ""
 description: |-
-  Long-lived VergeOS user API key. Sets the name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only when the key is created, and this resource does not store it. Use ephemeral.vergeio_api_key when a run needs a token. Do not reuse a name across the two: the ephemeral resource deletes an existing key of that name for the user.
+  Long-lived VergeOS user API key. Sets the name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only when the key is created. Leave store_token unset and this resource does not store that token. Set store_token to true to keep it in token. Use ephemeral.vergeio_api_key when a run needs a token that must not be stored. Do not reuse a name across the two: the ephemeral resource deletes an existing key of that name for the user.
 ---
 
 # vergeio_api_key (Resource)
 
 Creates a long-lived API key for one user. `user_id`, `name`, `description`, `ip_allow_list`, `ip_deny_list`, and `expires` are the key's own fields. Leave `expires` unset for a key that does not expire. Removing a saved expiry clears it. `expires` in configuration replaces an expiry set in the VergeOS UI.
 
-VergeOS returns the bearer token only when the key is created. This resource does not store that token, and it has no `token` attribute. A token in state would remain after the API stopped returning it. Use [ephemeral.vergeio_api_key](../ephemeral-resources/api_key.html) when a Terraform run needs a bearer token. That ephemeral resource deletes a key of the same name for the user before it creates a new one, so do not reuse a managed key's name.
+VergeOS returns the bearer token only when the key is created. Leave `store_token` unset and this resource does not store that token. Set `store_token` to true to keep the create-time bearer token in `token`. A later read does not return it, so refresh keeps the stored value. Changing `store_token` replaces the key. Import cannot recover a token. Use [ephemeral.vergeio_api_key](../ephemeral-resources/api_key.html) when a Terraform run needs a bearer token that must not be stored. That ephemeral resource deletes a key of the same name for the user before it creates a new one, so do not reuse a managed key's name.
 
 Changing `user_id` replaces the key. `user_id` is a number. Use `tonumber(vergeio_user.example.id)`.
 
@@ -57,6 +57,7 @@ resource "vergeio_api_key" "ci" {
 - `expires` (Number) Unix time when the key expires. Leave it unset for a key that does not expire. Removing a saved expiry clears it. The configuration is authoritative, so an expiry set in the VergeOS UI is replaced on the next apply.
 - `ip_allow_list` (String) Comma-separated IP addresses or CIDRs allowed to use the key. Omit to leave the current list unchanged. Set to an empty string to clear it.
 - `ip_deny_list` (String) Comma-separated IP addresses or CIDRs denied from using the key. Omit to leave the current list unchanged. Set to an empty string to clear it.
+- `store_token` (Boolean) Store the bearer token VergeOS returns when the key is created. Omit it, or set false, and the token is discarded. true writes it to token. VergeOS does not return the token on a later read. Changing this replaces the key. Import cannot recover a token.
 
 ### Read-Only
 
@@ -64,6 +65,7 @@ resource "vergeio_api_key" "ci" {
 - `id` (String) API key id assigned by VergeOS.
 - `lastlogin_ip` (String) IP address of the last use. Empty when the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.
 - `lastlogin_stamp` (Number) Unix time of the last use. Zero means the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.
+- `token` (String, Sensitive) Bearer token returned when the key is created. Null unless store_token is true. Refresh keeps the stored value. A create response with no secret leaves this null and returns an error after the key id is stored.
 
 ## Import
 
