@@ -83,7 +83,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 
 ## Modules
 
-`modules/tenant`, `modules/network_segment`, `modules/vm`, `modules/baseline`, `modules/fleet`, and `modules/vergeos_lab` are the patterns published in this repository. Each module pins `verge-io/vergeio` `~> 3.0`. Runnable examples are under `examples/modules/`. `terraform test` in a module directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of CI.
+`modules/tenant`, `modules/network_segment`, `modules/vm`, `modules/baseline`, `modules/fleet`, `modules/vergeos_lab`, and `modules/sandbox` are the patterns published in this repository. `modules/sandbox` copies a tenant or the VMs that carry one tag and deletes that copy on destroy. A VM copy comes from a snapshot onto an internal network with no gateway unless `allow_external` is set. A tenant copy is the current tenant: the pinned client has no snapshot argument on tenant clone. The module does no data masking. Each module pins `verge-io/vergeio` `~> 3.0`. Runnable examples are under `examples/modules/`. `terraform test` in a module directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of CI.
 
 ## Resources
 
@@ -113,6 +113,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_tag_category
 - vergeio_tag_member
 - vergeio_tenant
+- vergeio_tenant_copy
 - vergeio_tenant_external_ip
 - vergeio_tenant_layer2_network
 - vergeio_tenant_network_block
@@ -122,6 +123,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_tenant_storage
 - vergeio_user
 - vergeio_vm
+- vergeio_vm_clone
 - vergeio_vm_drive
 - vergeio_vm_export
 - vergeio_vm_import
@@ -178,6 +180,7 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_version
 - vergeio_vm_import
 - vergeio_vm_recipes
+- vergeio_vm_snapshots
 - vergeio_vms
 
 # Building Provider From Source

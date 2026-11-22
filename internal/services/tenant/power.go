@@ -39,14 +39,21 @@ func tenantPoweredOn(status *vergeos.TenantStatus) bool {
 }
 
 // tenantPoweredOff reports whether the tenant has reached a terminal off state.
-// Stopping still has a running node, so it is not off yet. The tenant vnet
-// may still be Running after this returns true; ensurePoweredOff waits for
-// that separately (#205).
+// A status of offline that is not running and not starting is off, even when
+// the stopping flag is stuck. Stopping while the status is still online is
+// not off yet. The tenant vnet may still be Running after this returns true;
+// ensurePoweredOff waits for that separately (#205).
 func tenantPoweredOff(status *vergeos.TenantStatus) bool {
 	if status == nil {
 		return true
 	}
-	if status.Running || status.Starting || status.Stopping {
+	if status.Running || status.Starting {
+		return false
+	}
+	if status.Status == "offline" {
+		return true
+	}
+	if status.Stopping {
 		return false
 	}
 	switch status.Status {

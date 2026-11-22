@@ -71,6 +71,7 @@ type VMNicModel struct {
 type VMDataSourceModel struct {
 	FilterName types.String `tfsdk:"filter_name"`
 	IsSnapshot types.Bool   `tfsdk:"is_snapshot"`
+	Tag        types.String `tfsdk:"tag"`
 	Vms        []*VMModel   `tfsdk:"vms"`
 }
 
@@ -89,6 +90,10 @@ func (d *VMDataSource) Schema(ctx context.Context, req datasource.SchemaRequest,
 			},
 			"is_snapshot": schema.BoolAttribute{
 				MarkdownDescription: "Filter by snapshot",
+				Optional:            true,
+			},
+			"tag": schema.StringAttribute{
+				MarkdownDescription: "Tag name or category/name. Keeps VMs assigned that tag. The member reference is vms/<key>, matched against vms.key, not vms.id. vms.id is the machine key.",
 				Optional:            true,
 			},
 			"vms": schema.ListNestedAttribute{

@@ -143,6 +143,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		nas.NewCIFSShareResource,
 		nas.NewNFSShareResource,
 		compute.NewVMResource,
+		compute.NewVMCloneResource,
 		compute.NewVMDriveResource,
 		compute.NewVMNICResource,
 		compute.NewVMImportResource,
@@ -173,6 +174,7 @@ func (p *vergeioProvider) Resources(ctx context.Context) []func() resource.Resou
 		tenant.NewTenantLayer2NetworkResource,
 		tenant.NewTenantNetworkBlockResource,
 		tenant.NewTenantSnapshotResource,
+		tenant.NewTenantCopyResource,
 	}
 }
 
@@ -199,6 +201,7 @@ func (p *vergeioProvider) DataSources(ctx context.Context) []func() datasource.D
 		system.NewVersionDataSource,
 		network.NewNetworkDataSource,
 		compute.NewVMDataSource,
+		compute.NewVMSnapshotsDataSource,
 		compute.NewVMImportDataSource,
 		compute.NewCatalogsDataSource,
 		compute.NewVMRecipesDataSource,

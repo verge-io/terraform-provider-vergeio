@@ -7,7 +7,7 @@ description: |-
 ---
 
 # vergeio_vms (Data Source)
-Retrieves information on the virtual machines in the system
+Retrieves information on the virtual machines in the system. `tag` is a tag name or `category/name` and keeps VMs assigned that tag. The assignment is `vms/<key>`, matched against `vms.key`. `vms.id` is the machine key.
 
 ## Example Usage
 
@@ -58,6 +58,7 @@ output "VM_Drives" {
 
 - `filter_name` (String) If specified, results will be filtered to name
 - `is_snapshot` (Boolean) Filters VM recipes and snapshots from the output
+- `tag` (String) Tag name or `category/name`. Keeps VMs assigned that tag. The member reference is `vms/<key>`, matched against `vms.key`, not `vms.id`. `vms.id` is the machine key.
 
 ### Read-Only
 
