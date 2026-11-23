@@ -14,7 +14,9 @@ description: |-
 
 VergeOS rejects a bare disk image on `vm_imports` (`qcow2`, `qcow`, `vmdk`, `vhd`, `vhdx`, `raw`, `img`, `vdi`, `iso`) with "Unknown Import file type". Set `target = "media"` for those files. Create downloads the URL into the media catalog and waits until the file has a size. `file_id` is the id `vergeio_mediasources` lists and the id `vergeio_vm_drive.media_source` uses with `media = "import"`.
 
-Destroy removes the import row. It also removes the VM this resource created, unless `delete_vm` is false or a VM with that name already existed (`adopted`). It removes a catalog file this resource downloaded when `delete_file` is true. A file passed in `file` is left in place. A media import is the file, and destroy always removes it.
+Destroy removes the import row and the VM this resource created, unless `delete_vm` is false. An import that adopted a VM which already existed (`adopted`) deletes neither the VM nor the `vm_imports` row. The resource that created the VM still tracks that row. Destroy of the creating resource removes the row and, unless `delete_vm` is false, the VM. It removes a catalog file this resource downloaded when `delete_file` is true. A file passed in `file` is left in place. A media import is the file, and destroy always removes it.
+
+`terraform import` reads `file`, `volume`, `volume_path`, `shared_object`, and the preserve, tier, and interface options from the `vm_imports` row. `url` is not a column on that row. A catalog file this resource downloaded has the description it wrote, and import reads `url` from that file and sets `owns_file`. `file_name` is not a column and is not restored. An omitted option keeps the stored value, so a configuration that names the same source plans no change and does not replace the VM. `terraform plan -generate-config-out` writes that source.
 
 `preserve_bios_serial`, `guest_agent_preinstalled`, and `replicate_tags` are VergeOS 26.2 columns. On an older system they stay at the configured value because the API does not return them. `url` is stored in state. Do not put a credential in it.
 
@@ -66,28 +68,28 @@ resource "vergeio_vm_import" "disk" {
 
 - `delete_file` (Boolean) Destroy deletes the catalog file downloaded from url for a VM import. A file passed in file is left in place. Defaults to true. A media import is the file, and destroy always removes it.
 - `delete_vm` (Boolean) Destroy deletes the VM this import created. A VM that already had this name is left in place. Defaults to true. Has no effect when target is media.
-- `file` (Number) Media-catalog file id of an OVA or OVF that is already on VergeOS. Changing it replaces the import.
-- `file_name` (String) Catalog name for the file downloaded from url. The default for a VM import is the URL's file name. The default for a media import is name. Changing it replaces the import.
-- `guest_agent_preinstalled` (Boolean) Mark the guest agent as already installed. VergeOS 26.2. Omit to leave the platform default. Changing it replaces the import.
-- `no_optical_drives` (Boolean) Skip optical drives from an OVA. Omit to leave the platform default. Changing it replaces the import.
-- `override_drive_interface` (String) Drive interface to use instead of the source interface. default leaves the source value. Changing it replaces the import.
-- `override_nic_interface` (String) NIC interface to use instead of the source interface. default leaves the source value. Changing it replaces the import.
-- `preferred_tier` (String) Storage tier, from 1 through 5. Omit to leave the platform default. Changing it replaces the import.
-- `preserve_bios_serial` (Boolean) Keep the source SMBIOS serial. VergeOS 26.2. Omit to leave the platform default. Changing it replaces the import.
-- `preserve_drive_format` (Boolean) Keep the source disk format. Omit to leave the platform default. Changing it replaces the import.
-- `preserve_macs` (Boolean) Keep source MAC addresses. Omit to leave the platform default. Changing it replaces the import.
-- `replicate_tags` (Boolean) Copy VMware tags and categories onto the imported VM. VergeOS 26.2. Omit to leave the platform default. Changing it replaces the import.
-- `shared_object` (Number) Shared-object id for a tenant import. Changing it replaces the import.
+- `file` (Number) Media-catalog file id of an OVA or OVF that is already on VergeOS. Import reads this from the vm_imports file column. Changing it replaces the import.
+- `file_name` (String) Catalog name for the file downloaded from url. The default for a VM import is the URL's file name. The default for a media import is name. vm_imports has no file_name column, and import does not restore it. Changing it replaces the import.
+- `guest_agent_preinstalled` (Boolean) Mark the guest agent as already installed. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `no_optical_drives` (Boolean) Skip optical drives from an OVA. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `override_drive_interface` (String) Drive interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `override_nic_interface` (String) NIC interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `preferred_tier` (String) Storage tier, from 1 through 5. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `preserve_bios_serial` (Boolean) Keep the source SMBIOS serial. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `preserve_drive_format` (Boolean) Keep the source disk format. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `preserve_macs` (Boolean) Keep source MAC addresses. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `replicate_tags` (Boolean) Copy VMware tags and categories onto the imported VM. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.
+- `shared_object` (Number) Shared-object id for a tenant import. Import reads this from the vm_imports row. Changing it replaces the import.
 - `target` (String) vm imports an OVA or OVF as a virtual machine. media downloads a disk image into the media catalog. Defaults to vm. Changing it replaces the import.
 - `timeouts` (Block, Optional) How long create waits for the import or the catalog download, and how long destroy waits for a guest to stop. (see [below for nested schema](#nestedblock--timeouts))
-- `url` (String) http or https address of an OVA, OVF, or disk image. VergeOS downloads it into the media catalog. The address is stored in state. Changing it replaces the import.
-- `volume` (String) NAS volume key, a 40 character hex string, that holds the OVA or OVF. Changing it replaces the import.
-- `volume_path` (String) Path of the OVA or OVF on volume. Changing it replaces the import.
+- `url` (String) http or https address of an OVA, OVF, or disk image. VergeOS downloads it into the media catalog. The address is stored in state. vm_imports has no url column. Import reads it from the catalog file when that file's description is the one this resource writes for a download. Changing it replaces the import.
+- `volume` (String) NAS volume key, a 40 character hex string, that holds the OVA or OVF. Import reads this from the vm_imports row. Changing it replaces the import.
+- `volume_path` (String) Path of the OVA or OVF on volume. Import reads this from the vm_imports row. An omitted value keeps the stored value. Changing a stored value replaces the import.
 
 ### Read-Only
 
 - `aborted` (Boolean) True when the import was aborted.
-- `adopted` (Boolean) True when a VM with this name already existed and no new import was posted. Destroy does not delete that VM.
+- `adopted` (Boolean) True when a VM with this name already existed and no new import was posted. Destroy does not delete that VM or the vm_imports row. The resource that created the VM still tracks the row.
 - `failed_drive_count` (Number) How many drives VergeOS has already failed.
 - `file_id` (Number) Media-catalog file id used for the import. For target media this is the file the resource created.
 - `id` (String) vm_imports key, a 40 character hex string, or the media file id when target is media.

@@ -52,7 +52,9 @@ data "vergeio_vm_import" "from_ansible" {
 
 `vergeio_vm_export` stores the export configuration for one NAS volume: whether guests are quiesced, whether a current folder is kept, and how many generations to keep. It does not start a run. Destroy removes that row and leaves files that were already written.
 
-Destroy of a VM import removes the import row. It also removes the VM the import created, unless `delete_vm` is false or a VM of that name already existed. A catalog file this resource downloaded is removed when `delete_file` is true. A media import is the file, and destroy always removes it.
+Destroy of a VM import removes the import row and the VM the import created, unless `delete_vm` is false. An import that adopted a VM which already existed deletes neither the VM nor the `vm_imports` row. The resource that created the VM still tracks that row. A catalog file this resource downloaded is removed when `delete_file` is true. A media import is the file, and destroy always removes it.
+
+`terraform import vergeio_vm_import.example <vm_imports_key>` reads the source from that row. `file`, `volume`, `volume_path`, and `shared_object` are columns. `url` is not. A download this resource started is read back from the catalog file, using the description written at download time. An omitted option keeps the value VergeOS stored, so the next plan does not replace the VM.
 
 ## Where Ansible takes over
 
