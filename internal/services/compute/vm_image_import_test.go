@@ -15,7 +15,13 @@ import (
 	"testing"
 	"time"
 
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/verge-io/govergeos"
 
 	"terraform-provider-vergeio/internal/client"
@@ -220,6 +226,9 @@ func TestVMImportURLWaitsForCatalogFile(t *testing.T) {
 	if !data.OwnsFile.ValueBool() || data.FileID.ValueInt64() != 9 || !data.Volume.IsNull() || !data.VolumePath.IsNull() {
 		t.Fatalf("import = %#v", data)
 	}
+	if data.URL.ValueString() != "https://downloads.example.com/alpine.ova" || !data.File.IsNull() {
+		t.Fatalf("url import stored the catalog file as the source: file=%v url=%v", data.File, data.URL)
+	}
 	if err := api.delete(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
@@ -413,11 +422,8 @@ func TestVMImportAdoptedVMStays(t *testing.T) {
 	if err := api.delete(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
-	if deleted["/api/v4/vms/46"] != 0 {
-		t.Fatalf("adopted VM was deleted: %#v", deleted)
-	}
-	if deleted["/api/v4/vm_imports/"+testImportKey] != 1 {
-		t.Fatalf("deleted = %#v", deleted)
+	if len(deleted) != 0 {
+		t.Fatalf("adopted destroy called the API: %#v", deleted)
 	}
 }
 
@@ -524,6 +530,176 @@ func TestVMImportDataSourceReadsCurrentRow(t *testing.T) {
 	}
 }
 
+func TestVMImportReadPopulatesFileSource(t *testing.T) {
+	fileGets := 0
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","vm":46,"file":18,"preserve_macs":false,"preserve_drive_format":true,"preserve_bios_serial":true,"guest_agent_preinstalled":false,"replicate_tags":true,"preferred_tier":"1","no_optical_drives":true,"override_drive_interface":"virtio","override_nic_interface":"e1000"}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/18":
+			fileGets++
+			writeJSON(w, http.StatusOK, `{"$key":18,"name":"guest.ova","description":"catalog","url":"https://downloads.example.com/guest.ova"}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if fileGets != 1 {
+		t.Fatalf("file gets = %d", fileGets)
+	}
+	if data.Name.ValueString() != "guest" || data.File.ValueInt64() != 18 || !data.URL.IsNull() || !data.FileName.IsNull() || !data.Volume.IsNull() || !data.SharedObject.IsNull() {
+		t.Fatalf("source = name %v file %v url %v file_name %v volume %v shared %v", data.Name, data.File, data.URL, data.FileName, data.Volume, data.SharedObject)
+	}
+	if data.PreserveMACs.ValueBool() || !data.PreserveDriveFormat.ValueBool() || !data.PreserveBIOSSerial.ValueBool() || data.GuestAgentPreinstalled.ValueBool() || !data.ReplicateTags.ValueBool() || !data.NoOpticalDrives.ValueBool() {
+		t.Fatalf("flags macs=%v format=%v serial=%v agent=%v tags=%v optical=%v", data.PreserveMACs, data.PreserveDriveFormat, data.PreserveBIOSSerial, data.GuestAgentPreinstalled, data.ReplicateTags, data.NoOpticalDrives)
+	}
+	if data.PreferredTier.ValueString() != "1" || data.OverrideDriveInterface.ValueString() != "virtio" || data.OverrideNICInterface.ValueString() != "e1000" {
+		t.Fatalf("tier=%v drive=%v nic=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface)
+	}
+	if !data.DeleteVM.ValueBool() || !data.DeleteFile.ValueBool() || data.Adopted.ValueBool() || data.OwnsFile.ValueBool() || data.FileID.ValueInt64() != 18 || data.VMID.ValueInt64() != 46 {
+		t.Fatalf("state = %#v", data)
+	}
+}
+
+func TestVMImportReadRestoresDownloadedURL(t *testing.T) {
+	const rawURL = "https://downloads.example.com/guest.ova"
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","vm":46,"file":9,"preserve_macs":false}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"guest.ova","description":"Downloaded for VM import guest","url":"`+rawURL+`"}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.File.IsNull() || data.URL.ValueString() != rawURL || !data.OwnsFile.ValueBool() || data.FileID.ValueInt64() != 9 {
+		t.Fatalf("url=%v file=%v owns=%v file_id=%v", data.URL, data.File, data.OwnsFile, data.FileID)
+	}
+}
+
+func TestVMImportReadVolumeAndSharedObject(t *testing.T) {
+	const sharedKey = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	fileGets := 0
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports" && r.URL.Query().Get("filter") == "id eq '"+testImportKey+"'":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","volume":"`+testVolumeKey+`","volume_path":"images/guest.ova","file":18}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports" && r.URL.Query().Get("filter") == "id eq '"+sharedKey+"'":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+sharedKey+`","id":"`+sharedKey+`","name":"guest","status":"complete","shared_object":8,"file":18}]`)
+		case strings.HasPrefix(r.URL.Path, "/api/v4/files/"):
+			fileGets++
+			http.NotFound(w, r)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	volume := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), volume); err != nil {
+		t.Fatal(err)
+	}
+	if volume.Volume.ValueString() != testVolumeKey || volume.VolumePath.ValueString() != "images/guest.ova" || !volume.File.IsNull() || !volume.URL.IsNull() || !volume.SharedObject.IsNull() {
+		t.Fatalf("volume source = %#v", volume)
+	}
+	shared := &importModel{ID: types.StringValue(sharedKey)}
+	if err := api.read(context.Background(), shared); err != nil {
+		t.Fatal(err)
+	}
+	if shared.SharedObject.ValueInt64() != 8 || !shared.File.IsNull() || !shared.Volume.IsNull() || !shared.VolumePath.IsNull() {
+		t.Fatalf("shared source = %#v", shared)
+	}
+	if fileGets != 0 {
+		t.Fatalf("file gets = %d", fileGets)
+	}
+}
+
+func TestVMImportReadMissingCatalogFileUsesFileID(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","file":18}]`)
+		case r.URL.Path == "/api/v4/files/18":
+			http.NotFound(w, r)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.File.ValueInt64() != 18 || !data.URL.IsNull() || data.OwnsFile.ValueBool() {
+		t.Fatalf("file=%v url=%v owns=%v", data.File, data.URL, data.OwnsFile)
+	}
+}
+
+func TestVMImportReadFileError(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","file":18}]`)
+		case r.URL.Path == "/api/v4/files/18":
+			http.Error(w, "catalog down", http.StatusInternalServerError)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	err := api.read(context.Background(), &importModel{ID: types.StringValue(testImportKey)})
+	if err == nil || !strings.Contains(err.Error(), "catalog down") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestVMImportReadLeaves262FieldsNullOnOlderServer(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/version.json":
+			writeJSON(w, http.StatusOK, `{"version":"26.0.8"}`)
+		case "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","file":18,"preserve_macs":true,"preserve_bios_serial":false}]`)
+		case "/api/v4/files/18":
+			writeJSON(w, http.StatusOK, `{"$key":18,"name":"guest.ova","description":"catalog"}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.PreserveMACs.ValueBool() || !data.PreserveBIOSSerial.IsNull() || !data.GuestAgentPreinstalled.IsNull() || !data.ReplicateTags.IsNull() {
+		t.Fatalf("macs=%v serial=%v agent=%v tags=%v", data.PreserveMACs, data.PreserveBIOSSerial, data.GuestAgentPreinstalled, data.ReplicateTags)
+	}
+}
+
+func TestMediaImportReadRestoresURL(t *testing.T) {
+	const rawURL = "https://downloads.example.com/golden.qcow2"
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/files/9" {
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"golden.qcow2","description":"Downloaded for media import golden","filesize":4096,"preferred_tier":"4","url":"`+rawURL+`"}`)
+			return
+		}
+		writeImportFixture(w, r)
+	})
+	data := &importModel{ID: types.StringValue("9")}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.URL.ValueString() != rawURL || data.PreferredTier.ValueString() != "4" || data.Name.ValueString() != "golden.qcow2" || data.Target.ValueString() != vmImportTargetMedia {
+		t.Fatalf("media = %#v", data)
+	}
+	if !data.DeleteVM.ValueBool() || !data.DeleteFile.ValueBool() || !data.OwnsFile.ValueBool() || !data.FileName.IsNull() {
+		t.Fatalf("media flags = %#v", data)
+	}
+}
+
 func TestOmittedImportOptionsStayNull(t *testing.T) {
 	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v4/vm_imports" {
@@ -581,6 +757,104 @@ func TestVMImportKeeps262FieldsOnOlderServer(t *testing.T) {
 	}
 	if !data.PreserveBIOSSerial.ValueBool() {
 		t.Fatal("26.0 should keep the configured 26.2 field")
+	}
+}
+
+func TestImportStoredAttributesAreComputed(t *testing.T) {
+	resp := &fwresource.SchemaResponse{}
+	NewVMImportResource().Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+	for _, name := range []string{
+		"volume_path",
+		"preserve_macs",
+		"preserve_drive_format",
+		"preserve_bios_serial",
+		"guest_agent_preinstalled",
+		"replicate_tags",
+		"preferred_tier",
+		"no_optical_drives",
+		"override_drive_interface",
+		"override_nic_interface",
+	} {
+		attr, ok := resp.Schema.Attributes[name]
+		if !ok {
+			t.Fatalf("missing %s", name)
+		}
+		computed := false
+		switch a := attr.(type) {
+		case schema.BoolAttribute:
+			computed = a.Computed
+		case schema.StringAttribute:
+			computed = a.Computed
+		default:
+			t.Fatalf("%s has type %T", name, attr)
+		}
+		if !computed {
+			t.Fatalf("%s keeps a stored value when the configuration omits it, so it must be computed", name)
+		}
+	}
+}
+
+func TestImportStoredModifier(t *testing.T) {
+	object := tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}
+	raw := tftypes.NewValue(object, map[string]tftypes.Value{})
+	state := tfsdk.State{Raw: raw}
+	plan := tfsdk.Plan{Raw: raw}
+	kept := &planmodifier.BoolResponse{}
+	importStoredModifier{}.PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolNull(),
+		StateValue:  types.BoolValue(false),
+		State:       state,
+		Plan:        plan,
+	}, kept)
+	if kept.PlanValue.IsNull() || kept.PlanValue.IsUnknown() || kept.PlanValue.ValueBool() {
+		t.Fatalf("omitted flag plan = %#v", kept.PlanValue)
+	}
+	same := &planmodifier.BoolResponse{PlanValue: kept.PlanValue}
+	boolplanmodifier.RequiresReplace().PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolNull(),
+		PlanValue:   kept.PlanValue,
+		StateValue:  types.BoolValue(false),
+		State:       state,
+		Plan:        plan,
+	}, same)
+	if same.RequiresReplace {
+		t.Fatal("an omitted flag must not replace the import")
+	}
+	changed := &planmodifier.BoolResponse{}
+	importStoredModifier{}.PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolValue(true),
+		StateValue:  types.BoolValue(false),
+		State:       state,
+		Plan:        plan,
+	}, changed)
+	replace := &planmodifier.BoolResponse{PlanValue: changed.PlanValue}
+	boolplanmodifier.RequiresReplace().PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolValue(true),
+		PlanValue:   changed.PlanValue,
+		StateValue:  types.BoolValue(false),
+		State:       state,
+		Plan:        plan,
+	}, replace)
+	if !changed.PlanValue.ValueBool() || !replace.RequiresReplace {
+		t.Fatalf("changed plan = %#v replace=%v", changed.PlanValue, replace.RequiresReplace)
+	}
+	tier := &planmodifier.StringResponse{}
+	importStoredModifier{}.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringNull(),
+		StateValue:  types.StringValue("1"),
+		State:       state,
+	}, tier)
+	if tier.PlanValue.ValueString() != "1" {
+		t.Fatalf("omitted tier plan = %#v", tier.PlanValue)
+	}
+	cleared := &planmodifier.StringResponse{}
+	importStoredModifier{}.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringNull(),
+		StateValue:  types.StringNull(),
+		State:       state,
+	}, cleared)
+	if !cleared.PlanValue.IsNull() {
+		t.Fatalf("unset tier plan = %#v", cleared.PlanValue)
 	}
 }
 

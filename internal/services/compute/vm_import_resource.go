@@ -32,8 +32,10 @@ import (
 const vmImportDescription = "Brings an OVA or OVF in as a virtual machine, or a disk image in as a media-catalog file. " +
 	"target vm posts vm_imports and waits until the import finishes. A bare disk image (qcow2, vmdk, vhd, vhdx, raw, img, vdi, iso) is rejected by VergeOS on that table. " +
 	"target media downloads the image into the catalog and waits until the file has a size. Attach that file with vergeio_vm_drive media = \"import\" and media_source set to file_id. " +
-	"Destroy removes the import row. It also removes the VM it created unless delete_vm is false or the VM already existed, and it removes a catalog file this resource downloaded unless delete_file is false. " +
-	"A disk image resource is the file, and destroy always removes that file. " +
+	"Destroy removes the import row and the VM it created, unless delete_vm is false. An import that adopted a VM which already existed deletes neither the VM nor the vm_imports row, so the resource that created the VM can keep tracking that row. " +
+	"It removes a catalog file this resource downloaded unless delete_file is false. A disk image resource is the file, and destroy always removes that file. " +
+	"Import reads file, volume, volume_path, shared_object, and the preserve, tier, and interface options from the vm_imports row. url is not a column on that row. A file this resource downloaded is recognized by its description, and url is read from that catalog file. " +
+	"An omitted option keeps the stored value, so a plan after import does not replace the VM. file_name is not a vm_imports column and is not restored. " +
 	"preserve_bios_serial, guest_agent_preinstalled, and replicate_tags are VergeOS 26.2 fields. On an older system they stay at the configured value because the API does not return them. " +
 	"url is stored in state. Do not put a credential in it. " +
 	"Running a migration, an image pipeline, or a VM export stays with the Ansible collection. vergeio_vm_export only keeps the volume export configuration."
@@ -58,161 +60,202 @@ func (r *vmImportResource) Metadata(ctx context.Context, req resource.MetadataRe
 }
 
 func (r *vmImportResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
+	attrs := vmImportSourceAttributes()
+	for name, attr := range vmImportOptionAttributes() {
+		attrs[name] = attr
+	}
+	for name, attr := range vmImportComputedAttributes() {
+		attrs[name] = attr
+	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: vmImportDescription,
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				MarkdownDescription: "vm_imports key, a 40 character hex string, or the media file id when target is media.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
-			},
-			"name": schema.StringAttribute{
-				MarkdownDescription: "VM name to create, or the catalog file name when target is media and file_name is omitted. Changing it replaces the import.",
-				Required:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
-			},
-			"target": schema.StringAttribute{
-				MarkdownDescription: "vm imports an OVA or OVF as a virtual machine. media downloads a disk image into the media catalog. Defaults to vm. Changing it replaces the import.",
-				Optional:            true,
-				Computed:            true,
-				Default:             stringdefault.StaticString(vmImportTargetVM),
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-				Validators: []validator.String{
-					stringvalidator.OneOf(vmImportTargetVM, vmImportTargetMedia),
-				},
-			},
-			"file": schema.Int64Attribute{
-				MarkdownDescription: "Media-catalog file id of an OVA or OVF that is already on VergeOS. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
-				Validators: []validator.Int64{
-					int64validator.AtLeast(1),
-				},
-			},
-			"url": schema.StringAttribute{
-				MarkdownDescription: "http or https address of an OVA, OVF, or disk image. VergeOS downloads it into the media catalog. The address is stored in state. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"file_name": schema.StringAttribute{
-				MarkdownDescription: "Catalog name for the file downloaded from url. The default for a VM import is the URL's file name. The default for a media import is name. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"volume": schema.StringAttribute{
-				MarkdownDescription: "NAS volume key, a 40 character hex string, that holds the OVA or OVF. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"volume_path": schema.StringAttribute{
-				MarkdownDescription: "Path of the OVA or OVF on volume. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"shared_object": schema.Int64Attribute{
-				MarkdownDescription: "Shared-object id for a tenant import. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
-				Validators: []validator.Int64{
-					int64validator.AtLeast(1),
-				},
-			},
-			"preserve_macs":            importBool("Keep source MAC addresses. Omit to leave the platform default. Changing it replaces the import."),
-			"preserve_drive_format":    importBool("Keep the source disk format. Omit to leave the platform default. Changing it replaces the import."),
-			"preserve_bios_serial":     importBool("Keep the source SMBIOS serial. VergeOS 26.2. Omit to leave the platform default. Changing it replaces the import."),
-			"guest_agent_preinstalled": importBool("Mark the guest agent as already installed. VergeOS 26.2. Omit to leave the platform default. Changing it replaces the import."),
-			"replicate_tags":           importBool("Copy VMware tags and categories onto the imported VM. VergeOS 26.2. Omit to leave the platform default. Changing it replaces the import."),
-			"preferred_tier": schema.StringAttribute{
-				MarkdownDescription: "Storage tier, from 1 through 5. Omit to leave the platform default. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-				Validators: []validator.String{
-					stringvalidator.OneOf("1", "2", "3", "4", "5"),
-				},
-			},
-			"no_optical_drives": importBool("Skip optical drives from an OVA. Omit to leave the platform default. Changing it replaces the import."),
-			"override_drive_interface": schema.StringAttribute{
-				MarkdownDescription: "Drive interface to use instead of the source interface. default leaves the source value. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"override_nic_interface": schema.StringAttribute{
-				MarkdownDescription: "NIC interface to use instead of the source interface. default leaves the source value. Changing it replaces the import.",
-				Optional:            true,
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
-			},
-			"delete_vm": schema.BoolAttribute{
-				MarkdownDescription: "Destroy deletes the VM this import created. A VM that already had this name is left in place. Defaults to true. Has no effect when target is media.",
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(true),
-			},
-			"delete_file": schema.BoolAttribute{
-				MarkdownDescription: "Destroy deletes the catalog file downloaded from url for a VM import. A file passed in file is left in place. Defaults to true. A media import is the file, and destroy always removes it.",
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(true),
-			},
-			"status": schema.StringAttribute{
-				MarkdownDescription: "Import status: initializing, importing, complete, aborted, error, or warning. A media file is complete once it has a size.",
-				Computed:            true,
-			},
-			"status_info": schema.StringAttribute{
-				MarkdownDescription: "Detail VergeOS reported for status.",
-				Computed:            true,
-			},
-			"vm_id": schema.Int64Attribute{
-				MarkdownDescription: "Key of the VM the import created. Null for a media file, and null until VergeOS assigns one.",
-				Computed:            true,
-			},
-			"file_id": schema.Int64Attribute{
-				MarkdownDescription: "Media-catalog file id used for the import. For target media this is the file the resource created.",
-				Computed:            true,
-			},
-			"uuid": schema.StringAttribute{
-				MarkdownDescription: "Source VM UUID reported by VergeOS.",
-				Computed:            true,
-			},
-			"importing": schema.BoolAttribute{
-				MarkdownDescription: "True while VergeOS is still importing.",
-				Computed:            true,
-			},
-			"aborted": schema.BoolAttribute{
-				MarkdownDescription: "True when the import was aborted.",
-				Computed:            true,
-			},
-			"failed_drive_count": schema.Int64Attribute{
-				MarkdownDescription: "How many drives VergeOS has already failed.",
-				Computed:            true,
-			},
-			"adopted": schema.BoolAttribute{
-				MarkdownDescription: "True when a VM with this name already existed and no new import was posted. Destroy does not delete that VM.",
-				Computed:            true,
-			},
-			"owns_file": schema.BoolAttribute{
-				MarkdownDescription: "True when this resource downloaded the catalog file and delete_file may remove it.",
-				Computed:            true,
+		Attributes:          attrs,
+		Blocks:              vmImportTimeoutBlocks(),
+	}
+}
+
+func vmImportSourceAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"id": schema.StringAttribute{
+			MarkdownDescription: "vm_imports key, a 40 character hex string, or the media file id when target is media.",
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
 			},
 		},
-		Blocks: map[string]schema.Block{
-			"timeouts": schema.SingleNestedBlock{
-				MarkdownDescription: "How long create waits for the import or the catalog download, and how long destroy waits for a guest to stop.",
-				Attributes: map[string]schema.Attribute{
-					"create": schema.StringAttribute{
-						MarkdownDescription: "How long create waits. A duration such as \"20m\". Defaults to 10m. A failed import returns as soon as VergeOS reports it.",
-						Optional:            true,
-						Validators:          []validator.String{durationValidator{}},
-					},
-					"delete": schema.StringAttribute{
-						MarkdownDescription: "How long destroy waits after one ACPI poweroff before killing the VM. A duration such as \"2m\". Defaults to 2m.",
-						Optional:            true,
-						Validators:          []validator.String{durationValidator{}},
-					},
+		"name": schema.StringAttribute{
+			MarkdownDescription: "VM name to create, or the catalog file name when target is media and file_name is omitted. Changing it replaces the import.",
+			Required:            true,
+			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			Validators: []validator.String{
+				stringvalidator.LengthAtLeast(1),
+			},
+		},
+		"target": schema.StringAttribute{
+			MarkdownDescription: "vm imports an OVA or OVF as a virtual machine. media downloads a disk image into the media catalog. Defaults to vm. Changing it replaces the import.",
+			Optional:            true,
+			Computed:            true,
+			Default:             stringdefault.StaticString(vmImportTargetVM),
+			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			Validators: []validator.String{
+				stringvalidator.OneOf(vmImportTargetVM, vmImportTargetMedia),
+			},
+		},
+		"file": schema.Int64Attribute{
+			MarkdownDescription: "Media-catalog file id of an OVA or OVF that is already on VergeOS. Import reads this from the vm_imports file column. Changing it replaces the import.",
+			Optional:            true,
+			PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
+			Validators: []validator.Int64{
+				int64validator.AtLeast(1),
+			},
+		},
+		"url": schema.StringAttribute{
+			MarkdownDescription: "http or https address of an OVA, OVF, or disk image. VergeOS downloads it into the media catalog. The address is stored in state. vm_imports has no url column. Import reads it from the catalog file when that file's description is the one this resource writes for a download. Changing it replaces the import.",
+			Optional:            true,
+			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+		},
+		"file_name": schema.StringAttribute{
+			MarkdownDescription: "Catalog name for the file downloaded from url. The default for a VM import is the URL's file name. The default for a media import is name. vm_imports has no file_name column, and import does not restore it. Changing it replaces the import.",
+			Optional:            true,
+			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+		},
+		"volume": schema.StringAttribute{
+			MarkdownDescription: "NAS volume key, a 40 character hex string, that holds the OVA or OVF. Import reads this from the vm_imports row. Changing it replaces the import.",
+			Optional:            true,
+			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
+		},
+		"volume_path": schema.StringAttribute{
+			MarkdownDescription: "Path of the OVA or OVF on volume. Import reads this from the vm_imports row. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				importStoredModifier{},
+				stringplanmodifier.RequiresReplace(),
+			},
+		},
+		"shared_object": schema.Int64Attribute{
+			MarkdownDescription: "Shared-object id for a tenant import. Import reads this from the vm_imports row. Changing it replaces the import.",
+			Optional:            true,
+			PlanModifiers:       []planmodifier.Int64{int64planmodifier.RequiresReplace()},
+			Validators: []validator.Int64{
+				int64validator.AtLeast(1),
+			},
+		},
+	}
+}
+
+func vmImportOptionAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"preserve_macs":            importBool("Keep source MAC addresses. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"preserve_drive_format":    importBool("Keep the source disk format. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"preserve_bios_serial":     importBool("Keep the source SMBIOS serial. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"guest_agent_preinstalled": importBool("Mark the guest agent as already installed. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"replicate_tags":           importBool("Copy VMware tags and categories onto the imported VM. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"preferred_tier": schema.StringAttribute{
+			MarkdownDescription: "Storage tier, from 1 through 5. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				importStoredModifier{},
+				stringplanmodifier.RequiresReplace(),
+			},
+			Validators: []validator.String{
+				stringvalidator.OneOf("1", "2", "3", "4", "5"),
+			},
+		},
+		"no_optical_drives": importBool("Skip optical drives from an OVA. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"override_drive_interface": schema.StringAttribute{
+			MarkdownDescription: "Drive interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				importStoredModifier{},
+				stringplanmodifier.RequiresReplace(),
+			},
+		},
+		"override_nic_interface": schema.StringAttribute{
+			MarkdownDescription: "NIC interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				importStoredModifier{},
+				stringplanmodifier.RequiresReplace(),
+			},
+		},
+		"delete_vm": schema.BoolAttribute{
+			MarkdownDescription: "Destroy deletes the VM this import created. A VM that already had this name is left in place. Defaults to true. Has no effect when target is media.",
+			Optional:            true,
+			Computed:            true,
+			Default:             booldefault.StaticBool(true),
+		},
+		"delete_file": schema.BoolAttribute{
+			MarkdownDescription: "Destroy deletes the catalog file downloaded from url for a VM import. A file passed in file is left in place. Defaults to true. A media import is the file, and destroy always removes it.",
+			Optional:            true,
+			Computed:            true,
+			Default:             booldefault.StaticBool(true),
+		},
+	}
+}
+
+func vmImportComputedAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"status": schema.StringAttribute{
+			MarkdownDescription: "Import status: initializing, importing, complete, aborted, error, or warning. A media file is complete once it has a size.",
+			Computed:            true,
+		},
+		"status_info": schema.StringAttribute{
+			MarkdownDescription: "Detail VergeOS reported for status.",
+			Computed:            true,
+		},
+		"vm_id": schema.Int64Attribute{
+			MarkdownDescription: "Key of the VM the import created. Null for a media file, and null until VergeOS assigns one.",
+			Computed:            true,
+		},
+		"file_id": schema.Int64Attribute{
+			MarkdownDescription: "Media-catalog file id used for the import. For target media this is the file the resource created.",
+			Computed:            true,
+		},
+		"uuid": schema.StringAttribute{
+			MarkdownDescription: "Source VM UUID reported by VergeOS.",
+			Computed:            true,
+		},
+		"importing": schema.BoolAttribute{
+			MarkdownDescription: "True while VergeOS is still importing.",
+			Computed:            true,
+		},
+		"aborted": schema.BoolAttribute{
+			MarkdownDescription: "True when the import was aborted.",
+			Computed:            true,
+		},
+		"failed_drive_count": schema.Int64Attribute{
+			MarkdownDescription: "How many drives VergeOS has already failed.",
+			Computed:            true,
+		},
+		"adopted": schema.BoolAttribute{
+			MarkdownDescription: "True when a VM with this name already existed and no new import was posted. Destroy does not delete that VM or the vm_imports row. The resource that created the VM still tracks the row.",
+			Computed:            true,
+		},
+		"owns_file": schema.BoolAttribute{
+			MarkdownDescription: "True when this resource downloaded the catalog file and delete_file may remove it.",
+			Computed:            true,
+		},
+	}
+}
+
+func vmImportTimeoutBlocks() map[string]schema.Block {
+	return map[string]schema.Block{
+		"timeouts": schema.SingleNestedBlock{
+			MarkdownDescription: "How long create waits for the import or the catalog download, and how long destroy waits for a guest to stop.",
+			Attributes: map[string]schema.Attribute{
+				"create": schema.StringAttribute{
+					MarkdownDescription: "How long create waits. A duration such as \"20m\". Defaults to 10m. A failed import returns as soon as VergeOS reports it.",
+					Optional:            true,
+					Validators:          []validator.String{durationValidator{}},
+				},
+				"delete": schema.StringAttribute{
+					MarkdownDescription: "How long destroy waits after one ACPI poweroff before killing the VM. A duration such as \"2m\". Defaults to 2m.",
+					Optional:            true,
+					Validators:          []validator.String{durationValidator{}},
 				},
 			},
 		},
@@ -223,9 +266,47 @@ func importBool(description string) schema.Attribute {
 	return schema.BoolAttribute{
 		MarkdownDescription: description,
 		Optional:            true,
+		Computed:            true,
 		PlanModifiers: []planmodifier.Bool{
+			importStoredModifier{},
 			boolplanmodifier.RequiresReplace(),
 		},
+	}
+}
+
+type importStoredModifier struct{}
+
+func (importStoredModifier) Description(context.Context) string {
+	return "Keeps a stored value when the configuration omits the attribute. A configured value that differs replaces the import."
+}
+
+func (m importStoredModifier) MarkdownDescription(ctx context.Context) string {
+	return m.Description(ctx)
+}
+
+func (importStoredModifier) PlanModifyString(ctx context.Context, req planmodifier.StringRequest, resp *planmodifier.StringResponse) {
+	switch {
+	case req.ConfigValue.IsUnknown():
+		resp.PlanValue = req.ConfigValue
+	case !req.ConfigValue.IsNull():
+		resp.PlanValue = req.ConfigValue
+	case !req.StateValue.IsNull() && !req.StateValue.IsUnknown():
+		resp.PlanValue = req.StateValue
+	default:
+		resp.PlanValue = types.StringNull()
+	}
+}
+
+func (importStoredModifier) PlanModifyBool(ctx context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	switch {
+	case req.ConfigValue.IsUnknown():
+		resp.PlanValue = req.ConfigValue
+	case !req.ConfigValue.IsNull():
+		resp.PlanValue = req.ConfigValue
+	case !req.StateValue.IsNull() && !req.StateValue.IsUnknown():
+		resp.PlanValue = req.StateValue
+	default:
+		resp.PlanValue = types.BoolNull()
 	}
 }
 

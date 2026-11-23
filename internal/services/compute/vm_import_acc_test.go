@@ -31,6 +31,10 @@ func TestVMImportAcceptanceConfigParses(t *testing.T) {
 	if _, diags := hclsyntax.ParseConfig([]byte(media), "acc.tf", hcl.InitialPos); diags.HasErrors() {
 		t.Fatal(diags.Error())
 	}
+	adopted := testAccVMImportAdoptConfig("tf-acc-vmimport-adopt", "https://downloads.example.com/guest.ova")
+	if _, diags := hclsyntax.ParseConfig([]byte(adopted), "acc.tf", hcl.InitialPos); diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
 }
 
 func TestAccVMImport_OVA(t *testing.T) {
@@ -58,6 +62,86 @@ func TestAccVMImport_OVA(t *testing.T) {
 					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "id"),
 					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "vm_id"),
 					resource.TestCheckResourceAttrPair("data.vergeio_vm_import.test", "vm_id", "vergeio_vm_import.test", "vm_id"),
+				),
+			},
+			{
+				ResourceName:      "vergeio_vm_import.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				// Create leaves an omitted flag null. Import stores the value on
+				// the row. preserve_macs and preferred_tier are configured.
+				ImportStateVerifyIgnore: []string{
+					"timeouts",
+					"preserve_drive_format",
+					"no_optical_drives",
+					"preserve_bios_serial",
+					"guest_agent_preinstalled",
+					"replicate_tags",
+					"override_drive_interface",
+					"override_nic_interface",
+				},
+			},
+		},
+	})
+}
+
+func TestAccVMImport_AdoptDestroy(t *testing.T) {
+	rawURL := os.Getenv("TF_ACC_VERGEIO_OVA_URL")
+	name := acctest.Name("vmimport-adopt")
+	if err := acctest.RequirePrefix(name); err != nil {
+		t.Fatal(err)
+	}
+	var importID, vmID string
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheck(t)
+			if rawURL == "" {
+				t.Skip("set TF_ACC_VERGEIO_OVA_URL to an http or https OVA or OVF to run the live VM import test")
+			}
+		},
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMImportDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccVMImportConfig(name, rawURL),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm_import.test", "adopted", "false"),
+					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "id"),
+					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "vm_id"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_vm_import.test"]
+						if !ok {
+							return fmt.Errorf("vergeio_vm_import.test missing")
+						}
+						importID = rs.Primary.ID
+						vmID = rs.Primary.Attributes["vm_id"]
+						return nil
+					},
+				),
+			},
+			{
+				Config: testAccVMImportAdoptConfig(name, rawURL),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm_import.adopted", "adopted", "true"),
+					resource.TestCheckResourceAttr("vergeio_vm_import.test", "adopted", "false"),
+					resource.TestCheckResourceAttrPair("vergeio_vm_import.adopted", "id", "vergeio_vm_import.test", "id"),
+					resource.TestCheckResourceAttrPair("vergeio_vm_import.adopted", "vm_id", "vergeio_vm_import.test", "vm_id"),
+				),
+			},
+			{
+				Config: testAccVMImportConfig(name, rawURL),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm_import.test", "adopted", "false"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_vm_import.test"]
+						if !ok {
+							return fmt.Errorf("vergeio_vm_import.test missing after adopted destroy")
+						}
+						if rs.Primary.ID != importID || rs.Primary.Attributes["vm_id"] != vmID {
+							return fmt.Errorf("owner changed from import %s vm %s to import %s vm %s", importID, vmID, rs.Primary.ID, rs.Primary.Attributes["vm_id"])
+						}
+						return testAccVMImportStillPresent(rs.Primary.ID, vmID)
+					},
 				),
 			},
 		},
@@ -123,6 +207,17 @@ func testAccCheckVMImportDestroy(s *terraform.State) error {
 					return fmt.Errorf("checking virtual machine %d was destroyed: %w", vmID, err)
 				}
 			}
+			if rs.Primary.Attributes["owns_file"] == "true" {
+				if fileID, convErr := strconv.Atoi(rs.Primary.Attributes["file_id"]); convErr == nil && fileID > 0 {
+					_, err = sdk.Files.Get(ctx, fileID)
+					if err == nil {
+						return fmt.Errorf("catalog file %d downloaded by vm import %s still exists after destroy", fileID, rs.Primary.ID)
+					}
+					if !vergeos.IsNotFoundError(err) {
+						return fmt.Errorf("checking catalog file %d was destroyed: %w", fileID, err)
+					}
+				}
+			}
 			continue
 		}
 		fileID, convErr := strconv.Atoi(rs.Primary.ID)
@@ -160,6 +255,41 @@ data "vergeio_vm_import" "test" {
   id = vergeio_vm_import.test.id
 }
 `, name, rawURL))
+}
+
+func testAccVMImportStillPresent(importID, vmID string) error {
+	sdk, err := acctest.SDKClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	if _, err := sdk.VMImports.Get(ctx, importID); err != nil {
+		return fmt.Errorf("vm import %s after adopted destroy: %w", importID, err)
+	}
+	id, convErr := strconv.Atoi(vmID)
+	if convErr != nil || id <= 0 {
+		return fmt.Errorf("vm id %q", vmID)
+	}
+	if _, err := sdk.VMs.Get(ctx, id); err != nil {
+		return fmt.Errorf("virtual machine %s after adopted destroy: %w", vmID, err)
+	}
+	return nil
+}
+
+func testAccVMImportAdoptConfig(name, rawURL string) string {
+	if err := acctest.RequirePrefix(name); err != nil {
+		panic(err)
+	}
+	return testAccVMImportConfig(name, rawURL) + `
+resource "vergeio_vm_import" "adopted" {
+  name = vergeio_vm_import.test.name
+  file = vergeio_vm_import.test.file_id
+
+  timeouts {
+    create = "20m"
+  }
+}
+`
 }
 
 func testAccVMImportMediaConfig(name, rawURL string) string {
