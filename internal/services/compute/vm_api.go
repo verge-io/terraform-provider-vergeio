@@ -461,6 +461,52 @@ func plannedPowerChange(planned types.Bool, current bool) (change bool, powerOn 
 	return true, desired
 }
 
+// applyPlannedPowerOff powers the VM off when the plan sets powerstate to
+// false and the VM is currently running. This must happen before UpdateVM
+// because VergeOS rejects changes to settings such as cpu_cores while running.
+func (va *VMApi) applyPlannedPowerOff(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) (bool, error) {
+	if planData.PowerState.IsNull() || planData.PowerState.IsUnknown() {
+		return false, nil
+	}
+	if planData.PowerState.ValueBool() {
+		return false, nil
+	}
+
+	currentPowerState, err := va.isVMRunning(ctx, planData.Id.ValueString())
+	if err != nil {
+		return false, err
+	}
+	change, powerOn := plannedPowerChange(planData.PowerState, *currentPowerState)
+	if !change || powerOn {
+		return false, nil
+	}
+
+	if err := va.powerOffVMGracefully(ctx, planData, stateData); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// powerOffVMGracefully requests a graceful poweroff using the timeout and force
+// settings from the plan, and marks powerstate false on stateData when complete.
+func (va *VMApi) powerOffVMGracefully(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
+	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; requesting a graceful poweroff")
+	timeout, err := shutdownTimeoutFromPlan(planData)
+	if err != nil {
+		return err
+	}
+	force := false
+	if !planData.ForcePowerOff.IsNull() && !planData.ForcePowerOff.IsUnknown() {
+		force = planData.ForcePowerOff.ValueBool()
+	}
+	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
+	if err := va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force); err != nil {
+		return err
+	}
+	stateData.PowerState = types.BoolValue(false)
+	return nil
+}
+
 // applyPlannedPowerState powers the VM on or off only when the plan asks
 // for a known powerstate that differs from the VM's current power.
 func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) error {
@@ -486,21 +532,7 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 		return nil
 	}
 
-	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; requesting a graceful poweroff")
-	timeout, err := shutdownTimeoutFromPlan(planData)
-	if err != nil {
-		return err
-	}
-	force := false
-	if !planData.ForcePowerOff.IsNull() && !planData.ForcePowerOff.IsUnknown() {
-		force = planData.ForcePowerOff.ValueBool()
-	}
-	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
-	if err := va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force); err != nil {
-		return err
-	}
-	stateData.PowerState = types.BoolValue(false)
-	return nil
+	return va.powerOffVMGracefully(ctx, planData, stateData)
 }
 
 // deviceAttachAttempts is how many times a hotplugged drive or NIC is read.

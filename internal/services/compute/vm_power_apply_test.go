@@ -54,6 +54,126 @@ func TestUpdatePowersOffWhenMachineIsRunning(t *testing.T) {
 	}
 }
 
+func TestUpdatePowersOffBeforeCPUCoreChange(t *testing.T) {
+	shortenPowerWaits(t)
+
+	var mu sync.Mutex
+	var actions []string
+	var events []string
+	running := true
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v4/vms/7":
+			events = append(events, "update_vm")
+			if running && strings.Contains(string(body), `"cpu_cores"`) {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(`{"error":"CPU cores cannot be changed while the VM is running"}`))
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vms/7":
+			status := "stopped"
+			if running {
+				status = "running"
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"$key":7,"machine":1,"name":"web","cpu_cores":2,"ram":512,"enabled":true,"powerstate":` + boolJSON(running) + `,"running":` + boolJSON(running) + `,"status":"` + status + `"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_actions":
+			actions = append(actions, string(body))
+			if strings.Contains(string(body), `"action":"poweroff"`) {
+				events = append(events, "poweroff")
+				running = false
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/cloudinit_files":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			t.Errorf("unexpected %s %s body %s", r.Method, r.URL.RequestURI(), body)
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	vergeClient := vergeio.NewClient(server.URL, "user", "pass", true)
+	vmResource := &VMResource{
+		vmApi:     mustAPI(NewVMApi(vergeClient)),
+		deviceApi: mustAPI(NewDeviceApi(vergeClient)),
+	}
+
+	schemaResp := &fwresource.SchemaResponse{}
+	vmResource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+
+	stateModel := VMResourceModel{
+		Id:            types.StringValue("7"),
+		Machine:       types.Int32Value(1),
+		Name:          types.StringValue("web"),
+		CPUCores:      types.Int32Value(1),
+		PowerState:    types.BoolValue(true),
+		GuestAgentIPs: types.ListNull(types.StringType),
+	}
+	planModel := stateModel
+	planModel.CPUCores = types.Int32Value(2)
+	planModel.PowerState = types.BoolValue(false)
+
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, &planModel); diags.HasError() {
+		t.Fatalf("plan: %v", diags)
+	}
+	if diags := state.Set(ctx, &stateModel); diags.HasError() {
+		t.Fatalf("state: %v", diags)
+	}
+
+	resp := &fwresource.UpdateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	vmResource.Update(ctx, fwresource.UpdateRequest{
+		Plan:   plan,
+		State:  state,
+		Config: tfsdk.Config(plan),
+	}, resp)
+
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update failed: %v", resp.Diagnostics)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(events) < 2 || events[0] != "poweroff" || events[1] != "update_vm" {
+		t.Fatalf("expected events [poweroff, update_vm], got: %v", events)
+	}
+
+	var got VMResourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("updated state: %v", diags)
+	}
+	if got.CPUCores.ValueInt32() != 2 {
+		t.Fatalf("cpu_cores = %v, want 2", got.CPUCores)
+	}
+	if got.PowerState.ValueBool() != false {
+		t.Fatalf("powerstate = %v, want false", got.PowerState)
+	}
+}
+
 func TestUpdateLeavesARunningVMWhenPlanIsOn(t *testing.T) {
 	shortenPowerWaits(t)
 	// Column says off, machine is running, plan wants on. Do not power-cycle.

@@ -1311,6 +1311,23 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	apiPlan.CloudInitFiles = cloneCloudInitFiles(planData.CloudInitFiles)
 	applyVMWriteOnly(&apiPlan, &stateData, &config)
 
+	// Power off before sending VM settings. VergeOS rejects changes to
+	// settings like cpu_cores while the VM is running, so an apply that
+	// powers the VM off and resizes it must shut down first. Power on
+	// is deferred until after the boot disk sync so a VM started in this
+	// apply boots with that disk.
+	poweredOff, powerOffErr := r.vmApi.applyPlannedPowerOff(ctx, &planData, &stateData)
+	if powerOffErr != nil {
+		resp.Diagnostics.AddError(
+			"Error updating VM power state",
+			powerOffErr.Error(),
+		)
+		return
+	}
+	if poweredOff {
+		time.Sleep(vmUpdateSettle)
+	}
+
 	// Update VM attributes only. Power is applied after the boot disk
 	// sync so a VM started in this apply boots with that disk.
 	// Extra drives and NICs are separate resources. They hotplug when the
@@ -1335,17 +1352,19 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 
 	// Power on only after the boot disk exists. A failed sync skips
 	// the power change so the VM is not started without that disk.
-	if err := r.vmApi.applyPlannedPowerState(ctx, &planData, &stateData); err != nil {
-		resp.Diagnostics.AddError(
-			"Error updating VM power state",
-			err.Error(),
-		)
-		return
+	if !poweredOff {
+		if err := r.vmApi.applyPlannedPowerState(ctx, &planData, &stateData); err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating VM power state",
+				err.Error(),
+			)
+			return
+		}
+		// Pause so a following read can see guest state after a power change.
+		// Tests set vmUpdateSettle to zero. The power helpers already wait
+		// until machine status matches the plan.
+		time.Sleep(vmUpdateSettle)
 	}
-	// Pause so a following read can see guest state after a power change.
-	// Tests set vmUpdateSettle to zero. The power helpers already wait
-	// until machine status matches the plan.
-	time.Sleep(vmUpdateSettle)
 
 	tflog.Debug(ctx, fmt.Sprintf("Updating the devices with the plan data %v", planData.Devices))
 	tflog.Debug(ctx, "Syncing devices ran")
