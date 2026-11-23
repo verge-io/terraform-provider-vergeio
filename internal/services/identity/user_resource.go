@@ -201,10 +201,23 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// Log the id only. The model includes the password.
 	tflog.Debug(ctx, fmt.Sprintf("created a user resource with id %s", data.Id.ValueString()))
 
+	// Store the key before the follow-up read. A canceled read still leaves
+	// the user in state instead of posting the same name again.
+	scrubUserPassword(&data)
+	writeCtx := shared.WritableContext(ctx)
+	resp.Diagnostics.Append(resp.State.Set(writeCtx, &data)...)
+	shared.RememberIdentity(writeCtx, &resp.Diagnostics, resp.Identity, data.Id)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Read data into the model to get all the attributes
 	readDataError := r.userApi.readUser(ctx, &data)
 
 	if readDataError != nil {
+		if shared.InterruptAfterCreate(readDataError, !data.Id.IsNull() && !data.Id.IsUnknown() && data.Id.ValueString() != "") {
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Fetching Data",
 			readDataError.Error(),

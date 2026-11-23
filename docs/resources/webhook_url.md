@@ -18,6 +18,8 @@ Removing this destination also removes its delivery log. [`vergeio_webhook`](web
 
 VergeOS reuses deleted keys, and this table has no stable id, so the provider identifies the row by name. Renaming the destination outside Terraform makes Terraform treat it as deleted, and the next apply creates a new one with the configured name. Rename it through Terraform instead.
 
+An apply that is interrupted after VergeOS stores the destination keeps that key in state. A later create adopts an existing destination with the same name when the configured fields match. A different destination is left in place, and the error includes its key and an import command.
+
 ## Example Usage
 
 ```terraform

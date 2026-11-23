@@ -425,7 +425,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		return err
 	}
 
-	vm, err := va.sdk.VMs.Create(ctx, req)
+	vm, err := va.sdk.VMs.Create(shared.CommitContext(ctx), req)
 	if err != nil {
 		return err
 	}

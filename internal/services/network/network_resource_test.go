@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
@@ -132,8 +133,11 @@ func TestNetworkResource_Schema(t *testing.T) {
 	}
 
 	// Check schema description
-	if resp.Schema.MarkdownDescription != "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network. Create deletes IPsec rows that already point at the new key, so a reused network key does not keep an IPsec configuration from a network that was deleted." {
+	if !strings.Contains(resp.Schema.MarkdownDescription, "Destroy is refused while IPsec or WireGuard rows remain") {
 		t.Errorf("expected description to refuse destroy while VPN rows remain, got '%s'", resp.Schema.MarkdownDescription)
+	}
+	if !strings.Contains(resp.Schema.MarkdownDescription, "keeps that key in state") {
+		t.Errorf("expected description to keep an interrupted create in state, got '%s'", resp.Schema.MarkdownDescription)
 	}
 
 	// need_restart is set by a staged update, so the plan must stay unknown.

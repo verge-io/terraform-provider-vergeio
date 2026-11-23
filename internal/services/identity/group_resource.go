@@ -130,6 +130,9 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 	if err := r.api.readGroup(ctx, &data); err != nil {
+		if shared.InterruptAfterCreate(err, groupIDSet(&data)) {
+			return
+		}
 		resp.Diagnostics.AddError("Error reading group", err.Error())
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"terraform-provider-vergeio/internal/shared"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-const webhookURLDescription = "A destination for VergeOS event notifications. Point it at a chat room, a ticket system, or an automation endpoint. name and url are required. authorization_value_wo is sent when the destination is created and when authorization_value_wo_version changes. Terraform stores the version, not the credential. timeout is seconds from 3 through 120. retries is 0 through 100. Removing this destination also removes its delivery log."
+const webhookURLDescription = "A destination for VergeOS event notifications. Point it at a chat room, a ticket system, or an automation endpoint. name and url are required. authorization_value_wo is sent when the destination is created and when authorization_value_wo_version changes. Terraform stores the version, not the credential. timeout is seconds from 3 through 120. retries is 0 through 100. Removing this destination also removes its delivery log. An apply that is interrupted after VergeOS stores the row keeps that key in state. A later create adopts an existing destination with the same name when the configured fields match. A different destination is left in place, and the error includes its key and an import command."
 
 var (
 	_ resource.Resource                = &webhookURLResource{}
@@ -121,11 +122,14 @@ func (r *webhookURLResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 	if err := r.api.createWebhookURL(ctx, &plan, secret(config.AuthorizationValueWO)); err != nil {
+		// The row exists once its key is known. Keep that key so the next
+		// apply reads it instead of posting the same name again.
+		r.keepWebhookURL(ctx, resp, &plan)
 		resp.Diagnostics.AddError("Error creating webhook destination", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, webhookURLForState(&plan))...)
-	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, plan.ID)
+	resp.Diagnostics.Append(resp.State.Set(shared.WritableContext(ctx), webhookURLForState(&plan))...)
+	shared.RememberIdentity(shared.WritableContext(ctx), &resp.Diagnostics, resp.Identity, plan.ID)
 }
 
 func (r *webhookURLResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -219,12 +223,81 @@ func (a *API) createWebhookURL(ctx context.Context, data *webhookURLModel, crede
 		Timeout:            timeout,
 		Retries:            retries,
 	}
-	created, err := a.sdk.WebhookURLs.Create(ctx, req)
+	created, err := a.sdk.WebhookURLs.Create(shared.CommitContext(ctx), req)
 	if err != nil {
+		if shared.NameConflict(err) {
+			return a.adoptWebhookURL(ctx, data)
+		}
 		return err
 	}
 	applyWebhookURL(data, created, *data)
 	return nil
+}
+
+// adoptWebhookURL stores an existing destination after VergeOS rejected
+// the name. The configured fields have to match. A different destination
+// is left where it is, and the error names the key so it can be imported.
+func (a *API) adoptWebhookURL(ctx context.Context, data *webhookURLModel) error {
+	if data == nil || !knownString(data.Name) {
+		return fmt.Errorf("webhook destination name is empty")
+	}
+	name := data.Name.ValueString()
+	got, err := a.sdk.WebhookURLs.GetByName(ctx, name)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("webhook destination %q is already in use, but no destination with that name was found. Delete the conflicting row in VergeOS, or import it with `terraform import vergeio_webhook_url.<name> <id>`", name)
+		}
+		return fmt.Errorf("webhook destination %q is already in use, and looking it up failed: %w. Delete it in VergeOS, or import it with `terraform import vergeio_webhook_url.<name> <id>`", name, err)
+	}
+	if ok, reason := webhookURLMatches(data, got); !ok {
+		return fmt.Errorf("webhook destination %q already exists with id %d and was not stored because %s. Import it with `terraform import vergeio_webhook_url.<name> %d`, or delete it in VergeOS and apply again", name, got.Key.Int(), reason, got.Key.Int())
+	}
+	applyWebhookURL(data, got, *data)
+	return nil
+}
+
+func webhookURLMatches(plan *webhookURLModel, got *vergeos.WebhookURL) (bool, string) {
+	if plan == nil || got == nil {
+		return false, "the destination was not found"
+	}
+	var diffs []string
+	diffWebhookString("name", plan.Name, got.Name, &diffs)
+	diffWebhookString("url", plan.URL, got.URL, &diffs)
+	diffWebhookString("type", plan.Type, got.Type, &diffs)
+	diffWebhookString("headers", plan.Headers, got.Headers, &diffs)
+	diffWebhookString("authorization_type", plan.AuthorizationType, got.AuthorizationType, &diffs)
+	if !plan.AllowInsecure.IsNull() && !plan.AllowInsecure.IsUnknown() && plan.AllowInsecure.ValueBool() != got.AllowInsecure {
+		diffs = append(diffs, fmt.Sprintf("allow_insecure is %t, configuration is %t", got.AllowInsecure, plan.AllowInsecure.ValueBool()))
+	}
+	if !plan.Timeout.IsNull() && !plan.Timeout.IsUnknown() && plan.Timeout.ValueInt64() != int64(got.Timeout) {
+		diffs = append(diffs, fmt.Sprintf("timeout is %d, configuration is %d", got.Timeout, plan.Timeout.ValueInt64()))
+	}
+	if !plan.Retries.IsNull() && !plan.Retries.IsUnknown() && plan.Retries.ValueInt64() != int64(got.Retries) {
+		diffs = append(diffs, fmt.Sprintf("retries is %d, configuration is %d", got.Retries, plan.Retries.ValueInt64()))
+	}
+	if len(diffs) == 0 {
+		return true, ""
+	}
+	return false, strings.Join(diffs, "; ")
+}
+
+func diffWebhookString(attr string, planned types.String, got string, diffs *[]string) {
+	if planned.IsNull() || planned.IsUnknown() {
+		return
+	}
+	if planned.ValueString() == got {
+		return
+	}
+	*diffs = append(*diffs, fmt.Sprintf("%s is %q, configuration is %q", attr, got, planned.ValueString()))
+}
+
+func (r *webhookURLResource) keepWebhookURL(ctx context.Context, resp *resource.CreateResponse, data *webhookURLModel) {
+	if resp == nil || data == nil || !knownString(data.ID) {
+		return
+	}
+	ctx = shared.WritableContext(ctx)
+	resp.Diagnostics.Append(resp.State.Set(ctx, webhookURLForState(data))...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
 }
 
 func (a *API) readWebhookURL(ctx context.Context, data *webhookURLModel) error {

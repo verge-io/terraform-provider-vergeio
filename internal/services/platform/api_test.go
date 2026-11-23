@@ -1468,7 +1468,7 @@ func (f *platformFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/v4/webhook_urls":
 		f.createURL(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v4/webhook_urls":
-		f.listURLs(w)
+		f.listURLs(w, r)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/send"):
 		f.sendWebhook(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v4/webhook_urls/"):
@@ -1674,6 +1674,15 @@ func (f *platformFake) createURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.mu.Lock()
+	for _, item := range f.urls {
+		if item.Name == req.Name {
+			f.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"err":"Validation error: unique constraint"}`))
+			return
+		}
+	}
 	id := f.next
 	f.next++
 	timeout := 5
@@ -1708,14 +1717,27 @@ func (f *platformFake) createURL(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"$key": id})
 }
 
-func (f *platformFake) listURLs(w http.ResponseWriter) {
+func (f *platformFake) listURLs(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	want := webhookNameFilter(r.URL.Query().Get("filter"))
 	out := make([]vergeos.WebhookURL, 0, len(f.urls))
 	for _, item := range f.urls {
+		if want != "" && item.Name != want {
+			continue
+		}
 		out = append(out, item)
 	}
 	writeJSON(w, out)
+}
+
+func webhookNameFilter(filter string) string {
+	filter = strings.TrimSpace(filter)
+	const prefix = "name eq '"
+	if !strings.HasPrefix(filter, prefix) || !strings.HasSuffix(filter, "'") {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(filter, prefix), "'")
 }
 
 func (f *platformFake) getURL(w http.ResponseWriter, r *http.Request) {
