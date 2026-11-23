@@ -156,8 +156,8 @@ func (a *importAPI) fillImportedSources(ctx context.Context, data *importModel, 
 		}
 		return err
 	}
-	if file != nil && strings.TrimSpace(file.URL) != "" && file.Description == downloadedImportDescription+row.Name {
-		data.URL = types.StringValue(strings.TrimSpace(file.URL))
+	if rawURL, ok := sourceURLFromFile(file, downloadedImportDescription, row.Name); ok {
+		data.URL = types.StringValue(rawURL)
 		data.OwnsFile = types.BoolValue(true)
 		return nil
 	}
@@ -223,16 +223,22 @@ func applyMediaFile(data *importModel, file *vergeos.File) error {
 	data.ID = types.StringValue(strconv.Itoa(file.Key.Int()))
 	data.Target = types.StringValue(vmImportTargetMedia)
 	data.FileID = types.Int64Value(int64(file.Key.Int()))
+	rec := parseDownloadDescription(file.Description, downloadedMediaDescription)
 	if stringSet(name) {
 		data.Name = name
+	} else if rec.urlInDescription {
+		data.Name = types.StringValue(rec.name)
 	} else if file.Name != "" {
 		data.Name = types.StringValue(file.Name)
 	}
-	if stringSet(urlValue) {
+	switch {
+	case stringSet(urlValue):
 		data.URL = urlValue
-	} else if !stringSet(name) && strings.TrimSpace(file.URL) != "" {
+	case !stringSet(name) && rec.urlInDescription:
+		data.URL = types.StringValue(rec.rawURL)
+	case !stringSet(name) && rec.marker && validateImportURL(strings.TrimSpace(file.URL)) == nil:
 		data.URL = types.StringValue(strings.TrimSpace(file.URL))
-	} else {
+	default:
 		data.URL = urlValue
 	}
 	data.FileName = fileName
@@ -484,7 +490,7 @@ func mediaOwned(data *importModel, file *vergeos.File) bool {
 	if stringSet(data.FileName) && file.Name == strings.TrimSpace(data.FileName.ValueString()) {
 		return true
 	}
-	return file.Description == downloadedMediaDescription+name
+	return downloadOwned(file.Description, downloadedMediaDescription, name)
 }
 
 func fileReady(file *vergeos.File) bool {

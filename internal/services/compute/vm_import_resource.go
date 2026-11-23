@@ -34,10 +34,10 @@ const vmImportDescription = "Brings an OVA or OVF in as a virtual machine, or a 
 	"target media downloads the image into the catalog and waits until the file has a size. Attach that file with vergeio_vm_drive media = \"import\" and media_source set to file_id. " +
 	"Destroy removes the import row and the VM it created, unless delete_vm is false. An import that adopted a VM which already existed deletes neither the VM nor the vm_imports row, so the resource that created the VM can keep tracking that row. " +
 	"It removes a catalog file this resource downloaded unless delete_file is false. A disk image resource is the file, and destroy always removes that file. " +
-	"Import reads file, volume, volume_path, shared_object, and the preserve, tier, and interface options from the vm_imports row. url is not a column on that row. A file this resource downloaded is recognized by its description, and url is read from that catalog file. " +
+	"Import reads file, volume, volume_path, shared_object, and the preserve, tier, and interface options from the vm_imports row. url is not a column on that row. files.url is not returned, so a download writes the address on the next line of the catalog file description and import reads that line. " +
 	"An omitted option keeps the stored value, so a plan after import does not replace the VM. file_name is not a vm_imports column and is not restored. " +
 	"preserve_bios_serial, guest_agent_preinstalled, and replicate_tags are VergeOS 26.2 fields. On an older system they stay at the configured value because the API does not return them. " +
-	"url is stored in state. Do not put a credential in it. " +
+	"url is stored in state and on the catalog file description. Do not put a credential in it. " +
 	"Running a migration, an image pipeline, or a VM export stays with the Ansible collection. vergeio_vm_export only keeps the volume export configuration."
 
 var (
@@ -110,7 +110,7 @@ func vmImportSourceAttributes() map[string]schema.Attribute {
 			},
 		},
 		"url": schema.StringAttribute{
-			MarkdownDescription: "http or https address of an OVA, OVF, or disk image. VergeOS downloads it into the media catalog. The address is stored in state. vm_imports has no url column. Import reads it from the catalog file when that file's description is the one this resource writes for a download. Changing it replaces the import.",
+			MarkdownDescription: "http or https address of an OVA, OVF, or disk image. VergeOS downloads it into the media catalog. The address is stored in state and on the next line of the catalog file description, because files.url is not returned. Import reads that line. Changing it replaces the import. Do not put a credential in it.",
 			Optional:            true,
 			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 		},

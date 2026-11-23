@@ -172,7 +172,7 @@ func TestVMImportURLWaitsForCatalogFile(t *testing.T) {
 	var mu sync.Mutex
 	fileGets := 0
 	ready := false
-	var posted string
+	var posted, filePosted string
 	postedEarly := false
 	deleted := map[string]int{}
 	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +180,8 @@ func TestVMImportURLWaitsForCatalogFile(t *testing.T) {
 		defer mu.Unlock()
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/files":
+			body, _ := io.ReadAll(r.Body)
+			filePosted = string(body)
 			writeJSON(w, http.StatusOK, `{"$key":9}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
 			fileGets++
@@ -222,6 +224,9 @@ func TestVMImportURLWaitsForCatalogFile(t *testing.T) {
 	}
 	if !strings.Contains(posted, `"file":9`) || strings.Contains(posted, `"url"`) {
 		t.Fatalf("import body = %s", posted)
+	}
+	if !strings.Contains(filePosted, `"url":"https://downloads.example.com/alpine.ova"`) || !strings.Contains(filePosted, `"description":"Downloaded for VM import guest\nhttps://downloads.example.com/alpine.ova"`) {
+		t.Fatalf("file body = %s", filePosted)
 	}
 	if !data.OwnsFile.ValueBool() || data.FileID.ValueInt64() != 9 || !data.Volume.IsNull() || !data.VolumePath.IsNull() {
 		t.Fatalf("import = %#v", data)
@@ -456,7 +461,7 @@ func TestMediaImportCreate(t *testing.T) {
 	if data.ID.ValueString() != "9" || data.FileID.ValueInt64() != 9 || !data.OwnsFile.ValueBool() || data.Status.ValueString() != "complete" {
 		t.Fatalf("media = %#v", data)
 	}
-	if !strings.Contains(posted, `"name":"golden.qcow2"`) || !strings.Contains(posted, `"url":"https://downloads.example.com/golden.qcow2"`) {
+	if !strings.Contains(posted, `"name":"golden.qcow2"`) || !strings.Contains(posted, `"url":"https://downloads.example.com/golden.qcow2"`) || !strings.Contains(posted, `"description":"Downloaded for media import golden\nhttps://downloads.example.com/golden.qcow2"`) {
 		t.Fatalf("posted = %s", posted)
 	}
 	if strings.Contains(posted, "vm_imports") {
@@ -585,6 +590,67 @@ func TestVMImportReadRestoresDownloadedURL(t *testing.T) {
 	}
 }
 
+func TestVMImportReadRestoresURLFromDescription(t *testing.T) {
+	const rawURL = "https://downloads.example.com/images/guest.ova?token=1"
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","vm":46,"file":9,"preserve_macs":false}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"guest.ova","description":"Downloaded for VM import guest\n`+rawURL+`","filesize":10}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.File.IsNull() || data.URL.ValueString() != rawURL || !data.OwnsFile.ValueBool() || data.FileID.ValueInt64() != 9 {
+		t.Fatalf("url=%v file=%v owns=%v file_id=%v", data.URL, data.File, data.OwnsFile, data.FileID)
+	}
+}
+
+func TestVMImportReadWithoutStoredURLUsesFile(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","vm":46,"file":68}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/68":
+			writeJSON(w, http.StatusOK, `{"$key":68,"name":"guest.ova","description":"Downloaded for VM import guest","filesize":10}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.File.ValueInt64() != 68 || !data.URL.IsNull() || data.OwnsFile.ValueBool() {
+		t.Fatalf("file=%v url=%v owns=%v", data.File, data.URL, data.OwnsFile)
+	}
+}
+
+func TestVMImportReadIgnoresDescriptionForAnotherName(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","file":9}]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"guest.ova","description":"Downloaded for VM import other\nhttps://downloads.example.com/other.ova"}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{ID: types.StringValue(testImportKey)}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.File.ValueInt64() != 9 || !data.URL.IsNull() || data.OwnsFile.ValueBool() {
+		t.Fatalf("file=%v url=%v owns=%v", data.File, data.URL, data.OwnsFile)
+	}
+}
+
 func TestVMImportReadVolumeAndSharedObject(t *testing.T) {
 	const sharedKey = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	fileGets := 0
@@ -697,6 +763,75 @@ func TestMediaImportReadRestoresURL(t *testing.T) {
 	}
 	if !data.DeleteVM.ValueBool() || !data.DeleteFile.ValueBool() || !data.OwnsFile.ValueBool() || !data.FileName.IsNull() {
 		t.Fatalf("media flags = %#v", data)
+	}
+}
+
+func TestMediaImportReadRestoresURLFromDescription(t *testing.T) {
+	const rawURL = "https://downloads.example.com/images/golden.qcow2?token=1"
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/files/9" {
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"golden.qcow2","description":"Downloaded for media import golden\n`+rawURL+`","filesize":4096}`)
+			return
+		}
+		writeImportFixture(w, r)
+	})
+	data := &importModel{ID: types.StringValue("9")}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.URL.ValueString() != rawURL || data.Name.ValueString() != "golden" || !data.File.IsNull() || !data.OwnsFile.ValueBool() || data.Target.ValueString() != vmImportTargetMedia {
+		t.Fatalf("media = %#v", data)
+	}
+}
+
+func TestMediaImportRefreshKeepsDownloadWithURLDescription(t *testing.T) {
+	const rawURL = "https://downloads.example.com/images/golden.qcow2"
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/files/9" {
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"golden.qcow2","description":"Downloaded for media import golden\n`+rawURL+`","filesize":4096,"preferred_tier":"4"}`)
+			return
+		}
+		writeImportFixture(w, r)
+	})
+	data := &importModel{
+		ID:     types.StringValue("9"),
+		Name:   types.StringValue("golden"),
+		Target: types.StringValue(vmImportTargetMedia),
+		URL:    types.StringValue(rawURL),
+	}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.URL.ValueString() != rawURL || data.Name.ValueString() != "golden" || !data.PreferredTier.IsNull() {
+		t.Fatalf("media = %#v", data)
+	}
+}
+
+func TestDownloadDescriptionRejectsLineBreak(t *testing.T) {
+	if _, err := downloadDescription(downloadedImportDescription, "guest\nname", "https://downloads.example.com/guest.ova"); err == nil {
+		t.Fatal("expected a line break in the name to be rejected")
+	}
+	if _, err := downloadDescription(downloadedImportDescription, "guest", "https://downloads.example.com/gue\nst.ova"); err == nil {
+		t.Fatal("expected a line break in the url to be rejected")
+	}
+	got, err := downloadDescription(downloadedMediaDescription, "golden", "https://downloads.example.com/golden.qcow2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := parseDownloadDescription(got, downloadedMediaDescription)
+	if !rec.marker || !rec.urlInDescription || rec.name != "golden" || rec.rawURL != "https://downloads.example.com/golden.qcow2" {
+		t.Fatalf("record = %#v", rec)
+	}
+	plain := parseDownloadDescription("Downloaded for VM import guest", downloadedImportDescription)
+	if !plain.marker || plain.urlInDescription || plain.name != "guest" {
+		t.Fatalf("plain = %#v", plain)
+	}
+	crlf := parseDownloadDescription("Downloaded for VM import guest\r\nhttps://downloads.example.com/guest.ova\r\n", downloadedImportDescription)
+	if !crlf.urlInDescription || crlf.rawURL != "https://downloads.example.com/guest.ova" || crlf.name != "guest" {
+		t.Fatalf("crlf = %#v", crlf)
+	}
+	if downloadOwned("Downloaded for media import golden extra", downloadedMediaDescription, "golden") {
+		t.Fatal("a longer name matched the shorter download")
 	}
 }
 
