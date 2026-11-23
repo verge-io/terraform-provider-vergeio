@@ -127,6 +127,7 @@ func vmImportSourceAttributes() map[string]schema.Attribute {
 		"volume_path": schema.StringAttribute{
 			MarkdownDescription: "Path of the OVA or OVF on volume. Import reads this from the vm_imports row. An omitted value keeps the stored value. Changing a stored value replaces the import.",
 			Optional:            true,
+			Computed:            true,
 			PlanModifiers: []planmodifier.String{
 				importStoredModifier{},
 				stringplanmodifier.RequiresReplace(),
@@ -153,6 +154,7 @@ func vmImportOptionAttributes() map[string]schema.Attribute {
 		"preferred_tier": schema.StringAttribute{
 			MarkdownDescription: "Storage tier, from 1 through 5. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
 			Optional:            true,
+			Computed:            true,
 			PlanModifiers: []planmodifier.String{
 				importStoredModifier{},
 				stringplanmodifier.RequiresReplace(),
@@ -165,6 +167,7 @@ func vmImportOptionAttributes() map[string]schema.Attribute {
 		"override_drive_interface": schema.StringAttribute{
 			MarkdownDescription: "Drive interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
 			Optional:            true,
+			Computed:            true,
 			PlanModifiers: []planmodifier.String{
 				importStoredModifier{},
 				stringplanmodifier.RequiresReplace(),
@@ -173,6 +176,7 @@ func vmImportOptionAttributes() map[string]schema.Attribute {
 		"override_nic_interface": schema.StringAttribute{
 			MarkdownDescription: "NIC interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
 			Optional:            true,
+			Computed:            true,
 			PlanModifiers: []planmodifier.String{
 				importStoredModifier{},
 				stringplanmodifier.RequiresReplace(),
@@ -262,6 +266,7 @@ func importBool(description string) schema.Attribute {
 	return schema.BoolAttribute{
 		MarkdownDescription: description,
 		Optional:            true,
+		Computed:            true,
 		PlanModifiers: []planmodifier.Bool{
 			importStoredModifier{},
 			boolplanmodifier.RequiresReplace(),

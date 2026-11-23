@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -755,6 +757,40 @@ func TestVMImportKeeps262FieldsOnOlderServer(t *testing.T) {
 	}
 	if !data.PreserveBIOSSerial.ValueBool() {
 		t.Fatal("26.0 should keep the configured 26.2 field")
+	}
+}
+
+func TestImportStoredAttributesAreComputed(t *testing.T) {
+	resp := &fwresource.SchemaResponse{}
+	NewVMImportResource().Schema(context.Background(), fwresource.SchemaRequest{}, resp)
+	for _, name := range []string{
+		"volume_path",
+		"preserve_macs",
+		"preserve_drive_format",
+		"preserve_bios_serial",
+		"guest_agent_preinstalled",
+		"replicate_tags",
+		"preferred_tier",
+		"no_optical_drives",
+		"override_drive_interface",
+		"override_nic_interface",
+	} {
+		attr, ok := resp.Schema.Attributes[name]
+		if !ok {
+			t.Fatalf("missing %s", name)
+		}
+		computed := false
+		switch a := attr.(type) {
+		case schema.BoolAttribute:
+			computed = a.Computed
+		case schema.StringAttribute:
+			computed = a.Computed
+		default:
+			t.Fatalf("%s has type %T", name, attr)
+		}
+		if !computed {
+			t.Fatalf("%s keeps a stored value when the configuration omits it, so it must be computed", name)
+		}
 	}
 }
 
