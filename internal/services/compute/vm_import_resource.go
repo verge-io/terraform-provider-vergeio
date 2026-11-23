@@ -35,7 +35,7 @@ const vmImportDescription = "Brings an OVA or OVF in as a virtual machine, or a 
 	"Destroy removes the import row and the VM it created, unless delete_vm is false. An import that adopted a VM which already existed deletes neither the VM nor the vm_imports row, so the resource that created the VM can keep tracking that row. " +
 	"It removes a catalog file this resource downloaded unless delete_file is false. A disk image resource is the file, and destroy always removes that file. " +
 	"Import reads file, volume, volume_path, shared_object, and the preserve, tier, and interface options from the vm_imports row. url is not a column on that row. files.url is not returned, so a download writes the address on the next line of the catalog file description and import reads that line. " +
-	"An omitted option keeps the stored value, so a plan after import does not replace the VM. file_name is not a vm_imports column and is not restored. " +
+	"Create stores the option values VergeOS saved, including a platform default the configuration left out. An omitted option keeps that stored value, and writing the stored value into the configuration does not replace the VM. file_name is not a vm_imports column and is not restored. " +
 	"preserve_bios_serial, guest_agent_preinstalled, and replicate_tags are VergeOS 26.2 fields. On an older system they stay at the configured value because the API does not return them. " +
 	"url is stored in state and on the catalog file description. Do not put a credential in it. " +
 	"Running a migration, an image pipeline, or a VM export stays with the Ansible collection. vergeio_vm_export only keeps the volume export configuration."
@@ -125,7 +125,7 @@ func vmImportSourceAttributes() map[string]schema.Attribute {
 			PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 		},
 		"volume_path": schema.StringAttribute{
-			MarkdownDescription: "Path of the OVA or OVF on volume. Import reads this from the vm_imports row. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			MarkdownDescription: "Path of the OVA or OVF on volume. When volume is set, create and import store the vm_imports value. An omitted value keeps the stored value. Setting the configuration to that stored value does not replace the import. Changing a stored value replaces the import.",
 			Optional:            true,
 			Computed:            true,
 			PlanModifiers: []planmodifier.String{
@@ -146,13 +146,13 @@ func vmImportSourceAttributes() map[string]schema.Attribute {
 
 func vmImportOptionAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
-		"preserve_macs":            importBool("Keep source MAC addresses. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
-		"preserve_drive_format":    importBool("Keep the source disk format. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
-		"preserve_bios_serial":     importBool("Keep the source SMBIOS serial. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
-		"guest_agent_preinstalled": importBool("Mark the guest agent as already installed. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
-		"replicate_tags":           importBool("Copy VMware tags and categories onto the imported VM. VergeOS 26.2. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"preserve_macs":            importBool("Keep source MAC addresses. Omit on create to leave the platform default. " + storedImportOption),
+		"preserve_drive_format":    importBool("Keep the source disk format. Omit on create to leave the platform default. " + storedImportOption),
+		"preserve_bios_serial":     importBool("Keep the source SMBIOS serial. VergeOS 26.2. Omit on create to leave the platform default. " + storedImportOption),
+		"guest_agent_preinstalled": importBool("Mark the guest agent as already installed. VergeOS 26.2. Omit on create to leave the platform default. " + storedImportOption),
+		"replicate_tags":           importBool("Copy VMware tags and categories onto the imported VM. VergeOS 26.2. Omit on create to leave the platform default. " + storedImportOption),
 		"preferred_tier": schema.StringAttribute{
-			MarkdownDescription: "Storage tier, from 1 through 5. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			MarkdownDescription: "Storage tier, from 1 through 5. Omit on create to leave the platform default. " + storedImportOption,
 			Optional:            true,
 			Computed:            true,
 			PlanModifiers: []planmodifier.String{
@@ -163,9 +163,9 @@ func vmImportOptionAttributes() map[string]schema.Attribute {
 				stringvalidator.OneOf("1", "2", "3", "4", "5"),
 			},
 		},
-		"no_optical_drives": importBool("Skip optical drives from an OVA. Omit on create to leave the platform default. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import."),
+		"no_optical_drives": importBool("Skip optical drives from an OVA. Omit on create to leave the platform default. " + storedImportOption),
 		"override_drive_interface": schema.StringAttribute{
-			MarkdownDescription: "Drive interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			MarkdownDescription: "Drive interface to use instead of the source interface. default leaves the source value. " + storedImportOption,
 			Optional:            true,
 			Computed:            true,
 			PlanModifiers: []planmodifier.String{
@@ -174,7 +174,7 @@ func vmImportOptionAttributes() map[string]schema.Attribute {
 			},
 		},
 		"override_nic_interface": schema.StringAttribute{
-			MarkdownDescription: "NIC interface to use instead of the source interface. default leaves the source value. Import stores the vm_imports value. An omitted value keeps the stored value. Changing a stored value replaces the import.",
+			MarkdownDescription: "NIC interface to use instead of the source interface. default leaves the source value. " + storedImportOption,
 			Optional:            true,
 			Computed:            true,
 			PlanModifiers: []planmodifier.String{
@@ -262,6 +262,8 @@ func vmImportTimeoutBlocks() map[string]schema.Block {
 	}
 }
 
+const storedImportOption = "Create and import store the value VergeOS saved. An omitted value keeps the stored value. Setting the configuration to that stored value does not replace the import. Changing a stored value replaces the import."
+
 func importBool(description string) schema.Attribute {
 	return schema.BoolAttribute{
 		MarkdownDescription: description,
@@ -277,7 +279,7 @@ func importBool(description string) schema.Attribute {
 type importStoredModifier struct{}
 
 func (importStoredModifier) Description(context.Context) string {
-	return "Keeps a stored value when the configuration omits the attribute. A configured value that differs replaces the import."
+	return "On create, leaves the value unknown until VergeOS stores it. An omitted value keeps the stored state. A configured value that differs replaces the import."
 }
 
 func (m importStoredModifier) MarkdownDescription(ctx context.Context) string {
@@ -292,6 +294,8 @@ func (importStoredModifier) PlanModifyString(ctx context.Context, req planmodifi
 		resp.PlanValue = req.ConfigValue
 	case !req.StateValue.IsNull() && !req.StateValue.IsUnknown():
 		resp.PlanValue = req.StateValue
+	case req.State.Raw.IsNull():
+		resp.PlanValue = types.StringUnknown()
 	default:
 		resp.PlanValue = types.StringNull()
 	}
@@ -305,6 +309,8 @@ func (importStoredModifier) PlanModifyBool(ctx context.Context, req planmodifier
 		resp.PlanValue = req.ConfigValue
 	case !req.StateValue.IsNull() && !req.StateValue.IsUnknown():
 		resp.PlanValue = req.StateValue
+	case req.State.Raw.IsNull():
+		resp.PlanValue = types.BoolUnknown()
 	default:
 		resp.PlanValue = types.BoolNull()
 	}

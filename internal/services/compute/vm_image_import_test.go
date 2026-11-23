@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
@@ -802,7 +803,7 @@ func TestMediaImportRefreshKeepsDownloadWithURLDescription(t *testing.T) {
 	if err := api.read(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
-	if data.URL.ValueString() != rawURL || data.Name.ValueString() != "golden" || !data.PreferredTier.IsNull() {
+	if data.URL.ValueString() != rawURL || data.Name.ValueString() != "golden" || data.PreferredTier.ValueString() != "4" {
 		t.Fatalf("media = %#v", data)
 	}
 }
@@ -835,10 +836,10 @@ func TestDownloadDescriptionRejectsLineBreak(t *testing.T) {
 	}
 }
 
-func TestOmittedImportOptionsStayNull(t *testing.T) {
+func TestConfiguredImportRefreshStoresOmittedOptions(t *testing.T) {
 	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v4/vm_imports" {
-			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","preferred_tier":"4","override_drive_interface":"virtio","override_nic_interface":"e1000","shared_object":8,"volume":"`+testVolumeKey+`","volume_path":"guest.ova"}]`)
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","preserve_macs":true,"preserve_drive_format":false,"preserve_bios_serial":false,"guest_agent_preinstalled":false,"replicate_tags":true,"no_optical_drives":false,"preferred_tier":"4","override_drive_interface":"virtio","override_nic_interface":"e1000","shared_object":8,"volume":"`+testVolumeKey+`","volume_path":"guest.ova"}]`)
 			return
 		}
 		writeImportFixture(w, r)
@@ -852,8 +853,209 @@ func TestOmittedImportOptionsStayNull(t *testing.T) {
 	if err := api.read(context.Background(), data); err != nil {
 		t.Fatal(err)
 	}
-	if !data.PreferredTier.IsNull() || !data.OverrideDriveInterface.IsNull() || !data.OverrideNICInterface.IsNull() || !data.SharedObject.IsNull() || !data.Volume.IsNull() || !data.VolumePath.IsNull() {
-		t.Fatalf("omitted options were stored from the API: tier=%v drive=%v nic=%v shared=%v volume=%v path=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface, data.SharedObject, data.Volume, data.VolumePath)
+	if !boolIs(data.PreserveMACs, true) || !boolIs(data.PreserveDriveFormat, false) || !boolIs(data.PreserveBIOSSerial, false) || !boolIs(data.GuestAgentPreinstalled, false) || !boolIs(data.ReplicateTags, true) || !boolIs(data.NoOpticalDrives, false) {
+		t.Fatalf("flags macs=%v format=%v serial=%v agent=%v tags=%v optical=%v", data.PreserveMACs, data.PreserveDriveFormat, data.PreserveBIOSSerial, data.GuestAgentPreinstalled, data.ReplicateTags, data.NoOpticalDrives)
+	}
+	if data.PreferredTier.ValueString() != "4" || data.OverrideDriveInterface.ValueString() != "virtio" || data.OverrideNICInterface.ValueString() != "e1000" {
+		t.Fatalf("tier=%v drive=%v nic=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface)
+	}
+	if !data.SharedObject.IsNull() || !data.Volume.IsNull() || !data.VolumePath.IsNull() || data.File.ValueInt64() != 12 {
+		t.Fatalf("file source changed: shared=%v volume=%v path=%v file=%v", data.SharedObject, data.Volume, data.VolumePath, data.File)
+	}
+	object := tftypes.Object{AttributeTypes: map[string]tftypes.Type{}}
+	raw := tftypes.NewValue(object, map[string]tftypes.Value{})
+	state := tfsdk.State{Raw: raw}
+	plan := tfsdk.Plan{Raw: raw}
+	kept := &planmodifier.BoolResponse{}
+	importStoredModifier{}.PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolValue(true),
+		StateValue:  data.PreserveMACs,
+		State:       state,
+		Plan:        plan,
+	}, kept)
+	same := &planmodifier.BoolResponse{PlanValue: kept.PlanValue}
+	boolplanmodifier.RequiresReplace().PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolValue(true),
+		PlanValue:   kept.PlanValue,
+		StateValue:  data.PreserveMACs,
+		State:       state,
+		Plan:        plan,
+	}, same)
+	if !kept.PlanValue.ValueBool() || same.RequiresReplace {
+		t.Fatalf("stored preserve_macs plan = %#v replace=%v", kept.PlanValue, same.RequiresReplace)
+	}
+	tier := &planmodifier.StringResponse{}
+	importStoredModifier{}.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringValue("4"),
+		StateValue:  data.PreferredTier,
+		State:       state,
+		Plan:        plan,
+	}, tier)
+	tierReplace := &planmodifier.StringResponse{PlanValue: tier.PlanValue}
+	stringplanmodifier.RequiresReplace().PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringValue("4"),
+		PlanValue:   tier.PlanValue,
+		StateValue:  data.PreferredTier,
+		State:       state,
+		Plan:        plan,
+	}, tierReplace)
+	if tier.PlanValue.ValueString() != "4" || tierReplace.RequiresReplace {
+		t.Fatalf("stored tier plan = %#v replace=%v", tier.PlanValue, tierReplace.RequiresReplace)
+	}
+}
+
+func TestVMImportCreateStoresOmittedOptions(t *testing.T) {
+	var posted string
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vm_imports":
+			body, _ := io.ReadAll(r.Body)
+			posted = string(body)
+			writeJSON(w, http.StatusOK, `{"$key":"`+testImportKey+`"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","vm":46,"file":18,"preserve_macs":true,"preserve_drive_format":false,"preserve_bios_serial":true,"guest_agent_preinstalled":false,"replicate_tags":false,"preferred_tier":"4","no_optical_drives":false,"override_nic_interface":"virtio","volume_path":"guest.ova"}]`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{
+		Name:                   types.StringValue("guest"),
+		Target:                 types.StringValue(vmImportTargetVM),
+		File:                   types.Int64Value(18),
+		PreserveMACs:           types.BoolUnknown(),
+		PreserveDriveFormat:    types.BoolUnknown(),
+		PreserveBIOSSerial:     types.BoolUnknown(),
+		GuestAgentPreinstalled: types.BoolUnknown(),
+		ReplicateTags:          types.BoolUnknown(),
+		NoOpticalDrives:        types.BoolUnknown(),
+		PreferredTier:          types.StringUnknown(),
+		OverrideDriveInterface: types.StringUnknown(),
+		OverrideNICInterface:   types.StringUnknown(),
+		VolumePath:             types.StringUnknown(),
+		DeleteVM:               types.BoolValue(true),
+		DeleteFile:             types.BoolValue(true),
+	}
+	if err := api.create(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(posted, "preserve_macs") || strings.Contains(posted, "preferred_tier") || strings.Contains(posted, "override_nic_interface") {
+		t.Fatalf("omitted options were posted: %s", posted)
+	}
+	if !boolIs(data.PreserveMACs, true) || !boolIs(data.PreserveDriveFormat, false) || !boolIs(data.PreserveBIOSSerial, true) || !boolIs(data.GuestAgentPreinstalled, false) || !boolIs(data.ReplicateTags, false) || !boolIs(data.NoOpticalDrives, false) {
+		t.Fatalf("flags macs=%v format=%v serial=%v agent=%v tags=%v optical=%v", data.PreserveMACs, data.PreserveDriveFormat, data.PreserveBIOSSerial, data.GuestAgentPreinstalled, data.ReplicateTags, data.NoOpticalDrives)
+	}
+	if data.PreferredTier.ValueString() != "4" || !data.OverrideDriveInterface.IsNull() || data.OverrideNICInterface.ValueString() != "virtio" {
+		t.Fatalf("tier=%v drive=%v nic=%v", data.PreferredTier, data.OverrideDriveInterface, data.OverrideNICInterface)
+	}
+	if !data.VolumePath.IsNull() || !data.Volume.IsNull() || data.File.ValueInt64() != 18 {
+		t.Fatalf("file source stored volume path=%v volume=%v file=%v", data.VolumePath, data.Volume, data.File)
+	}
+}
+
+func TestConfiguredVolumeImportStoresOmittedPath(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/vm_imports" {
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","volume":"`+testVolumeKey+`","volume_path":"images/guest.ova","preferred_tier":"1"}]`)
+			return
+		}
+		writeImportFixture(w, r)
+	})
+	data := &importModel{
+		ID:     types.StringValue(testImportKey),
+		Name:   types.StringValue("guest"),
+		Target: types.StringValue(vmImportTargetVM),
+		Volume: types.StringValue(testVolumeKey),
+	}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Volume.ValueString() != testVolumeKey || data.VolumePath.ValueString() != "images/guest.ova" || data.PreferredTier.ValueString() != "1" || !data.File.IsNull() {
+		t.Fatalf("volume source = volume %v path %v tier %v file %v", data.Volume, data.VolumePath, data.PreferredTier, data.File)
+	}
+}
+
+func TestConfiguredImportLeaves262FieldsNullOnOlderServer(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/version.json":
+			writeJSON(w, http.StatusOK, `{"version":"26.0.8"}`)
+		case "/api/v4/vm_imports":
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","file":18,"preserve_macs":true,"preserve_bios_serial":false,"preferred_tier":"4"}]`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{
+		ID:     types.StringValue(testImportKey),
+		Name:   types.StringValue("guest"),
+		Target: types.StringValue(vmImportTargetVM),
+		File:   types.Int64Value(18),
+	}
+	if err := api.read(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if !data.PreserveMACs.ValueBool() || data.PreferredTier.ValueString() != "4" || !data.PreserveBIOSSerial.IsNull() || !data.GuestAgentPreinstalled.IsNull() || !data.ReplicateTags.IsNull() {
+		t.Fatalf("macs=%v tier=%v serial=%v agent=%v tags=%v", data.PreserveMACs, data.PreferredTier, data.PreserveBIOSSerial, data.GuestAgentPreinstalled, data.ReplicateTags)
+	}
+}
+
+func TestVMImportUpdateLeavesOmittedOptionNull(t *testing.T) {
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/vm_imports" {
+			writeJSON(w, http.StatusOK, `[{"$key":"`+testImportKey+`","id":"`+testImportKey+`","name":"guest","status":"complete","preserve_macs":true,"preferred_tier":"4"}]`)
+			return
+		}
+		writeImportFixture(w, r)
+	})
+	state := &importModel{
+		ID:         types.StringValue(testImportKey),
+		Name:       types.StringValue("guest"),
+		Target:     types.StringValue(vmImportTargetVM),
+		File:       types.Int64Value(18),
+		DeleteVM:   types.BoolValue(true),
+		DeleteFile: types.BoolValue(true),
+	}
+	plan := *state
+	plan.DeleteVM = types.BoolValue(false)
+	if err := api.update(context.Background(), &plan, state); err != nil {
+		t.Fatal(err)
+	}
+	if !plan.PreserveMACs.IsNull() || !plan.PreferredTier.IsNull() || plan.DeleteVM.ValueBool() {
+		t.Fatalf("update stored omitted options: macs=%v tier=%v delete_vm=%v", plan.PreserveMACs, plan.PreferredTier, plan.DeleteVM)
+	}
+}
+
+func TestMediaImportCreateStoresOmittedTier(t *testing.T) {
+	var posted string
+	api := newImportTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/files":
+			body, _ := io.ReadAll(r.Body)
+			posted = string(body)
+			writeJSON(w, http.StatusOK, `{"$key":9}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/files/9":
+			writeJSON(w, http.StatusOK, `{"$key":9,"name":"golden.qcow2","description":"Downloaded for media import golden","filesize":4096,"preferred_tier":"4"}`)
+		default:
+			writeImportFixture(w, r)
+		}
+	})
+	data := &importModel{
+		Name:          types.StringValue("golden"),
+		Target:        types.StringValue(vmImportTargetMedia),
+		URL:           types.StringValue("https://downloads.example.com/golden.qcow2"),
+		PreferredTier: types.StringUnknown(),
+		PreserveMACs:  types.BoolUnknown(),
+		DeleteVM:      types.BoolValue(true),
+		DeleteFile:    types.BoolValue(true),
+	}
+	if err := api.create(context.Background(), data); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(posted, `"preferred_tier":"4"`) {
+		t.Fatalf("omitted tier was posted: %s", posted)
+	}
+	if data.PreferredTier.ValueString() != "4" || !data.PreserveMACs.IsNull() || data.PreserveMACs.IsUnknown() {
+		t.Fatalf("tier=%v macs=%v", data.PreferredTier, data.PreserveMACs)
 	}
 }
 
@@ -991,6 +1193,45 @@ func TestImportStoredModifier(t *testing.T) {
 	if !cleared.PlanValue.IsNull() {
 		t.Fatalf("unset tier plan = %#v", cleared.PlanValue)
 	}
+	nullState := tfsdk.State{Raw: tftypes.NewValue(object, nil)}
+	created := &planmodifier.StringResponse{}
+	importStoredModifier{}.PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringNull(),
+		StateValue:  types.StringNull(),
+		State:       nullState,
+	}, created)
+	if !created.PlanValue.IsUnknown() {
+		t.Fatalf("create tier plan = %#v", created.PlanValue)
+	}
+	createReplace := &planmodifier.StringResponse{PlanValue: created.PlanValue}
+	stringplanmodifier.RequiresReplace().PlanModifyString(context.Background(), planmodifier.StringRequest{
+		ConfigValue: types.StringNull(),
+		PlanValue:   created.PlanValue,
+		StateValue:  types.StringNull(),
+		State:       nullState,
+		Plan:        tfsdk.Plan{Raw: tftypes.NewValue(object, nil)},
+	}, createReplace)
+	if createReplace.RequiresReplace {
+		t.Fatal("create must not replace the import")
+	}
+	sameBool := &planmodifier.BoolResponse{}
+	importStoredModifier{}.PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolValue(false),
+		StateValue:  types.BoolValue(false),
+		State:       state,
+		Plan:        plan,
+	}, sameBool)
+	sameReplace := &planmodifier.BoolResponse{PlanValue: sameBool.PlanValue}
+	boolplanmodifier.RequiresReplace().PlanModifyBool(context.Background(), planmodifier.BoolRequest{
+		ConfigValue: types.BoolValue(false),
+		PlanValue:   sameBool.PlanValue,
+		StateValue:  types.BoolValue(false),
+		State:       state,
+		Plan:        plan,
+	}, sameReplace)
+	if sameBool.PlanValue.ValueBool() || sameReplace.RequiresReplace {
+		t.Fatalf("stored false plan = %#v replace=%v", sameBool.PlanValue, sameReplace.RequiresReplace)
+	}
 }
 
 func TestVMImportImportState(t *testing.T) {
@@ -1113,6 +1354,10 @@ func writeImportFixture(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func boolIs(v types.Bool, want bool) bool {
+	return !v.IsNull() && !v.IsUnknown() && v.ValueBool() == want
 }
 
 func writeJSON(w http.ResponseWriter, status int, body string) {

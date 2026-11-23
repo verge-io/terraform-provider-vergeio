@@ -19,7 +19,7 @@ import (
 	"github.com/verge-io/govergeos"
 )
 
-func (a *importAPI) applyVMImport(ctx context.Context, data *importModel, row *vergeos.VMImport) error {
+func (a *importAPI) applyVMImport(ctx context.Context, data *importModel, row *vergeos.VMImport, fillOmitted bool) error {
 	if row == nil {
 		return fmt.Errorf("vm import read returned no row")
 	}
@@ -65,7 +65,7 @@ func (a *importAPI) applyVMImport(ctx context.Context, data *importModel, row *v
 	if !stringSet(inputs.Name) {
 		return a.applyImportedVMImport(ctx, data, row, inputs, newer)
 	}
-	applyConfiguredVMImport(data, row, inputs, newer)
+	applyConfiguredVMImport(data, row, inputs, newer, fillOmitted)
 	return nil
 }
 
@@ -96,18 +96,19 @@ func (a *importAPI) applyImportedVMImport(ctx context.Context, data *importModel
 	return nil
 }
 
-func applyConfiguredVMImport(data *importModel, row *vergeos.VMImport, inputs importModel, newer bool) {
-	data.PreserveMACs = mergeBool(inputs.PreserveMACs, row.PreserveMACs, true)
-	data.PreserveDriveFormat = mergeBool(inputs.PreserveDriveFormat, row.PreserveDriveFormat, true)
-	data.PreserveBIOSSerial = mergeBool(inputs.PreserveBIOSSerial, row.PreserveBIOSSerial, newer)
-	data.GuestAgentPreinstalled = mergeBool(inputs.GuestAgentPreinstalled, row.GuestAgentPreinstalled, newer)
-	data.ReplicateTags = mergeBool(inputs.ReplicateTags, row.ReplicateTags, newer)
-	data.NoOpticalDrives = mergeBool(inputs.NoOpticalDrives, row.NoOpticalDrives, true)
-	data.PreferredTier = mergeString(inputs.PreferredTier, row.PreferredTier)
-	data.OverrideDriveInterface = mergeString(inputs.OverrideDriveInterface, row.OverrideDriveInterface)
-	data.OverrideNICInterface = mergeString(inputs.OverrideNICInterface, row.OverrideNICInterface)
-	data.Volume = mergeString(inputs.Volume, row.Volume)
-	data.VolumePath = mergeString(inputs.VolumePath, row.VolumePath)
+func applyConfiguredVMImport(data *importModel, row *vergeos.VMImport, inputs importModel, newer, fillOmitted bool) {
+	data.PreserveMACs = mergeBool(inputs.PreserveMACs, row.PreserveMACs, true, fillOmitted)
+	data.PreserveDriveFormat = mergeBool(inputs.PreserveDriveFormat, row.PreserveDriveFormat, true, fillOmitted)
+	data.PreserveBIOSSerial = mergeBool(inputs.PreserveBIOSSerial, row.PreserveBIOSSerial, newer, fillOmitted)
+	data.GuestAgentPreinstalled = mergeBool(inputs.GuestAgentPreinstalled, row.GuestAgentPreinstalled, newer, fillOmitted)
+	data.ReplicateTags = mergeBool(inputs.ReplicateTags, row.ReplicateTags, newer, fillOmitted)
+	data.NoOpticalDrives = mergeBool(inputs.NoOpticalDrives, row.NoOpticalDrives, true, fillOmitted)
+	data.PreferredTier = mergeString(inputs.PreferredTier, row.PreferredTier, fillOmitted)
+	data.OverrideDriveInterface = mergeString(inputs.OverrideDriveInterface, row.OverrideDriveInterface, fillOmitted)
+	data.OverrideNICInterface = mergeString(inputs.OverrideNICInterface, row.OverrideNICInterface, fillOmitted)
+	data.Volume = mergeString(inputs.Volume, row.Volume, false)
+	// Import keeps volume_path only when volume is the source.
+	data.VolumePath = mergeString(inputs.VolumePath, row.VolumePath, fillOmitted && stringSet(inputs.Volume))
 	data.URL = inputs.URL
 	data.FileName = inputs.FileName
 	data.File = inputs.File
@@ -208,7 +209,7 @@ func (a *importAPI) applyImportData(ctx context.Context, data *importDataModel, 
 	return nil
 }
 
-func applyMediaFile(data *importModel, file *vergeos.File) error {
+func applyMediaFile(data *importModel, file *vergeos.File, fillOmitted bool) error {
 	if data == nil || file == nil || file.Key.Int() <= 0 {
 		return fmt.Errorf("media file read returned no file")
 	}
@@ -242,10 +243,11 @@ func applyMediaFile(data *importModel, file *vergeos.File) error {
 		data.URL = urlValue
 	}
 	data.FileName = fileName
+	fillTier := fillOmitted || !stringSet(name)
 	if !stringSet(name) && strings.TrimSpace(file.PreferredTier) != "" && (tier.IsNull() || tier.IsUnknown()) {
 		data.PreferredTier = types.StringValue(strings.TrimSpace(file.PreferredTier))
 	} else {
-		data.PreferredTier = mergeString(tier, file.PreferredTier)
+		data.PreferredTier = mergeString(tier, file.PreferredTier, fillTier)
 	}
 	data.Status = types.StringValue("complete")
 	data.StatusInfo = types.StringNull()
@@ -267,6 +269,7 @@ func applyMediaFile(data *importModel, file *vergeos.File) error {
 	data.Volume = types.StringNull()
 	data.VolumePath = types.StringNull()
 	data.SharedObject = types.Int64Null()
+	data.clearUnknownVMOptions()
 	return nil
 }
 
@@ -581,32 +584,6 @@ func overrideOrEmpty(v types.String) string {
 		return ""
 	}
 	return text
-}
-
-func mergeBool(config types.Bool, api, trustAPI bool) types.Bool {
-	if config.IsNull() || config.IsUnknown() {
-		return types.BoolNull()
-	}
-	if !trustAPI {
-		return config
-	}
-	return types.BoolValue(api)
-}
-
-func mergeString(config types.String, api string) types.String {
-	// An omitted optional attribute stays null. Copying a platform default
-	// into state fails the apply consistency check, because the plan value
-	// was null and the attribute is not computed.
-	if config.IsNull() || config.IsUnknown() {
-		return types.StringNull()
-	}
-	if strings.TrimSpace(api) != "" {
-		return types.StringValue(api)
-	}
-	if strings.TrimSpace(config.ValueString()) == "" {
-		return types.StringNull()
-	}
-	return config
 }
 
 func boolOr(v types.Bool, fallback bool) types.Bool {

@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/verge-io/govergeos"
 
@@ -33,6 +34,14 @@ func TestVMImportAcceptanceConfigParses(t *testing.T) {
 	}
 	adopted := testAccVMImportAdoptConfig("tf-acc-vmimport-adopt", "https://downloads.example.com/guest.ova")
 	if _, diags := hclsyntax.ParseConfig([]byte(adopted), "acc.tf", hcl.InitialPos); diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	omitted := testAccVMImportOmittedConfig("tf-acc-vmimport-opt", "https://downloads.example.com/guest.ova")
+	if _, diags := hclsyntax.ParseConfig([]byte(omitted), "acc.tf", hcl.InitialPos); diags.HasErrors() {
+		t.Fatal(diags.Error())
+	}
+	stored := testAccVMImportStoredOptionConfig("tf-acc-vmimport-opt", "https://downloads.example.com/guest.ova")
+	if _, diags := hclsyntax.ParseConfig([]byte(stored), "acc.tf", hcl.InitialPos); diags.HasErrors() {
 		t.Fatal(diags.Error())
 	}
 }
@@ -65,21 +74,10 @@ func TestAccVMImport_OVA(t *testing.T) {
 				),
 			},
 			{
-				ResourceName:      "vergeio_vm_import.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-				// Create leaves an omitted flag null. Import stores the value on
-				// the row. preserve_macs and preferred_tier are configured.
-				ImportStateVerifyIgnore: []string{
-					"timeouts",
-					"preserve_drive_format",
-					"no_optical_drives",
-					"preserve_bios_serial",
-					"guest_agent_preinstalled",
-					"replicate_tags",
-					"override_drive_interface",
-					"override_nic_interface",
-				},
+				ResourceName:            "vergeio_vm_import.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"timeouts"},
 			},
 		},
 	})
@@ -148,6 +146,74 @@ func TestAccVMImport_AdoptDestroy(t *testing.T) {
 	})
 }
 
+func TestAccVMImport_StoredOption(t *testing.T) {
+	rawURL := os.Getenv("TF_ACC_VERGEIO_OVA_URL")
+	name := acctest.Name("vmimport-opt")
+	if err := acctest.RequirePrefix(name); err != nil {
+		t.Fatal(err)
+	}
+	var preserveMacs, tier string
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheck(t)
+			if rawURL == "" {
+				t.Skip("set TF_ACC_VERGEIO_OVA_URL to an http or https OVA or OVF to run the live VM import test")
+			}
+		},
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMImportDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: testAccVMImportOmittedConfig(name, rawURL),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "preserve_macs"),
+					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "preferred_tier"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_vm_import.test"]
+						if !ok {
+							return fmt.Errorf("vergeio_vm_import.test missing")
+						}
+						preserveMacs = rs.Primary.Attributes["preserve_macs"]
+						tier = rs.Primary.Attributes["preferred_tier"]
+						switch preserveMacs {
+						case "true", "false":
+						default:
+							return fmt.Errorf("preserve_macs = %q", preserveMacs)
+						}
+						switch tier {
+						case "1", "2", "3", "4", "5":
+						default:
+							return fmt.Errorf("preferred_tier = %q", tier)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				ResourceName:            "vergeio_vm_import.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"timeouts"},
+			},
+			{
+				PreConfig: func() {
+					if preserveMacs == "" || tier == "" {
+						t.Fatal("create did not store preserve_macs and preferred_tier")
+					}
+					t.Setenv("TF_VAR_preserve_macs", preserveMacs)
+					t.Setenv("TF_VAR_preferred_tier", tier)
+				},
+				Config: testAccVMImportStoredOptionConfig(name, rawURL),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
 func TestAccVMImport_Disk(t *testing.T) {
 	rawURL := os.Getenv("TF_ACC_VERGEIO_DISK_URL")
 	name := acctest.Name("media")
@@ -175,15 +241,10 @@ func TestAccVMImport_Disk(t *testing.T) {
 				),
 			},
 			{
-				ResourceName:      "vergeio_vm_import.test",
-				ImportState:       true,
-				ImportStateVerify: true,
-				// Create leaves an omitted tier null. Import stores the tier on
-				// the catalog file. The plan keeps an omitted value.
-				ImportStateVerifyIgnore: []string{
-					"timeouts",
-					"preferred_tier",
-				},
+				ResourceName:            "vergeio_vm_import.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"timeouts"},
 			},
 		},
 	})
@@ -302,6 +363,48 @@ resource "vergeio_vm_import" "adopted" {
   }
 }
 `
+}
+
+func testAccVMImportOmittedConfig(name, rawURL string) string {
+	if err := acctest.RequirePrefix(name); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_vm_import" "test" {
+  name = %q
+  url  = %q
+
+  timeouts {
+    create = "20m"
+  }
+}
+`, name, rawURL))
+}
+
+func testAccVMImportStoredOptionConfig(name, rawURL string) string {
+	if err := acctest.RequirePrefix(name); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+variable "preserve_macs" {
+  type = bool
+}
+
+variable "preferred_tier" {
+  type = string
+}
+
+resource "vergeio_vm_import" "test" {
+  name           = %q
+  url            = %q
+  preserve_macs  = var.preserve_macs
+  preferred_tier = var.preferred_tier
+
+  timeouts {
+    create = "20m"
+  }
+}
+`, name, rawURL))
 }
 
 func testAccVMImportMediaConfig(name, rawURL string) string {

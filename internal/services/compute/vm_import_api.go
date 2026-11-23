@@ -279,7 +279,7 @@ func (a *importAPI) createMedia(ctx context.Context, data *importModel) error {
 		data.ID = types.StringNull()
 		return err
 	}
-	return applyMediaFile(data, ready)
+	return applyMediaFile(data, ready, true)
 }
 
 func (a *importAPI) createVMImport(ctx context.Context, data *importModel) error {
@@ -349,7 +349,7 @@ func (a *importAPI) createVMImport(ctx context.Context, data *importModel) error
 	data.Target = types.StringValue(vmImportTargetVM)
 	if created.AlreadyExisted {
 		tflog.Debug(ctx, fmt.Sprintf("VM %s already exists; using import %s", req.Name, key))
-		return a.readVMImport(ctx, data, key)
+		return a.readVMImport(ctx, data, key, true)
 	}
 	return a.waitForCreatedImport(ctx, data, key, deadline, timeout)
 }
@@ -374,60 +374,11 @@ func (a *importAPI) waitForCreatedImport(ctx context.Context, data *importModel,
 		data.ID = types.StringNull()
 		return err
 	}
-	return a.applyVMImport(ctx, data, finished)
+	return a.applyVMImport(ctx, data, finished, true)
 }
 
 func (a *importAPI) read(ctx context.Context, data *importModel) error {
-	if data == nil {
-		return fmt.Errorf("vm import is missing")
-	}
-	id := strings.TrimSpace(data.ID.ValueString())
-	if id == "" {
-		return fmt.Errorf("vm import id is empty")
-	}
-	target := ""
-	if !data.Target.IsNull() && !data.Target.IsUnknown() {
-		target = data.Target.ValueString()
-	}
-	if hexKeyPattern.MatchString(id) {
-		if target == vmImportTargetMedia {
-			return fmt.Errorf("vm import %s is a vm_imports key and target is media", id)
-		}
-		return a.readVMImport(ctx, data, id)
-	}
-	fileID, err := strconv.Atoi(id)
-	if err != nil || fileID <= 0 {
-		return fmt.Errorf("vm import id %q is not a vm_imports key or a media file id", id)
-	}
-	if target == vmImportTargetVM {
-		return fmt.Errorf("vm import %s is a media file id and target is vm", id)
-	}
-	return a.readMedia(ctx, data, fileID)
-}
-
-func (a *importAPI) readVMImport(ctx context.Context, data *importModel, id string) error {
-	row, err := a.sdk.VMImports.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if row == nil || vmImportKey(row) == "" {
-		return &vergeos.NotFoundError{Resource: "VMImport", ID: id}
-	}
-	return a.applyVMImport(ctx, data, row)
-}
-
-func (a *importAPI) readMedia(ctx context.Context, data *importModel, id int) error {
-	file, err := a.sdk.Files.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	if file == nil || file.Key.Int() <= 0 {
-		return &vergeos.NotFoundError{Resource: "File", ID: id}
-	}
-	if !mediaOwned(data, file) {
-		return &vergeos.NotFoundError{Resource: "File", ID: id}
-	}
-	return applyMediaFile(data, file)
+	return a.readFilled(ctx, data, true)
 }
 
 func (a *importAPI) update(ctx context.Context, plan, state *importModel) error {
@@ -438,7 +389,8 @@ func (a *importAPI) update(ctx context.Context, plan, state *importModel) error 
 	plan.Adopted = state.Adopted
 	plan.OwnsFile = state.OwnsFile
 	plan.Target = state.Target
-	return a.read(ctx, plan)
+	// fillOmitted is false: a null plan value has to stay null through apply.
+	return a.readFilled(ctx, plan, false)
 }
 
 func (a *importAPI) delete(ctx context.Context, data *importModel) error {
