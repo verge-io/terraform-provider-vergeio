@@ -293,16 +293,16 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 
 	// Call the API to create the network. A name collision means a previous
 	// create left the network in VergeOS without writing state.
+	adopted := false
 	if err := r.networkApi.createNetwork(ctx, &data); err != nil {
 		if shared.NameConflict(err) {
 			if adoptErr := r.adoptOrphanNetwork(ctx, &data); adoptErr != nil {
-				r.keepNetwork(ctx, resp, &data)
-				if shared.InterruptAfterCreate(adoptErr, networkIDSet(&data)) {
-					return
-				}
+				// The existing row is not stored. An error plus state would
+				// taint it, and the next apply would destroy that network.
 				resp.Diagnostics.AddError("Error Creating Network", adoptErr.Error())
 				return
 			}
+			adopted = true
 		} else {
 			// The row exists once its key is known. Keep that key so a
 			// later power-on or read failure does not leave it out of state.
@@ -318,17 +318,24 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
 
-	// Store the key before the follow-up read. Terraform keeps this state
-	// when the read returns an error.
-	r.keepNetwork(ctx, resp, &data)
-	if resp.Diagnostics.HasError() {
-		return
+	// A network this apply created is stored before the follow-up read.
+	// An adopted network is stored only after that read succeeds. A later
+	// error must not taint a row that already existed.
+	if !adopted {
+		r.keepNetwork(ctx, resp, &data)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
 
 	// Read data into the model to get all the attributes
 	readDataError := r.networkApi.readNetwork(ctx, &data)
 
 	if readDataError != nil {
+		if adopted {
+			resp.Diagnostics.AddError("Error Creating Network", adoptedNetworkNotStored(&data, readDataError))
+			return
+		}
 		if shared.InterruptAfterCreate(readDataError, networkIDSet(&data)) {
 			return
 		}

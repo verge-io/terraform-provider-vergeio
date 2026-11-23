@@ -136,8 +136,9 @@ func (r *GroupResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError("Error reading group", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, groupForState(&data))...)
-	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+	writeCtx := shared.WritableContext(ctx)
+	resp.Diagnostics.Append(resp.State.Set(writeCtx, groupForState(&data))...)
+	shared.RememberIdentity(writeCtx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *GroupResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -211,6 +212,7 @@ func (r *GroupResource) rememberGroup(ctx context.Context, resp *resource.Create
 	if !groupIDSet(data) {
 		return
 	}
+	ctx = shared.WritableContext(ctx)
 	resp.Diagnostics.Append(resp.State.Set(ctx, groupForState(data))...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
 	if resp.Diagnostics.HasError() {

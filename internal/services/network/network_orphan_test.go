@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
@@ -135,6 +136,104 @@ func TestNetworkCreateRefusesDifferentCIDR(t *testing.T) {
 	}
 	if networkFromState(t, resp.State).Id.ValueString() != "" {
 		t.Fatal("mismatched network was stored")
+	}
+}
+
+func TestNetworkCreateDoesNotStoreAdoptedRowWhenPowerOnFails(t *testing.T) {
+	item := newNetworkResource(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnets":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"err":"This name is already in use"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets":
+			writeJSONStatus(t, w, http.StatusOK, `[`+networkRowJSON("4", "tf-acc-net-adopt", false)+`]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/4":
+			writeJSONStatus(t, w, http.StatusOK, networkRowJSON("4", "tf-acc-net-adopt", false))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
+			http.Error(w, `{"err":"power on failed"}`, http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	})
+	plan := networkPlan("tf-acc-net-adopt")
+	plan.PowerState = types.BoolValue(true)
+	resp := createNetworkResource(t, item, context.Background(), plan)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected power-on of the existing network to fail")
+	}
+	text := joinDiagnostics(resp.Diagnostics)
+	if !strings.Contains(text, "terraform import vergeio_network") || !strings.Contains(text, "id 4") {
+		t.Fatalf("diagnostic = %s", text)
+	}
+	if networkFromState(t, resp.State).Id.ValueString() != "" {
+		t.Fatal("adopted network was stored after power-on failed")
+	}
+}
+
+func TestNetworkCreateDoesNotStoreAdoptedRowWhenReadFails(t *testing.T) {
+	gets := 0
+	item := newNetworkResource(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnets":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"err":"This name is already in use"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets":
+			writeJSONStatus(t, w, http.StatusOK, `[`+networkRowJSON("4", "tf-acc-net-adopt", false)+`]`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/4":
+			gets++
+			if gets > 1 {
+				http.Error(w, `{"err":"read failed"}`, http.StatusInternalServerError)
+				return
+			}
+			writeJSONStatus(t, w, http.StatusOK, networkRowJSON("4", "tf-acc-net-adopt", false))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	})
+	resp := createNetworkResource(t, item, context.Background(), networkPlan("tf-acc-net-adopt"))
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the follow-up read of the existing network to fail")
+	}
+	text := joinDiagnostics(resp.Diagnostics)
+	if !strings.Contains(text, "terraform import vergeio_network") || !strings.Contains(text, "id 4") {
+		t.Fatalf("diagnostic = %s", text)
+	}
+	if networkFromState(t, resp.State).Id.ValueString() != "" {
+		t.Fatal("adopted network was stored after the read failed")
+	}
+}
+
+func TestNetworkPlanMatchesBonds(t *testing.T) {
+	existing := &vergeos.Network{
+		Name:               "lan",
+		Type:               "internal",
+		Network:            "10.251.4.0/24",
+		IPAddress:          "10.251.4.1",
+		BondInterfacesArgs: []int{2, 3},
+	}
+	match := networkPlan("lan")
+	match.Bond_Interfaces_Args = types.ListValueMust(types.Int32Type, []attr.Value{
+		types.Int32Value(2),
+		types.Int32Value(3),
+	})
+	if ok, reason := networkPlanMatches(match, existing); !ok {
+		t.Fatalf("matching bonds rejected: %s", reason)
+	}
+
+	different := networkPlan("lan")
+	different.Bond_Interfaces_Args = types.ListValueMust(types.Int32Type, []attr.Value{types.Int32Value(1)})
+	if ok, reason := networkPlanMatches(different, existing); ok || !strings.Contains(reason, "bond_interfaces_args") {
+		t.Fatalf("ok=%v reason=%s", ok, reason)
+	}
+
+	unknownMember := networkPlan("lan")
+	unknownMember.Bond_Interfaces_Args = types.ListValueMust(types.Int32Type, []attr.Value{types.Int32Unknown()})
+	if ok, reason := networkPlanMatches(unknownMember, existing); ok || !strings.Contains(reason, "cannot be compared") {
+		t.Fatalf("ok=%v reason=%s", ok, reason)
 	}
 }
 

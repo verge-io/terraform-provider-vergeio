@@ -40,14 +40,29 @@ func (r *NetworkResource) adoptOrphanNetwork(ctx context.Context, data *NetworkR
 		return fmt.Errorf("network %q already exists with id %d and was not stored because %s. Import it with `terraform import vergeio_network.<name> %d`, or delete it in VergeOS and apply again", name, id, reason, id)
 	}
 
-	data.Id = types.StringValue(strconv.Itoa(existing.Key.Int()))
-	tflog.Info(ctx, fmt.Sprintf("Adopting existing network %s (id %s) after a name conflict", name, data.Id.ValueString()))
+	id := existing.Key.Int()
 	if _, on := networkPowerRequested(data.PowerState); on && !existing.Running {
-		if err := r.networkApi.sdk.Networks.PowerOn(ctx, existing.Key.Int()); err != nil {
-			return fmt.Errorf("network %q (id %s) matches this configuration but did not power on: %w", name, data.Id.ValueString(), err)
+		if err := r.networkApi.sdk.Networks.PowerOn(ctx, id); err != nil {
+			return fmt.Errorf("network %q already exists with id %d and was not stored because it did not power on: %v. Import it with `terraform import vergeio_network.<name> %d`, or delete it in VergeOS and apply again", name, id, err, id)
 		}
 	}
+	data.Id = types.StringValue(strconv.Itoa(id))
+	tflog.Info(ctx, fmt.Sprintf("Adopting existing network %s (id %s) after a name conflict", name, data.Id.ValueString()))
 	return nil
+}
+
+func adoptedNetworkNotStored(data *NetworkResourceModel, cause error) string {
+	name := ""
+	id := ""
+	if data != nil {
+		if !data.Name.IsNull() && !data.Name.IsUnknown() {
+			name = data.Name.ValueString()
+		}
+		if networkIDSet(data) {
+			id = data.Id.ValueString()
+		}
+	}
+	return fmt.Sprintf("network %q already exists with id %s and was not stored because reading it failed: %v. Import it with `terraform import vergeio_network.<name> %s`, or delete it in VergeOS and apply again", name, id, cause, id)
 }
 
 // networkPlanMatches reports whether an existing network is the one this
@@ -82,6 +97,13 @@ func networkPlanMatches(plan *NetworkResourceModel, existing *vergeos.Network) (
 	diffNetworkInt32("interface_vnet", plan.Interface_Vnet, existing.InterfaceVnet.Int(), &diffs)
 	diffNetworkString("layer2_type", plan.Layer2_Type, existing.Layer2Type, &diffs)
 	diffNetworkBool("enable_bonding", plan.Enable_Bonding, existing.EnableBonding, &diffs)
+	bonds, comparable := configuredBondIDs(plan.Bond_Interfaces_Args)
+	if !comparable {
+		return false, "bond_interfaces_args cannot be compared"
+	}
+	if bonds != nil && !bondIDsEqual(bonds, existing.BondInterfacesArgs) {
+		diffs = append(diffs, fmt.Sprintf("bond_interfaces_args is %v, configuration is %v", existing.BondInterfacesArgs, bonds))
+	}
 	if !plan.PowerState.IsNull() && !plan.PowerState.IsUnknown() && !plan.PowerState.ValueBool() && existing.Running {
 		diffs = append(diffs, "powerstate is true, configuration is false")
 	}
@@ -89,6 +111,37 @@ func networkPlanMatches(plan *NetworkResourceModel, existing *vergeos.Network) (
 		return true, ""
 	}
 	return false, strings.Join(diffs, "; ")
+}
+
+// configuredBondIDs reads a configured bond member list.
+// A null or unknown list is not configured. comparable is false when a
+// member is missing or not an int32, and that network must not be adopted.
+func configuredBondIDs(list types.List) ([]int, bool) {
+	if list.IsNull() || list.IsUnknown() {
+		return nil, true
+	}
+	elems := list.Elements()
+	out := make([]int, len(elems))
+	for i, elem := range elems {
+		id, ok := elem.(types.Int32)
+		if !ok || id.IsNull() || id.IsUnknown() {
+			return nil, false
+		}
+		out[i] = int(id.ValueInt32())
+	}
+	return out, true
+}
+
+func bondIDsEqual(planned []int, got []int) bool {
+	if len(planned) != len(got) {
+		return false
+	}
+	for i := range planned {
+		if planned[i] != got[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func diffNetworkString(attr string, planned types.String, got string, diffs *[]string) {
