@@ -11,6 +11,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -129,7 +130,7 @@ func (nc *UserApi) createUser(ctx context.Context, data *UserResourceModel) erro
 		return err
 	}
 
-	user, err := nc.sdk.Users.Create(ctx, req)
+	user, err := nc.sdk.Users.Create(shared.CommitContext(ctx), req)
 	if err != nil {
 		return err
 	}

@@ -167,8 +167,11 @@ func (e Error) Error() string {
 }
 
 // Do calls the Verge.IO API, adding auth and extra headers.
-// ctx is the Terraform request context. Canceling it (Ctrl+C / SIGINT)
-// cancels the HTTP request. The client itself is created in NewClient;
+// ctx is the Terraform request context. Canceling it stops a GET, PUT,
+// or DELETE, and it stops a POST that has not been sent. A POST that
+// has started still reads the response: VergeOS can store the row
+// before the client sees the cancel, and dropping that response leaves
+// the row out of state. The client itself is created in NewClient;
 // Do does not build one.
 func (c *Client) Do(ctx context.Context, method string, endpoint string, payload *bytes.Buffer, params *Options) (*http.Response, error) {
 	if c == nil || c.httpClient == nil {
@@ -233,6 +236,8 @@ func (c *Client) doOnce(ctx context.Context, method, endpoint, absoluteendpoint 
 	if err != nil {
 		return nil, err
 	}
+	req, stop := continueRequest(req)
+	defer stop()
 
 	c.setAuth(req)
 	qs := req.URL.Query()

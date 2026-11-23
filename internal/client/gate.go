@@ -349,6 +349,8 @@ func (t *mutationRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	}
 	release := t.client.guardMutation(req.Context(), req.Method)
 	defer release()
+	req, stop := continueRequest(req)
+	defer stop()
 	return t.base.RoundTrip(req)
 }
 

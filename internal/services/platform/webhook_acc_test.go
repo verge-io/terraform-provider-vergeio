@@ -6,6 +6,7 @@ package platform_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/hcl/v2"
@@ -384,6 +385,95 @@ func TestAccWebhookURL_KeyReuseDestroyRefreshOff(t *testing.T) {
 					foreignKey = 0
 					return nil
 				},
+			},
+		},
+	})
+}
+
+func TestAccWebhookURL_AdoptMatchingRow(t *testing.T) {
+	name := acctest.Name("hook-adopt")
+	rawURL := "https://example.com/tf-acc-hook-adopt"
+	var key int
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || key <= 0 {
+			return
+		}
+		_ = client.WebhookURLs.Delete(context.Background(), key)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckWebhookURLDestroy,
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					created, err := client.WebhookURLs.Create(context.Background(), &vergeos.WebhookURLCreateRequest{
+						Name: name,
+						URL:  rawURL,
+					})
+					if err != nil {
+						t.Fatalf("create webhook destination: %v", err)
+					}
+					key = created.Key.Int()
+				},
+				Config: testAccWebhookURLOnly(name, rawURL),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "name", name),
+					resource.TestCheckResourceAttr("vergeio_webhook_url.test", "url", rawURL),
+					func(s *terraform.State) error {
+						id, err := acctest.ResourceID(s, "vergeio_webhook_url.test")
+						if err != nil {
+							return err
+						}
+						if id != key {
+							return fmt.Errorf("id = %d, want existing destination %d", id, key)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+func TestAccWebhookURL_RejectDifferentURL(t *testing.T) {
+	name := acctest.Name("hook-adopt-diff")
+	var key int
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || key <= 0 {
+			return
+		}
+		_ = client.WebhookURLs.Delete(context.Background(), key)
+	})
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					created, err := client.WebhookURLs.Create(context.Background(), &vergeos.WebhookURLCreateRequest{
+						Name: name,
+						URL:  "https://example.com/tf-acc-other",
+					})
+					if err != nil {
+						t.Fatalf("create webhook destination: %v", err)
+					}
+					key = created.Key.Int()
+				},
+				Config:      testAccWebhookURLOnly(name, "https://example.com/tf-acc-hook-adopt"),
+				ExpectError: regexp.MustCompile(`terraform import vergeio_webhook_url`),
 			},
 		},
 	})

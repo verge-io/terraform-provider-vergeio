@@ -201,10 +201,21 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// Log the id only. The model includes the password.
 	tflog.Debug(ctx, fmt.Sprintf("created a user resource with id %s", data.Id.ValueString()))
 
+	// Store the key before the follow-up read. Unknown plan values are
+	// null here. State cannot store them, and a canceled read must not
+	// report success with those values still unknown.
+	r.keepUser(ctx, resp, &data)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	// Read data into the model to get all the attributes
 	readDataError := r.userApi.readUser(ctx, &data)
 
 	if readDataError != nil {
+		if shared.InterruptAfterCreate(readDataError, userIDSet(&data)) {
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Fetching Data",
 			readDataError.Error(),
@@ -215,8 +226,7 @@ func (r *UserResource) Create(ctx context.Context, req resource.CreateRequest, r
 	scrubUserPassword(&data)
 
 	// Save data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+	r.keepUser(ctx, resp, &data)
 }
 
 // Read a user.
@@ -298,6 +308,41 @@ func (r *UserResource) Update(ctx context.Context, req resource.UpdateRequest, r
 // scrubUserPassword drops a write-only password before state is saved.
 // password_wo is null in the plan already. When password_wo_version is set,
 // password must stay null so the secret is not written to the stored attribute.
+func userIDSet(data *UserResourceModel) bool {
+	return data != nil && !data.Id.IsNull() && !data.Id.IsUnknown() && data.Id.ValueString() != ""
+}
+
+func (r *UserResource) keepUser(ctx context.Context, resp *resource.CreateResponse, data *UserResourceModel) {
+	if resp == nil || !userIDSet(data) {
+		return
+	}
+	stored := userForState(data)
+	ctx = shared.WritableContext(ctx)
+	resp.Diagnostics.Append(resp.State.Set(ctx, &stored)...)
+	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+}
+
+func userForState(data *UserResourceModel) UserResourceModel {
+	stored := *data
+	stored.Id = knownString(data.Id)
+	stored.AuthSource = knownInt32(data.AuthSource)
+	stored.Name = knownString(data.Name)
+	stored.RemoteName = knownString(data.RemoteName)
+	stored.Enabled = knownBool(data.Enabled)
+	stored.DisplayName = knownString(data.DisplayName)
+	stored.Email = knownString(data.Email)
+	stored.Type = knownString(data.Type)
+	stored.PasswordWO = types.StringNull()
+	stored.PasswordWOVersion = knownInt64(data.PasswordWOVersion)
+	if shared.WriteOnlyVersionSet(data.PasswordWOVersion) {
+		stored.Password = types.StringNull()
+	} else {
+		stored.Password = knownString(data.Password)
+	}
+	stored.ChangePassword = knownBool(data.ChangePassword)
+	return stored
+}
+
 func scrubUserPassword(data *UserResourceModel) {
 	if data == nil {
 		return

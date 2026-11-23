@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -93,7 +94,7 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		return err
 	}
 
-	network, err := nc.sdk.Networks.Create(ctx, req)
+	network, err := nc.sdk.Networks.Create(shared.CommitContext(ctx), req)
 	if err != nil {
 		return err
 	}

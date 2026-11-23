@@ -12,6 +12,8 @@ Create an Internal or External vNET resource in VergeIO.
 
 Creating a network deletes IPsec rows that already point at the new key. VergeOS can reuse a deleted network's key and leave that network's IPsec rows attached. Those rows are removed before the network is stored, so the recreated network does not keep the old IPsec configuration.
 
+An apply that is interrupted after VergeOS stores the network keeps that key in state. A later create adopts an existing network with the same name when the configured fields match. A different network is left in place, and the error includes its key and an import command.
+
 ## Example Usage
 
 Create an internal vNET with all parameters.
