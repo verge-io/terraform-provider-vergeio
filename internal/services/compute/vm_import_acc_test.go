@@ -171,7 +171,19 @@ func TestAccVMImport_Disk(t *testing.T) {
 					resource.TestCheckResourceAttr("vergeio_vm_import.test", "target", "media"),
 					resource.TestCheckResourceAttr("vergeio_vm_import.test", "status", "complete"),
 					resource.TestCheckResourceAttrSet("vergeio_vm_import.test", "file_id"),
+					resource.TestCheckResourceAttr("vergeio_vm_import.test", "owns_file", "true"),
 				),
+			},
+			{
+				ResourceName:      "vergeio_vm_import.test",
+				ImportState:       true,
+				ImportStateVerify: true,
+				// Create leaves an omitted tier null. Import stores the tier on
+				// the catalog file. The plan keeps an omitted value.
+				ImportStateVerifyIgnore: []string{
+					"timeouts",
+					"preferred_tier",
+				},
 			},
 		},
 	})

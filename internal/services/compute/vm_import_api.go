@@ -33,8 +33,9 @@ const (
 var vmImportPollInterval = 5 * time.Second
 
 const (
-	// downloadedImportDescription is the description govergeos writes when it
-	// downloads a URL into the media catalog before posting vm_imports.
+	// downloadedImportDescription is the first line of the catalog file
+	// description. files.url is an argument VergeOS does not return, so the
+	// source address is the next line.
 	downloadedImportDescription = "Downloaded for VM import "
 	downloadedMediaDescription  = "Downloaded for media import "
 )
@@ -245,9 +246,13 @@ func (a *importAPI) createMedia(ctx context.Context, data *importModel) error {
 	if catalogName == "" {
 		catalogName = name
 	}
+	description, err := downloadDescription(downloadedMediaDescription, name, rawURL)
+	if err != nil {
+		return err
+	}
 	req := &vergeos.FileCreateRequest{
 		Name:          catalogName,
-		Description:   downloadedMediaDescription + name,
+		Description:   description,
 		URL:           rawURL,
 		PreferredTier: strings.TrimSpace(stringValue(data.PreferredTier)),
 	}
@@ -538,9 +543,13 @@ func (a *importAPI) downloadImportURL(ctx context.Context, req *vergeos.VMImport
 			return 0, err
 		}
 	}
+	description, err := downloadDescription(downloadedImportDescription, req.Name, req.URL)
+	if err != nil {
+		return 0, err
+	}
 	file, err := a.sdk.Files.Create(ctx, &vergeos.FileCreateRequest{
 		Name:          name,
-		Description:   downloadedImportDescription + req.Name,
+		Description:   description,
 		URL:           req.URL,
 		PreferredTier: req.PreferredTier,
 	})
