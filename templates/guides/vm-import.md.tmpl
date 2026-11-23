@@ -22,7 +22,7 @@ A migration is a procedure: copy the image, wait, fix the guest, and often repea
 
 Destroy of a VM import removes the import row and the VM the import created, unless `delete_vm` is false. An import that adopted a VM which already existed deletes neither the VM nor the `vm_imports` row. The resource that created the VM still tracks that row. A catalog file this resource downloaded is removed when `delete_file` is true. A media import is the file, and destroy always removes it.
 
-`terraform import vergeio_vm_import.example <vm_imports_key>` reads the source from that row. A media import uses the file id. `file`, `volume`, `volume_path`, and `shared_object` are columns. `url` is not, and `files.url` is not returned. A download this resource started stores the address on the next line of the catalog file description, and import reads it from there. An omitted option keeps the value VergeOS stored, so the next plan does not replace the VM.
+`terraform import vergeio_vm_import.example <vm_imports_key>` reads the source from that row. A media import uses the file id. `file`, `volume`, `volume_path`, and `shared_object` are columns. `url` is not, and `files.url` is not returned. A download this resource started stores the address on the next line of the catalog file description, and import reads it from there. Create stores each option VergeOS saved, including a platform default the configuration left out. An omitted option keeps that stored value. Setting the configuration to the stored value does not replace the VM. Changing a stored value replaces the import.
 
 ## Where Ansible takes over
 
