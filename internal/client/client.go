@@ -237,7 +237,11 @@ func (c *Client) doOnce(ctx context.Context, method, endpoint, absoluteendpoint 
 		return nil, err
 	}
 	req, stop := continueRequest(req)
-	defer stop()
+	defer func() {
+		if stop != nil {
+			stop()
+		}
+	}()
 
 	c.setAuth(req)
 	qs := req.URL.Query()
@@ -269,6 +273,8 @@ func (c *Client) doOnce(ctx context.Context, method, endpoint, absoluteendpoint 
 	req.Close = true
 
 	resp, err := c.httpClient.Do(req)
+	resp, err = releaseContinued(resp, err, stop)
+	stop = nil
 	if err != nil {
 		return resp, err
 	}
