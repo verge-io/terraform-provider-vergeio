@@ -4,6 +4,7 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,13 +12,12 @@ import (
 )
 
 // confirmDeleted decides whether a delete that returned deleteErr removed the
-// row. govergeos turns every 404 on delete into NotFoundError, including a
-// trigger that refused the delete while the row is still there. A following
-// read that also returns NotFoundError means the row is gone. A read that
-// finds the row is an error, so Terraform keeps the resource in state.
-// Any other deleteErr is returned unchanged.
+// row. A NotFoundError means the follow-up read was also 404. A 404 APIError
+// means that read found the row. Either way, read the row again. A missing
+// row is success. A row that is still there is an error, so Terraform keeps
+// the resource in state. Any other deleteErr is returned unchanged.
 func confirmDeleted(deleteErr error, row string, get func() error) error {
-	if deleteErr == nil || !vergeos.IsNotFoundError(deleteErr) {
+	if deleteErr == nil || !deleteReportedMissing(deleteErr) {
 		return deleteErr
 	}
 	row = strings.TrimSpace(row)
@@ -32,6 +32,17 @@ func confirmDeleted(deleteErr error, row string, get func() error) error {
 		return fmt.Errorf("VergeOS refused the delete of %s, probably because the parent network was deleted outside Terraform, and reading it again failed: %w", row, getErr)
 	}
 	return fmt.Errorf("VergeOS refused the delete of %s, probably because the parent network was deleted outside Terraform", row)
+}
+
+// deleteReportedMissing reports a delete whose status is 404.
+// NotFoundError means a follow-up read was also 404. An APIError means
+// that read found the row.
+func deleteReportedMissing(err error) bool {
+	if vergeos.IsNotFoundError(err) {
+		return true
+	}
+	var apiErr *vergeos.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
 }
 
 func namedRow(kind string, id int, name string) string {

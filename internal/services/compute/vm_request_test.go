@@ -274,6 +274,50 @@ func TestVMUpdateOmitsUnsetCPUAndRAM(t *testing.T) {
 	requireAbsent(t, body, "ram")
 }
 
+func TestVMCreateAndUpdateOmitDisplay(t *testing.T) {
+	data := &VMResourceModel{
+		Name:    types.StringValue("vm"),
+		Display: types.StringValue("virtio"),
+		Console: types.StringValue("vnc"),
+		Video:   types.StringValue("virtio"),
+	}
+	created := jsonObject(t, vmCreateModel(data))
+	requireAbsent(t, created, "display")
+	requireString(t, created, "console", "vnc")
+	requireString(t, created, "video", "virtio")
+
+	req, err := vmCreateRequest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := jsonObject(t, req)
+	requireAbsent(t, body, "display")
+	requireString(t, body, "console", "vnc")
+	requireString(t, body, "video", "virtio")
+
+	plan := &VMResourceModel{
+		Id:      types.StringValue("9"),
+		Name:    types.StringValue("vm"),
+		Display: types.StringValue("qxl"),
+		Video:   types.StringValue("qxl"),
+	}
+	state := &VMResourceModel{
+		Id:      types.StringValue("9"),
+		Name:    types.StringValue("vm"),
+		Display: types.StringValue("virtio"),
+		Video:   types.StringValue("virtio"),
+	}
+	updated := jsonObject(t, vmUpdateModel(plan, state))
+	requireAbsent(t, updated, "display")
+	requireString(t, updated, "video", "qxl")
+	reqUpdate, _, err := vmUpdateRequest(plan, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireAbsent(t, jsonObject(t, reqUpdate), "display")
+	requireString(t, jsonObject(t, reqUpdate), "video", "qxl")
+}
+
 func TestVMCreateOmitsUnsetBool(t *testing.T) {
 	data := &VMResourceModel{
 		Name:      types.StringValue("vm"),

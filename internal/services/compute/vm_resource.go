@@ -232,7 +232,7 @@ func (r *VMResource) Schema(ctx context.Context, req resource.SchemaRequest, res
 				Computed:            true,
 			},
 			"display": schema.StringAttribute{
-				MarkdownDescription: "Display",
+				MarkdownDescription: "Not sent. `vms` has no `display` column, so VergeOS would drop this key. A configured value stays in state. Console type is `console`. Video adapter is `video`.",
 				Optional:            true,
 				Computed:            true,
 			},

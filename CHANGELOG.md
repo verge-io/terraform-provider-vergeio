@@ -2,7 +2,7 @@
 
 ### Breaking changes
 
-- Built against govergeos v0.5.0 (`3f04250e`) plus `4986437a`, which reads a new API key secret from `response.private_key` and still accepts `response.token` (#294).
+- Built against govergeos `be81579e` (v0.5.0 plus later commits on main, including `4986437a`). A new API key secret is still read from `response.private_key`, and `response.token` is still accepted. Permission create sends the identities-table key. `vergeio_vm.display` stays in the schema. `vms` has no `display` column, so create and update do not send it, and a read keeps the configured value. `console` and `video` are unchanged (#294, #368).
 
 ### Features
 
@@ -14,6 +14,7 @@
 
 ### Bug fixes
 
+- `vergeio_permission` create sends the identities-table key from the user or group `identity` column. A row with no identity still uses its row key. `vergeio_vm` create and update no longer send `display`. `vms` has no `display` column, and VergeOS dropped that key. `console` and `video` are still sent under those names. A configured `display` stays in state. An omitted `display` is stored as an empty string. A delete that VergeOS answers with 404 while the row is still there stays an error, so Terraform keeps the resource. Firewall, DNS, IPsec, and WireGuard deletes still name the row and say the parent network was probably removed. A missing row is still removed from state. The provider is built against govergeos `be81579e` (#368).
 - An ordinary create no longer fails with `vergeos: failed to read response body: context canceled` after VergeOS has stored the row. The detached request deadline now lasts until the response body is read or closed, so a server that sends headers before the JSON still returns the key. An interrupted create still keeps that key (#367).
 - Setting `vergeio_vm.powerstate` to false in the same apply as `cpu_cores` powers the VM off and waits until it stops before writing the new core count. The VM stays off. The same order is used for `ram`, `machine_type`, `console`, `video`, `uefi`, `secure_boot`, `nested_virtualization`, and `disable_hypervisor`. An apply that leaves the VM powered on stops it, writes the setting, and powers it back on after the boot disk sync. If that stop succeeds and the settings or boot disk write then fails, the VM is powered back on when the plan does not leave it off. A failed power-on is returned with the original error (#344).
 - Create of a `vergeio_vm_import` stores the option values VergeOS saved when the configuration left them out, including `false` and an empty interface. `preserve_macs`, `preserve_drive_format`, `no_optical_drives`, `preferred_tier`, `override_drive_interface`, and `override_nic_interface` come from the `vm_imports` row. VergeOS 26.2 also stores `preserve_bios_serial`, `guest_agent_preinstalled`, and `replicate_tags`. A media import stores `preferred_tier` from the catalog file. When `volume` is set, an omitted `volume_path` is stored from that row. Writing one of those stored values into the configuration plans no change. Changing a stored value still replaces the import. A resource created by an earlier release keeps null options until the next refresh, which stores the row's values. A plan that then sets the configuration to those values does not replace the VM (#345).

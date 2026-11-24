@@ -830,7 +830,7 @@ func deleteDNSView(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if err == nil {
 		return nil
 	}
-	if vergeos.IsNotFoundError(err) {
+	if deleteReportedMissing(err) {
 		return confirmDeleted(err, row, get)
 	}
 	if childErr := deleteViewChildren(ctx, sdk, id); childErr != nil {
@@ -840,7 +840,7 @@ func deleteDNSView(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if retry == nil {
 		return nil
 	}
-	if vergeos.IsNotFoundError(retry) {
+	if deleteReportedMissing(retry) {
 		return confirmDeleted(retry, row, get)
 	}
 	return fmt.Errorf("delete DNS view %d: %w", id, retry)
@@ -875,7 +875,7 @@ func deleteDNSZone(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if err == nil {
 		return nil
 	}
-	if vergeos.IsNotFoundError(err) {
+	if deleteReportedMissing(err) {
 		return confirmDeleted(err, row, get)
 	}
 	if childErr := deleteZoneRecords(ctx, sdk, id); childErr != nil {
@@ -885,7 +885,7 @@ func deleteDNSZone(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if retry == nil {
 		return nil
 	}
-	if vergeos.IsNotFoundError(retry) {
+	if deleteReportedMissing(retry) {
 		return confirmDeleted(retry, row, get)
 	}
 	return fmt.Errorf("delete DNS zone %d: %w", id, retry)
@@ -917,7 +917,7 @@ func deleteDNSRecord(ctx context.Context, sdk *vergeos.Client, id int) error {
 	if err == nil {
 		return nil
 	}
-	if vergeos.IsNotFoundError(raw) {
+	if deleteReportedMissing(raw) {
 		return err
 	}
 	return fmt.Errorf("delete DNS record %d: %w", id, err)

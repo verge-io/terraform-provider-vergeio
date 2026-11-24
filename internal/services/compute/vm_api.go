@@ -210,7 +210,6 @@ type VMAPIResourceModel struct {
 	CPUType              *string            `json:"cpu_type,omitempty"`
 	RAM                  *int32             `json:"ram,omitempty"`
 	Console              *string            `json:"console,omitempty"`
-	Display              *string            `json:"display,omitempty"`
 	Video                *string            `json:"video,omitempty"`
 	Sound                *string            `json:"sound,omitempty"`
 	OSFamily             *string            `json:"os_family,omitempty"`
@@ -290,7 +289,6 @@ func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 		CPUType:              vergeio.KnownString(data.CPUType),
 		RAM:                  int32OrDefault(data.RAM, defaultVMRAM),
 		Console:              vergeio.KnownString(data.Console),
-		Display:              vergeio.KnownString(data.Display),
 		Video:                vergeio.KnownString(data.Video),
 		Sound:                vergeio.KnownString(data.Sound),
 		OSFamily:             vergeio.KnownString(data.OSFamily),
@@ -361,7 +359,6 @@ func vmUpdateModel(planData *VMResourceModel, stateData *VMResourceModel) VMAPIR
 		CPUType:              vergeio.ChangedString(planData.CPUType, stateData.CPUType),
 		RAM:                  vergeio.ChangedInt32(planData.RAM, stateData.RAM),
 		Console:              vergeio.ChangedString(planData.Console, stateData.Console),
-		Display:              vergeio.ChangedString(planData.Display, stateData.Display),
 		Video:                vergeio.ChangedString(planData.Video, stateData.Video),
 		Sound:                vergeio.ChangedString(planData.Sound, stateData.Sound),
 		OSFamily:             vergeio.ChangedString(planData.OSFamily, stateData.OSFamily),
@@ -1216,7 +1213,10 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 	data.CPUType = types.StringValue(vm.CPUType)
 	data.RAM = types.Int32Value(int32(vm.RAM))
 	data.Console = types.StringValue(vm.Console)
-	data.Display = types.StringValue(vm.Display)
+	// vms has no display column, so a read cannot replace this value.
+	if data.Display.IsNull() || data.Display.IsUnknown() {
+		data.Display = types.StringValue("")
+	}
 	data.Video = types.StringValue(vm.Video)
 	data.Sound = types.StringValue(vm.Sound)
 	data.OSFamily = types.StringValue(vm.OSFamily)
