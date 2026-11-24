@@ -608,6 +608,80 @@ func testAccVMConsolePassConfig(vmName, password string) string {
 `, password))
 }
 
+// TestAccVMResource_Display creates a VM with display set, then changes it.
+// vms has no display column, so the value is not sent and the read after
+// update has to keep the planned value. The plans after create and after the
+// update are empty.
+func TestAccVMResource_Display(t *testing.T) {
+	vmName := acctest.Name("vm")
+	vnc := testAccVMDisplayConfig(vmName, "vnc")
+	spice := testAccVMDisplayConfig(vmName, "spice")
+	var vmID string
+
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckVMDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: vnc,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckVMExists("vergeio_vm.test"),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "name", vmName),
+					resource.TestCheckResourceAttr("vergeio_vm.test", "display", "vnc"),
+					testAccCaptureVMID("vergeio_vm.test", &vmID),
+				),
+			},
+			{
+				Config: vnc,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: spice,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("vergeio_vm.test", plancheck.ResourceActionUpdate),
+					},
+				},
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_vm.test", "display", "spice"),
+					func(s *terraform.State) error {
+						rs, ok := s.RootModule().Resources["vergeio_vm.test"]
+						if !ok {
+							return fmt.Errorf("resource not found: vergeio_vm.test")
+						}
+						if rs.Primary.ID != vmID {
+							return fmt.Errorf("vm id changed from %s to %s", vmID, rs.Primary.ID)
+						}
+						return nil
+					},
+				),
+			},
+			{
+				Config: spice,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+		},
+	})
+}
+
+func testAccVMDisplayConfig(vmName, display string) string {
+	return testAccVMResourceConfig(vmName, fmt.Sprintf(`
+  enabled   = true
+  cpu_cores = 2
+  ram       = 2048
+  display   = %q
+`, display))
+}
+
 func testAccVMWithDriveAndNICConfig(vmName, networkName string) string {
 	if err := acctest.RequirePrefix(vmName); err != nil {
 		panic(err)

@@ -1387,6 +1387,8 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// force_power_off and timeouts are provider settings. The API read does
 	// not return them, so the planned values have to be copied onto state.
 	usePlannedShutdownSettings(&stateData, &planData)
+	// vms has no display column. The read keeps the value already on this model.
+	stateData.Display = planData.Display
 
 	// Read the VM from the API to get all the data.
 	if _, readError := r.vmApi.readVM(ctx, &stateData, false); readError != nil {
