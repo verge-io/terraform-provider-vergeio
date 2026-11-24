@@ -199,6 +199,70 @@ func TestUpdateRestoresPowerWhenCPUChangesAndPowerStateIsOmitted(t *testing.T) {
 	}
 }
 
+func TestUpdateRestoresPowerWhenSettingsWriteFails(t *testing.T) {
+	shortenPowerWaits(t)
+
+	for _, planPower := range []types.Bool{types.BoolNull(), types.BoolValue(true)} {
+		t.Run(planPower.String(), func(t *testing.T) {
+			_, events := runOfflineSettingsApply(t, offlineSettingsCase{
+				running:   true,
+				planPower: planPower,
+				failPut:   true,
+				edit:      func(m *VMResourceModel) { m.CPUCores = types.Int32Value(2) },
+				want:      []string{"poweroff", "put-failed", "poweron"},
+				wantErr:   "settings update failed",
+			})
+			if eventsContain(events, "poweron-failed") {
+				t.Fatalf("events = %#v, want the VM powered back on", events)
+			}
+		})
+	}
+}
+
+func TestUpdateReportsPowerOnFailureAfterSettingsWriteFails(t *testing.T) {
+	shortenPowerWaits(t)
+
+	runOfflineSettingsApply(t, offlineSettingsCase{
+		running:     true,
+		planPower:   types.BoolNull(),
+		failPut:     true,
+		failPowerOn: true,
+		edit:        func(m *VMResourceModel) { m.CPUCores = types.Int32Value(2) },
+		want:        []string{"poweroff", "put-failed", "poweron-failed"},
+		wantErr:     "settings update failed",
+		wantErrAlso: "could not be powered back on",
+	})
+}
+
+func TestUpdateLeavesVMOffWhenSettingsWriteFailsAndPlanIsOff(t *testing.T) {
+	shortenPowerWaits(t)
+
+	_, events := runOfflineSettingsApply(t, offlineSettingsCase{
+		running:   true,
+		planPower: types.BoolValue(false),
+		failPut:   true,
+		edit:      func(m *VMResourceModel) { m.CPUCores = types.Int32Value(2) },
+		want:      []string{"poweroff", "put-failed"},
+		wantErr:   "settings update failed",
+	})
+	if eventsContain(events, "poweron") || eventsContain(events, "poweron-failed") {
+		t.Fatalf("events = %#v, want the VM left off", events)
+	}
+}
+
+func TestUpdateRestoresPowerWhenBootDiskSyncFails(t *testing.T) {
+	shortenPowerWaits(t)
+
+	runOfflineSettingsApply(t, offlineSettingsCase{
+		running:      true,
+		planPower:    types.BoolValue(true),
+		bootConflict: true,
+		edit:         func(m *VMResourceModel) { m.CPUCores = types.Int32Value(2) },
+		want:         []string{"poweroff", "put", "poweron"},
+		wantErr:      "changing media or source",
+	})
+}
+
 func TestUpdateDoesNotWriteCPUWhenPowerOffTimesOut(t *testing.T) {
 	shortenPowerWaits(t)
 
@@ -219,12 +283,16 @@ func TestUpdateDoesNotWriteCPUWhenPowerOffTimesOut(t *testing.T) {
 }
 
 type offlineSettingsCase struct {
-	running     bool
-	stayRunning bool
-	planPower   types.Bool
-	edit        func(*VMResourceModel)
-	want        []string
-	wantErr     string
+	running      bool
+	stayRunning  bool
+	failPut      bool
+	failPowerOn  bool
+	bootConflict bool
+	planPower    types.Bool
+	edit         func(*VMResourceModel)
+	want         []string
+	wantErr      string
+	wantErrAlso  string
 }
 
 func runOfflineSettingsApply(t *testing.T, tc offlineSettingsCase) (VMResourceModel, []string) {
@@ -263,6 +331,12 @@ func runOfflineSettingsApply(t *testing.T, tc offlineSettingsCase) (VMResourceMo
 				_, _ = w.Write([]byte(`{"err":"CPU cores cannot be changed while the VM is running"}`))
 				return
 			}
+			if tc.failPut {
+				events = append(events, "put-failed")
+				w.WriteHeader(http.StatusInternalServerError)
+				_, _ = w.Write([]byte(`{"err":"settings update failed"}`))
+				return
+			}
 			events = append(events, "put")
 			var payload map[string]any
 			if err := json.Unmarshal(body, &payload); err != nil {
@@ -294,6 +368,12 @@ func runOfflineSettingsApply(t *testing.T, tc offlineSettingsCase) (VMResourceMo
 					running = false
 				}
 			case strings.Contains(string(body), `"action":"poweron"`):
+				if tc.failPowerOn {
+					events = append(events, "poweron-failed")
+					w.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(`{"err":"power on failed"}`))
+					return
+				}
 				events = append(events, "poweron")
 				running = true
 			case strings.Contains(string(body), `"action":"kill"`):
@@ -333,8 +413,20 @@ func runOfflineSettingsApply(t *testing.T, tc offlineSettingsCase) (VMResourceMo
 		PowerState:    types.BoolValue(tc.running),
 		GuestAgentIPs: types.ListNull(types.StringType),
 	}
+	if tc.bootConflict {
+		stateModel.BootDisk = &bootDiskModel{
+			Key:   types.StringValue("46"),
+			Name:  types.StringValue("os"),
+			Media: types.StringValue("disk"),
+		}
+	}
 	planModel := stateModel
 	planModel.PowerState = tc.planPower
+	if tc.bootConflict && stateModel.BootDisk != nil {
+		copied := *stateModel.BootDisk
+		copied.Media = types.StringValue("import")
+		planModel.BootDisk = &copied
+	}
 	if tc.edit != nil {
 		tc.edit(&planModel)
 	}
@@ -359,13 +451,28 @@ func runOfflineSettingsApply(t *testing.T, tc offlineSettingsCase) (VMResourceMo
 	gotEvents := append([]string(nil), events...)
 	mu.Unlock()
 
-	if tc.wantErr != "" {
+	if tc.wantErr != "" || tc.wantErrAlso != "" {
 		if !resp.Diagnostics.HasError() {
 			t.Fatal("expected update to fail")
 		}
-		msg := resp.Diagnostics.Errors()[0].Detail()
-		if !strings.Contains(msg, tc.wantErr) {
-			t.Fatalf("error %q missing %q", msg, tc.wantErr)
+		var text strings.Builder
+		for _, d := range resp.Diagnostics.Errors() {
+			text.WriteString(d.Summary())
+			text.WriteByte('\n')
+			text.WriteString(d.Detail())
+			text.WriteByte('\n')
+		}
+		msg := text.String()
+		for _, fragment := range []string{tc.wantErr, tc.wantErrAlso} {
+			if fragment == "" {
+				continue
+			}
+			if !strings.Contains(msg, fragment) {
+				t.Fatalf("errors %q missing %q", msg, fragment)
+			}
+		}
+		if tc.wantErrAlso != "" && len(resp.Diagnostics.Errors()) < 2 {
+			t.Fatalf("errors = %q, want the original error and the power restore error", msg)
 		}
 		if strings.Join(gotEvents, ",") != strings.Join(tc.want, ",") {
 			t.Fatalf("events = %#v, want %#v", gotEvents, tc.want)

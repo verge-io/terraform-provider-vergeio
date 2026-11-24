@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -1329,6 +1330,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			"Error updating VM",
 			updateError.Error(),
 		)
+		r.restoreStoppedVM(ctx, &resp.Diagnostics, stoppedForSettings, &planData)
 		return
 	}
 
@@ -1338,6 +1340,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			"Error syncing boot disk",
 			bootErr.Error(),
 		)
+		r.restoreStoppedVM(ctx, &resp.Diagnostics, stoppedForSettings, &planData)
 		return
 	}
 	stateData.BootDisk = boot
@@ -1437,6 +1440,27 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, stateData.Id)
+}
+
+// vmPlanStaysOff reports a known request to leave the VM stopped.
+// A null or unknown powerstate keeps the power from before this update.
+func vmPlanStaysOff(power types.Bool) bool {
+	return !power.IsNull() && !power.IsUnknown() && !power.ValueBool()
+}
+
+// restoreStoppedVM powers the VM back on when this update stopped it and the
+// plan does not leave it off. A power-on failure is added beside the error
+// that aborted the update.
+func (r *VMResource) restoreStoppedVM(ctx context.Context, diags *diag.Diagnostics, stopped bool, plan *VMResourceModel) {
+	if diags == nil || !stopped || plan == nil || vmPlanStaysOff(plan.PowerState) {
+		return
+	}
+	if err := r.vmApi.powerOnVM(ctx, plan); err != nil {
+		diags.AddError(
+			"Error updating VM power state",
+			fmt.Sprintf("the VM was stopped for a settings change and could not be powered back on: %s", err.Error()),
+		)
+	}
 }
 
 func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
