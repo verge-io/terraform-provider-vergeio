@@ -299,6 +299,25 @@ func TestShutdownOnDestroyMode(t *testing.T) {
 	}
 }
 
+func TestApplyVMKeepsConfiguredDisplay(t *testing.T) {
+	t.Parallel()
+
+	data := &VMResourceModel{Display: types.StringValue("virtio")}
+	applyVM(data, &vergeos.VM{Name: "web", Console: "vnc", Video: "qxl"})
+	if data.Display.ValueString() != "virtio" {
+		t.Fatalf("display = %#v, want the configured value", data.Display)
+	}
+	if data.Console.ValueString() != "vnc" || data.Video.ValueString() != "qxl" {
+		t.Fatalf("console = %#v, video = %#v", data.Console, data.Video)
+	}
+
+	unset := &VMResourceModel{}
+	applyVM(unset, &vergeos.VM{Name: "web"})
+	if unset.Display.IsNull() || unset.Display.IsUnknown() || unset.Display.ValueString() != "" {
+		t.Fatalf("display = %#v, want empty", unset.Display)
+	}
+}
+
 func TestApplyVMDefaultsForcePowerOff(t *testing.T) {
 	t.Parallel()
 

@@ -210,7 +210,7 @@ resource "vergeio_vm" "web-server" {
 - `description` (String)
 - `disable_hypervisor` (Boolean) - Default = False
 - `disable_powercycle` (Boolean) - Default = False
-- `display` (String)
+- `display` (String) Not sent. `vms` has no `display` column, so VergeOS would drop this key. A configured value stays in state. Console type is `console`. Video adapter is `video`.
 - `enabled` (Boolean) - Default = True
 - `guest_agent` (Boolean) - Default = False
 - `ha_group` (String) - Default = None, Sets the HA Group for VM clustering 

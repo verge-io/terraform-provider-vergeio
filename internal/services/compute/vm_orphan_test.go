@@ -129,6 +129,16 @@ func TestVMConfigMatches(t *testing.T) {
 	if ok, reason := vmConfigMatches(&stoppedPlan, &running); ok || !strings.Contains(reason, "powerstate") {
 		t.Fatalf("running VM matched powerstate false: %v %q", ok, reason)
 	}
+
+	withDisplay := *plan
+	withDisplay.Display = types.StringValue("virtio")
+	if ok, reason := vmConfigMatches(&withDisplay, existing); ok || !strings.Contains(reason, "display") {
+		t.Fatalf("display match = %v, reason %q", ok, reason)
+	}
+	withDisplay.Display = types.StringValue("")
+	if ok, reason := vmConfigMatches(&withDisplay, existing); !ok {
+		t.Fatalf("empty display rejected: %s", reason)
+	}
 }
 
 func TestPartialVMForStateDropsUnknownNestedValues(t *testing.T) {
