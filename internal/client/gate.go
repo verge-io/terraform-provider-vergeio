@@ -350,8 +350,15 @@ func (t *mutationRoundTripper) RoundTrip(req *http.Request) (*http.Response, err
 	release := t.client.guardMutation(req.Context(), req.Method)
 	defer release()
 	req, stop := continueRequest(req)
-	defer stop()
-	return t.base.RoundTrip(req)
+	defer func() {
+		if stop != nil {
+			stop()
+		}
+	}()
+	resp, err := t.base.RoundTrip(req)
+	resp, err = releaseContinued(resp, err, stop)
+	stop = nil
+	return resp, err
 }
 
 func (t *mutationRoundTripper) CloseIdleConnections() {

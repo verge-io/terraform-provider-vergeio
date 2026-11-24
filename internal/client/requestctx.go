@@ -6,7 +6,9 @@ package vergeio
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -23,6 +25,11 @@ import (
 //
 // The caller's deadline is kept. http.Client.Timeout is applied before
 // RoundTrip, and dropping it here would let a stuck POST run forever.
+//
+// stop cancels that deadline. Hold it until the response body reaches
+// EOF or is closed. RoundTrip returns when the headers arrive, and
+// canceling there aborts the unread body. Cancel immediately when the
+// transport returns an error.
 func continueRequest(req *http.Request) (*http.Request, func()) {
 	stop := func() {}
 	if req == nil {
@@ -55,4 +62,43 @@ func continueRequest(req *http.Request) (*http.Request, func()) {
 		stop = cancel
 	}
 	return req.Clone(detached), stop
+}
+
+// releaseContinued cancels the detached deadline once the body is finished.
+// err from the transport cancels before the body can be read.
+func releaseContinued(resp *http.Response, err error, stop func()) (*http.Response, error) {
+	if stop == nil {
+		stop = func() {}
+	}
+	if err != nil || resp == nil || resp.Body == nil {
+		stop()
+		return resp, err
+	}
+	resp.Body = &continuedBody{body: resp.Body, stop: stop}
+	return resp, nil
+}
+
+// continuedBody finishes the detached deadline at EOF or Close.
+type continuedBody struct {
+	body io.ReadCloser
+	stop func()
+	once sync.Once
+}
+
+func (b *continuedBody) Read(p []byte) (int, error) {
+	n, err := b.body.Read(p)
+	if errors.Is(err, io.EOF) {
+		b.finish()
+	}
+	return n, err
+}
+
+func (b *continuedBody) Close() error {
+	err := b.body.Close()
+	b.finish()
+	return err
+}
+
+func (b *continuedBody) finish() {
+	b.once.Do(b.stop)
 }
