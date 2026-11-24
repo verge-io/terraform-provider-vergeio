@@ -1311,10 +1311,19 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	apiPlan.CloudInitFiles = cloneCloudInitFiles(planData.CloudInitFiles)
 	applyVMWriteOnly(&apiPlan, &stateData, &config)
 
-	// Update VM attributes only. Power is applied after the boot disk
-	// sync so a VM started in this apply boots with that disk.
+	// Offline settings are refused while the VM is running. Stop and wait
+	// before that write. Power on stays after the boot disk sync.
 	// Extra drives and NICs are separate resources. They hotplug when the
 	// VM is already running.
+	stoppedForSettings, stopErr := r.vmApi.stopForOfflineSettings(ctx, &apiPlan, &stateData)
+	if stopErr != nil {
+		resp.Diagnostics.AddError(
+			"Error updating VM power state",
+			stopErr.Error(),
+		)
+		return
+	}
+
 	if updateError := r.vmApi.UpdateVM(ctx, &apiPlan, &stateData); updateError != nil {
 		resp.Diagnostics.AddError(
 			"Error updating VM",
@@ -1341,6 +1350,17 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			err.Error(),
 		)
 		return
+	}
+	if stoppedForSettings && (planData.PowerState.IsNull() || planData.PowerState.IsUnknown()) {
+		tflog.Debug(ctx, "Planned powerstate is unset; powering the VM back on after the offline settings change")
+		if err := r.vmApi.powerOnVM(ctx, &planData); err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating VM power state",
+				err.Error(),
+			)
+			return
+		}
+		stateData.PowerState = types.BoolValue(true)
 	}
 	// Pause so a following read can see guest state after a power change.
 	// Tests set vmUpdateSettle to zero. The power helpers already wait
