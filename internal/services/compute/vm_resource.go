@@ -17,6 +17,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -1311,15 +1312,25 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	apiPlan.CloudInitFiles = cloneCloudInitFiles(planData.CloudInitFiles)
 	applyVMWriteOnly(&apiPlan, &stateData, &config)
 
-	// Update VM attributes only. Power is applied after the boot disk
-	// sync so a VM started in this apply boots with that disk.
+	// Offline settings are refused while the VM is running. Stop and wait
+	// before that write. Power on stays after the boot disk sync.
 	// Extra drives and NICs are separate resources. They hotplug when the
 	// VM is already running.
+	stoppedForSettings, stopErr := r.vmApi.stopForOfflineSettings(ctx, &apiPlan, &stateData)
+	if stopErr != nil {
+		resp.Diagnostics.AddError(
+			"Error updating VM power state",
+			stopErr.Error(),
+		)
+		return
+	}
+
 	if updateError := r.vmApi.UpdateVM(ctx, &apiPlan, &stateData); updateError != nil {
 		resp.Diagnostics.AddError(
 			"Error updating VM",
 			updateError.Error(),
 		)
+		r.restoreStoppedVM(ctx, &resp.Diagnostics, stoppedForSettings, &planData)
 		return
 	}
 
@@ -1329,6 +1340,7 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			"Error syncing boot disk",
 			bootErr.Error(),
 		)
+		r.restoreStoppedVM(ctx, &resp.Diagnostics, stoppedForSettings, &planData)
 		return
 	}
 	stateData.BootDisk = boot
@@ -1341,6 +1353,17 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 			err.Error(),
 		)
 		return
+	}
+	if stoppedForSettings && (planData.PowerState.IsNull() || planData.PowerState.IsUnknown()) {
+		tflog.Debug(ctx, "Planned powerstate is unset; powering the VM back on after the offline settings change")
+		if err := r.vmApi.powerOnVM(ctx, &planData); err != nil {
+			resp.Diagnostics.AddError(
+				"Error updating VM power state",
+				err.Error(),
+			)
+			return
+		}
+		stateData.PowerState = types.BoolValue(true)
 	}
 	// Pause so a following read can see guest state after a power change.
 	// Tests set vmUpdateSettle to zero. The power helpers already wait
@@ -1417,6 +1440,27 @@ func (r *VMResource) Update(ctx context.Context, req resource.UpdateRequest, res
 	// Save updated data into Terraform state
 	resp.Diagnostics.Append(resp.State.Set(ctx, &stateData)...)
 	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, stateData.Id)
+}
+
+// vmPlanStaysOff reports a known request to leave the VM stopped.
+// A null or unknown powerstate keeps the power from before this update.
+func vmPlanStaysOff(power types.Bool) bool {
+	return !power.IsNull() && !power.IsUnknown() && !power.ValueBool()
+}
+
+// restoreStoppedVM powers the VM back on when this update stopped it and the
+// plan does not leave it off. A power-on failure is added beside the error
+// that aborted the update.
+func (r *VMResource) restoreStoppedVM(ctx context.Context, diags *diag.Diagnostics, stopped bool, plan *VMResourceModel) {
+	if diags == nil || !stopped || plan == nil || vmPlanStaysOff(plan.PowerState) {
+		return
+	}
+	if err := r.vmApi.powerOnVM(ctx, plan); err != nil {
+		diags.AddError(
+			"Error updating VM power state",
+			fmt.Sprintf("the VM was stopped for a settings change and could not be powered back on: %s", err.Error()),
+		)
+	}
 }
 
 func (r *VMResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {

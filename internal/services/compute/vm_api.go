@@ -405,6 +405,26 @@ func vmUpdateRequest(planData *VMResourceModel, stateData *VMResourceModel) (*ve
 	return req, vmID, nil
 }
 
+// vmUpdateRequiresStoppedVM reports whether the update body includes a
+// setting VergeOS rejects while the VM is running. Those JSON names are
+// cpu_cores, ram, machine_type, console, video, uefi, secure_boot,
+// nested_virtualization, and disable_hypervisor.
+func vmUpdateRequiresStoppedVM(planData *VMResourceModel, stateData *VMResourceModel) bool {
+	if planData == nil {
+		return false
+	}
+	body := vmUpdateModel(planData, stateData)
+	return body.CPUCores != nil ||
+		body.RAM != nil ||
+		body.MachineType != nil ||
+		body.Console != nil ||
+		body.Video != nil ||
+		body.UEFI != nil ||
+		body.SecureBoot != nil ||
+		body.NestedVirtualization != nil ||
+		body.DisableHypervisor != nil
+}
+
 func decodeVMRequest[T any](apiData VMAPIResourceModel) (*T, error) {
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
@@ -487,6 +507,20 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 	}
 
 	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; requesting a graceful poweroff")
+	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
+	if err := va.powerOffFromPlan(ctx, planData); err != nil {
+		return err
+	}
+	stateData.PowerState = types.BoolValue(false)
+	return nil
+}
+
+// powerOffFromPlan sends one ACPI poweroff and waits until the VM stops.
+// VMService.PowerOff sends kill, so this posts poweroff instead.
+func (va *VMApi) powerOffFromPlan(ctx context.Context, planData *VMResourceModel) error {
+	if planData == nil {
+		return fmt.Errorf("VM plan is nil")
+	}
 	timeout, err := shutdownTimeoutFromPlan(planData)
 	if err != nil {
 		return err
@@ -495,12 +529,32 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 	if !planData.ForcePowerOff.IsNull() && !planData.ForcePowerOff.IsUnknown() {
 		force = planData.ForcePowerOff.ValueBool()
 	}
-	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
-	if err := va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force); err != nil {
-		return err
+	return va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force)
+}
+
+// stopForOfflineSettings powers off a running VM before an update VergeOS
+// rejects while the guest is running, and waits until the machine is stopped.
+// A VM that is already stopped is left alone. stopped is true only when this
+// call changed the power.
+func (va *VMApi) stopForOfflineSettings(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) (bool, error) {
+	if !vmUpdateRequiresStoppedVM(planData, stateData) {
+		return false, nil
 	}
-	stateData.PowerState = types.BoolValue(false)
-	return nil
+	if planData == nil || planData.Id.IsNull() || planData.Id.IsUnknown() || strings.TrimSpace(planData.Id.ValueString()) == "" {
+		return false, fmt.Errorf("invalid VM ID: empty")
+	}
+	running, err := va.isVMRunning(ctx, planData.Id.ValueString())
+	if err != nil {
+		return false, err
+	}
+	if running == nil || !*running {
+		return false, nil
+	}
+	tflog.Debug(ctx, "Stopping the VM before settings VergeOS rejects while it is running")
+	if err := va.powerOffFromPlan(ctx, planData); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // deviceAttachAttempts is how many times a hotplugged drive or NIC is read.
