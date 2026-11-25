@@ -6,6 +6,7 @@ package tenant
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,7 +44,11 @@ func TestTenantCopySchema(t *testing.T) {
 	if resp.Schema.Attributes["snapshot_id"] != nil || resp.Schema.Attributes["snapshot_name"] != nil {
 		t.Fatal("snapshot fields should not be arguments")
 	}
-	if !strings.Contains(resp.Schema.MarkdownDescription, "current state") || !strings.Contains(resp.Schema.MarkdownDescription, "does not expose") {
+	created := resp.Schema.Attributes["created"]
+	if created == nil || !created.IsComputed() {
+		t.Fatal("created should be computed")
+	}
+	if !strings.Contains(resp.Schema.MarkdownDescription, "current state") || !strings.Contains(resp.Schema.MarkdownDescription, "does not expose") || !strings.Contains(resp.Schema.MarkdownDescription, "keeps that key in state") {
 		t.Fatalf("description = %s", resp.Schema.MarkdownDescription)
 	}
 }
@@ -60,6 +65,7 @@ func TestCreateTenantCopyClonesCurrentStateAndIsolatesTheCopy(t *testing.T) {
 	var actions []map[string]any
 	cloned := false
 	isolated := false
+	created := time.Now().Unix()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if vergeio.AnswerCredentialCheck(w, r) {
 			return
@@ -82,7 +88,7 @@ func TestCreateTenantCopyClonesCurrentStateAndIsolatesTheCopy(t *testing.T) {
 			if isolated {
 				isolate = "true"
 			}
-			_, _ = w.Write([]byte(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":` + isolate + `,"vnet":0}`))
+			_, _ = fmt.Fprintf(w, `{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":%s,"vnet":0,"created":%d}`, isolate, created)
 		case r.URL.Path == "/api/v4/tenants/7" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"$key":7,"name":"source","is_snapshot":false,"isolate":false,"vnet":4}`))
 		case r.URL.Path == "/api/v4/tenant_actions" && r.Method == http.MethodPost:
@@ -121,7 +127,7 @@ func TestCreateTenantCopyClonesCurrentStateAndIsolatesTheCopy(t *testing.T) {
 	if err := api.createTenantCopy(t.Context(), data); err != nil {
 		t.Fatal(err)
 	}
-	if data.Id.ValueString() != "40" {
+	if data.Id.ValueString() != "40" || data.Created.ValueInt64() != created {
 		t.Fatalf("copy = %#v", data)
 	}
 	if len(actions) != 2 || actions[0]["action"] != "clone" || actions[0]["tenant"] != float64(7) {
@@ -311,6 +317,343 @@ func TestTenantCopyImportState(t *testing.T) {
 	}
 	if got.Id.ValueString() != "40" || got.TenantID.ValueString() != "7" || got.Isolate.IsNull() || !got.Isolate.ValueBool() {
 		t.Fatalf("imported = %#v", got)
+	}
+}
+
+func TestCreateTenantCopyKeepsIDWhenWaitFails(t *testing.T) {
+	fresh := time.Now().Unix()
+	for _, tc := range []struct {
+		name      string
+		cancel    bool
+		timeout   time.Duration
+		hideFirst bool
+		row       string
+		wantID    string
+		wantErr   string
+	}{
+		{
+			name:      "timeout",
+			timeout:   0,
+			hideFirst: true,
+			row:       fmt.Sprintf(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0,"created":%d}`, fresh),
+			wantID:    "40",
+			wantErr:   "was not created",
+		},
+		{
+			name:      "canceled",
+			cancel:    true,
+			timeout:   2 * time.Second,
+			hideFirst: true,
+			row:       fmt.Sprintf(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0,"created":%d}`, fresh),
+			wantID:    "40",
+			wantErr:   "context canceled",
+		},
+		{
+			name:      "older row",
+			timeout:   0,
+			hideFirst: true,
+			row:       `{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0,"created":1000}`,
+			wantErr:   "was not created",
+		},
+		{
+			name:      "source key",
+			timeout:   0,
+			hideFirst: true,
+			row:       fmt.Sprintf(`{"$key":7,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0,"created":%d}`, fresh),
+			wantErr:   "was not created",
+		},
+		{
+			name:    "missing",
+			timeout: 0,
+			wantErr: "was not created",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			poll, timeout := tenantCopyPoll, tenantCopyTimeout
+			tenantCopyPoll = time.Hour
+			tenantCopyTimeout = tc.timeout
+			t.Cleanup(func() {
+				tenantCopyPoll = poll
+				tenantCopyTimeout = timeout
+			})
+
+			ctx, cancel := context.WithCancel(t.Context())
+			t.Cleanup(cancel)
+			var deleted []string
+			cloned := false
+			lookups := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+				case r.URL.Path == "/api/v4/tenants" && r.Method == http.MethodGet:
+					if !cloned || tc.row == "" {
+						_, _ = w.Write([]byte(`[]`))
+						return
+					}
+					lookups++
+					if tc.hideFirst && lookups == 1 {
+						if tc.cancel {
+							cancel()
+						}
+						_, _ = w.Write([]byte(`[]`))
+						return
+					}
+					_, _ = fmt.Fprintf(w, "[%s]", tc.row)
+				case r.Method == http.MethodGet && (r.URL.Path == "/api/v4/tenants/40" || r.URL.Path == "/api/v4/tenants/7"):
+					if tc.row == "" {
+						http.NotFound(w, r)
+						return
+					}
+					_, _ = w.Write([]byte(tc.row))
+				case r.URL.Path == "/api/v4/tenant_actions" && r.Method == http.MethodPost:
+					body := readTenantAction(t, r)
+					if body["action"] == "clone" {
+						cloned = true
+					}
+					if body["action"] == "isolateon" || body["action"] == "restore" || body["action"] == "isolateoff" {
+						t.Errorf("action %#v", body)
+					}
+					_, _ = w.Write([]byte(`{"$key":1}`))
+				case r.Method == http.MethodDelete:
+					deleted = append(deleted, r.URL.Path)
+					_, _ = w.Write([]byte(`{}`))
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			api := testTenantAPI(t, server.URL)
+			data := &TenantCopyResourceModel{
+				TenantID: types.StringValue("7"),
+				Name:     types.StringValue("sandbox"),
+				Isolate:  types.BoolValue(true),
+			}
+			err := api.createTenantCopy(ctx, data)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v", err)
+			}
+			gotID := ""
+			if !data.Id.IsNull() && !data.Id.IsUnknown() {
+				gotID = data.Id.ValueString()
+			}
+			if gotID != tc.wantID {
+				t.Fatalf("id = %q, want %q; err = %v", gotID, tc.wantID, err)
+			}
+			if tc.wantID != "" && (data.Created.IsNull() || data.Created.ValueInt64() == 0) {
+				t.Fatal("kept copy has no created time")
+			}
+			if len(deleted) != 0 {
+				t.Fatalf("deleted = %#v", deleted)
+			}
+		})
+	}
+}
+
+func TestCreateTenantCopyStoresStateWhenWaitTimesOut(t *testing.T) {
+	poll, timeout := tenantCopyPoll, tenantCopyTimeout
+	tenantCopyPoll = time.Hour
+	tenantCopyTimeout = 0
+	t.Cleanup(func() {
+		tenantCopyPoll = poll
+		tenantCopyTimeout = timeout
+	})
+
+	created := time.Now().Unix()
+	row := fmt.Sprintf(`{"$key":40,"name":"sandbox","is_snapshot":false,"isolate":false,"vnet":0,"created":%d}`, created)
+	cloned := false
+	lookups := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.URL.Path == "/api/v4/tenants" && r.Method == http.MethodGet:
+			if !cloned {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			lookups++
+			if lookups == 1 {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = fmt.Fprintf(w, "[%s]", row)
+		case r.URL.Path == "/api/v4/tenants/40":
+			_, _ = w.Write([]byte(row))
+		case r.URL.Path == "/api/v4/tenant_actions":
+			cloned = true
+			_, _ = w.Write([]byte(`{"$key":1}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	item := &TenantCopyResource{}
+	configure := &resource.ConfigureResponse{}
+	item.Configure(ctx, resource.ConfigureRequest{ProviderData: vergeio.NewClient(server.URL, "user", "pass", true)}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	schemaResp := &resource.SchemaResponse{}
+	item.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	if diags := plan.Set(ctx, &TenantCopyResourceModel{
+		TenantID: types.StringValue("7"),
+		Name:     types.StringValue("sandbox"),
+		Isolate:  types.BoolValue(true),
+		Created:  types.Int64Unknown(),
+	}); diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	item.Create(ctx, resource.CreateRequest{Plan: plan}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("create succeeded while the copy was not ready")
+	}
+	var got TenantCopyResourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if got.Id.ValueString() != "40" || got.Name.ValueString() != "sandbox" || got.Created.ValueInt64() != created || !got.Isolate.ValueBool() {
+		t.Fatalf("state = id %s name %s created %s isolate %s", got.Id, got.Name, got.Created, got.Isolate)
+	}
+	if got.Created.IsUnknown() {
+		t.Fatal("state still has an unknown created time")
+	}
+}
+
+func TestDeleteTenantCopyLeavesReusedKey(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body       string
+		stateName  string
+		created    int64
+		wantDelete bool
+		wantErr    bool
+	}{
+		{name: "different created", status: http.StatusOK, body: `{"$key":40,"name":"sandbox","is_snapshot":false,"vnet":0,"created":1800000000}`, stateName: "sandbox", created: 1700000000},
+		{name: "different name", status: http.StatusOK, body: `{"$key":40,"name":"other","is_snapshot":false,"vnet":0,"created":1700000000}`, stateName: "sandbox", created: 1700000000},
+		{name: "same", status: http.StatusOK, body: `{"$key":40,"name":"sandbox","is_snapshot":false,"vnet":0,"created":1700000000}`, stateName: "sandbox", created: 1700000000, wantDelete: true},
+		{name: "name only", status: http.StatusOK, body: `{"$key":40,"name":"sandbox","is_snapshot":false,"vnet":0,"created":1800000000}`, stateName: "sandbox", wantDelete: true},
+		{name: "missing", status: http.StatusNotFound, stateName: "sandbox", created: 1700000000},
+		{name: "read error", status: http.StatusInternalServerError, stateName: "sandbox", created: 1700000000, wantErr: true},
+		{name: "snapshot", status: http.StatusOK, body: `{"$key":40,"name":"sandbox","is_snapshot":true,"vnet":0,"created":1700000000}`, stateName: "sandbox", created: 1700000000, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var deleted int
+			var actions int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if vergeio.AnswerCredentialCheck(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/version.json":
+					_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v4/tenants/40":
+					w.WriteHeader(tc.status)
+					if tc.body != "" {
+						_, _ = w.Write([]byte(tc.body))
+					}
+				case r.URL.Path == "/api/v4/tenant_status":
+					_, _ = w.Write([]byte(`[]`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v4/tenant_actions":
+					actions++
+					_, _ = w.Write([]byte(`{}`))
+				case r.Method == http.MethodDelete && r.URL.Path == "/api/v4/tenants/40":
+					deleted++
+					_, _ = w.Write([]byte(`{}`))
+				default:
+					t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+
+			data := &TenantCopyResourceModel{
+				Id:       types.StringValue("40"),
+				TenantID: types.StringValue("7"),
+				Name:     types.StringValue(tc.stateName),
+				Isolate:  types.BoolValue(true),
+			}
+			if tc.created != 0 {
+				data.Created = types.Int64Value(tc.created)
+			}
+			err := testTenantAPI(t, server.URL).deleteTenantCopy(t.Context(), data)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("delete succeeded")
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantDelete && deleted != 1 {
+				t.Fatalf("deleted = %d", deleted)
+			}
+			if !tc.wantDelete && (deleted != 0 || actions != 0) {
+				t.Fatalf("deleted = %d actions = %d", deleted, actions)
+			}
+		})
+	}
+}
+
+func TestReadTenantCopyDropsReusedKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case "/api/v4/tenants/40":
+			_, _ = w.Write([]byte(`{"$key":40,"name":"other","is_snapshot":false,"created":1800000000}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := t.Context()
+	item := &TenantCopyResource{}
+	configure := &resource.ConfigureResponse{}
+	item.Configure(ctx, resource.ConfigureRequest{ProviderData: vergeio.NewClient(server.URL, "user", "pass", true)}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	schemaResp := &resource.SchemaResponse{}
+	item.Schema(ctx, resource.SchemaRequest{}, schemaResp)
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	if diags := state.Set(ctx, &TenantCopyResourceModel{
+		Id:       types.StringValue("40"),
+		TenantID: types.StringValue("7"),
+		Name:     types.StringValue("sandbox"),
+		Isolate:  types.BoolValue(true),
+		Created:  types.Int64Value(1700000000),
+	}); diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &resource.ReadResponse{State: state}
+	item.Read(ctx, resource.ReadRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if !resp.State.Raw.IsNull() {
+		t.Fatal("a reused tenant key stayed in state")
 	}
 }
 

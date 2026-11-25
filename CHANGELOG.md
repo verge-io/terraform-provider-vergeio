@@ -1,5 +1,10 @@
 ## Unreleased
 
+### Bug fixes
+
+- `vergeio_vm_clone` and `vergeio_tenant_copy` keep the copy in state when the wait after clone is canceled or times out and the copy can be found by name. The apply still returns the error. The next apply destroys that copy and creates it again instead of failing because the name already exists. A row that is the source, a snapshot, or whose `created` time is older than this clone is left unstored (#375).
+- `terraform destroy -refresh=false` on `vergeio_vm_clone` and `vergeio_tenant_copy` no longer deletes a different VM or tenant that now holds the stored key. Destroy reads the row and compares `name` and `created`. A mismatch, or a missing row, is removed from state and left in VergeOS. A snapshot row and the source VM or tenant are still refused. Both resources gain computed `created`. State written before this release has no `created`, and destroy then compares `name` only. Import leaves `created` empty until the first read (#376).
+
 ## v3.1.0 - 2026-11-25
 
 ### Breaking changes

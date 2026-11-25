@@ -16,6 +16,8 @@ This is not a snapshot clone. The pinned govergeos client clones a tenant with `
 
 This is not the [`vergeio_tenant_clone` action](../actions/tenant_clone.html). That action copies a tenant and does not keep the copy in state.
 
+An apply that is interrupted after VergeOS stores the copy keeps that key in state and returns the error. The next apply destroys the copy instead of failing because the name already exists. `created` is the time VergeOS stored the copy. Refresh drops this resource when the key's name or `created` time differs. Destroy without a refresh leaves that other tenant.
+
 ## Example Usage
 
 ```terraform
@@ -44,6 +46,7 @@ resource "vergeio_tenant_copy" "example" {
 
 ### Read-Only
 
+- `created` (Number) Unix time when VergeOS created the copy. Distinct from `id`, which VergeOS can reuse. A different name or created time means the key now points at another tenant, and refresh drops this resource. Destroy without a refresh leaves the other tenant. Import leaves this empty, and the first read stores it.
 - `id` (String) Tenant key of the copy.
 
 ## Import
