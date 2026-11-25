@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"terraform-provider-vergeio/internal/shared"
+
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"github.com/verge-io/govergeos"
@@ -20,6 +22,14 @@ var (
 	tenantCopyPoll    = 2 * time.Second
 	tenantCopyTimeout = 2 * time.Minute
 )
+
+// tenantCopyCreatedSkew is how far behind this process a VergeOS clock can be
+// and still count as the copy Clone just stored.
+const tenantCopyCreatedSkew = 2 * time.Minute
+
+// tenantCopyLookupTimeout bounds the read after a wait failure. The caller
+// context may already be canceled.
+const tenantCopyLookupTimeout = 30 * time.Second
 
 func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceModel) error {
 	if a == nil || a.sdk == nil {
@@ -40,14 +50,23 @@ func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 	if existing != nil && existing.Key.Int() > 0 {
 		return fmt.Errorf("tenant %q already exists", name)
 	}
+	started := time.Now()
 	if err := a.sdk.Tenants.Clone(ctx, tenantID, &vergeos.TenantCloneOptions{Name: name}); err != nil {
 		return err
 	}
 	clone, err := waitTenantByName(ctx, a.sdk, name)
 	if err != nil {
+		found, findErr := a.lookupTenantByName(ctx, name)
+		if findErr != nil {
+			return fmt.Errorf("%w; looking up tenant %q: %v", err, name, findErr)
+		}
+		if !tenantCopyIsNew(found, name, started, tenantID) {
+			return err
+		}
+		assignTenantCopy(data, found)
 		return err
 	}
-	if clone.Key.Int() == tenantID || clone.IsSnapshot {
+	if !tenantCopyIsCopy(clone, name, tenantID) {
 		return fmt.Errorf("copy %q resolved to tenant %d, which is not a new tenant", name, clone.Key.Int())
 	}
 	copyID := clone.Key.Int()
@@ -64,9 +83,58 @@ func (a *API) createTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 		}
 		clone = refreshed
 	}
-	data.Id = idString(clone.Key.Int())
+	assignTenantCopy(data, clone)
 	tflog.Debug(ctx, fmt.Sprintf("copied tenant %d as tenant %d", tenantID, clone.Key.Int()))
 	return nil
+}
+
+func assignTenantCopy(data *TenantCopyResourceModel, clone *vergeos.Tenant) {
+	data.Id = idString(clone.Key.Int())
+	data.Created = timestamp(clone.Created)
+}
+
+// tenantCopyIsCopy reports that tenant is a new tenant with the requested name.
+// A snapshot and the source tenant are not.
+func tenantCopyIsCopy(tenant *vergeos.Tenant, name string, sourceID int) bool {
+	if tenant == nil || tenant.Key.Int() <= 0 || tenant.IsSnapshot || tenant.Name != name {
+		return false
+	}
+	if sourceID > 0 && tenant.Key.Int() == sourceID {
+		return false
+	}
+	return true
+}
+
+// tenantCopyIsNew is tenantCopyIsCopy plus the created time. A row that
+// VergeOS stored before this clone is not the copy the wait missed.
+func tenantCopyIsNew(tenant *vergeos.Tenant, name string, started time.Time, sourceID int) bool {
+	if !tenantCopyIsCopy(tenant, name, sourceID) {
+		return false
+	}
+	if tenant.Created > 0 && tenant.Created < started.Add(-tenantCopyCreatedSkew).Unix() {
+		return false
+	}
+	return true
+}
+
+func (a *API) lookupTenantByName(ctx context.Context, name string) (*vergeos.Tenant, error) {
+	lookupCtx, cancel := tenantCopyLookupContext(ctx)
+	defer cancel()
+	tenant, err := a.sdk.Tenants.GetByName(lookupCtx, name)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return tenant, nil
+}
+
+func tenantCopyLookupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), tenantCopyLookupTimeout)
 }
 
 func (a *API) readTenantCopy(ctx context.Context, data *TenantCopyResourceModel) error {
@@ -88,14 +156,12 @@ func (a *API) readTenantCopy(ctx context.Context, data *TenantCopyResourceModel)
 	if err != nil {
 		return err
 	}
-	if got.IsSnapshot {
-		return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
-	}
-	if !data.Name.IsNull() && !data.Name.IsUnknown() && got.Name != strings.TrimSpace(data.Name.ValueString()) {
-		return &vergeos.NotFoundError{Resource: "Tenant", ID: id}
+	if err := ensureTenantCopyOwned(data, got); err != nil {
+		return err
 	}
 	data.Id = idString(got.Key.Int())
 	data.Name = types.StringValue(got.Name)
+	data.Created = timestamp(got.Created)
 	// isolate is the configured choice to post isolateon. false does not
 	// post isolateoff, so the copied tenant can stay isolated. Writing that
 	// live flag back would not match the configuration and RequiresReplace
@@ -128,7 +194,47 @@ func (a *API) deleteTenantCopy(ctx context.Context, data *TenantCopyResourceMode
 	if got.IsSnapshot {
 		return fmt.Errorf("refusing to delete snapshot tenant %d", id)
 	}
+	foreign, err := shared.ForeignRow(nil, ensureTenantCopyOwned(data, got))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		label := ""
+		if tenantCopyNameKnown(data.Name) {
+			label = strings.TrimSpace(data.Name.ValueString())
+		}
+		tflog.Debug(ctx, fmt.Sprintf("tenant %d is not copy %q; leaving it in place", id, label))
+		return nil
+	}
 	return a.deleteTenant(ctx, &TenantResourceModel{Id: data.Id})
+}
+
+// ensureTenantCopyOwned returns NotFound when the stored key now points at
+// another tenant. Name and created are both checked when state has them.
+// Created is skipped when it was not stored (import, or state from before
+// that attribute existed). A snapshot row is not the copy.
+func ensureTenantCopyOwned(data *TenantCopyResourceModel, tenant *vergeos.Tenant) error {
+	if data == nil || tenant == nil {
+		return fmt.Errorf("tenant copy read returned no row")
+	}
+	if tenant.IsSnapshot {
+		return &vergeos.NotFoundError{Resource: "Tenant", ID: tenant.Key.Int()}
+	}
+	if tenantCopyNameKnown(data.Name) && tenant.Name != strings.TrimSpace(data.Name.ValueString()) {
+		return &vergeos.NotFoundError{Resource: "Tenant", ID: tenant.Key.Int()}
+	}
+	if tenantCopyCreatedKnown(data.Created) && tenant.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "Tenant", ID: tenant.Key.Int()}
+	}
+	return nil
+}
+
+func tenantCopyNameKnown(value types.String) bool {
+	return !value.IsNull() && !value.IsUnknown() && strings.TrimSpace(value.ValueString()) != ""
+}
+
+func tenantCopyCreatedKnown(value types.Int64) bool {
+	return !value.IsNull() && !value.IsUnknown() && value.ValueInt64() != 0
 }
 
 // deleteFailedTenantCopy removes a copy that was created and then failed
