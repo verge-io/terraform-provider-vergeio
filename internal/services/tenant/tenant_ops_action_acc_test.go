@@ -5,6 +5,7 @@ package tenant_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -501,25 +502,178 @@ func deleteAccTenant(ctx context.Context, client *vergeos.Client, id int) error 
 			return fmt.Errorf("delete tenant storage %d: %w", rowID, err)
 		}
 	}
-	// A stopped clone can refuse power off. The delete below is the cleanup.
-	offErr := client.Tenants.PowerOff(ctx, id)
-	if offErr != nil && vergeos.IsNotFoundError(offErr) {
-		return nil
+	if err := waitAccTenantOffline(ctx, client, id); err != nil {
+		return err
 	}
-	if tenant, err := client.Tenants.Get(ctx, id); err == nil {
-		if vnetID := tenant.VNet.Int(); vnetID > 0 {
-			if err := client.Networks.Kill(ctx, vnetID); err != nil && !vergeos.IsNotFoundError(err) {
-				offErr = fmt.Errorf("kill tenant %d network %d: %w", id, vnetID, err)
-			}
-		}
+	if err := stopAccTenantVNet(ctx, client, id); err != nil {
+		return err
 	}
 	if err := client.Tenants.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
-		if offErr != nil {
-			return fmt.Errorf("%v; delete tenant %d: %w", offErr, id, err)
-		}
 		return fmt.Errorf("delete tenant %d: %w", id, err)
 	}
 	return nil
+}
+
+func waitAccTenantOffline(ctx context.Context, client *vergeos.Client, id int) error {
+	status, err := accTenantStatus(ctx, client, id)
+	if err != nil {
+		return err
+	}
+	if accTenantPoweredOff(status) {
+		return nil
+	}
+	if accTenantStarting(status) {
+		if err := waitAccTenantPower(ctx, client, id, true); err != nil {
+			return err
+		}
+		status, err = accTenantStatus(ctx, client, id)
+		if err != nil {
+			return err
+		}
+	}
+	if accTenantPoweredOff(status) {
+		return nil
+	}
+	if !accTenantStopping(status) {
+		if err := client.Tenants.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+			return fmt.Errorf("power off tenant %d: %w", id, err)
+		}
+	}
+	return waitAccTenantPower(ctx, client, id, false)
+}
+
+func waitAccTenantPower(ctx context.Context, client *vergeos.Client, id int, wantOn bool) error {
+	deadline := time.Now().Add(2 * time.Minute)
+	var status *vergeos.TenantStatus
+	for {
+		var err error
+		status, err = accTenantStatus(ctx, client, id)
+		if err != nil {
+			return err
+		}
+		if wantOn {
+			if tenantStatusOn(status) {
+				return nil
+			}
+		} else if accTenantPoweredOff(status) {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if status == nil {
+		if wantOn {
+			return fmt.Errorf("timed out waiting for tenant %d to come online before power off", id)
+		}
+		return fmt.Errorf("timed out waiting for tenant %d to go offline", id)
+	}
+	if wantOn {
+		return fmt.Errorf("timed out waiting for tenant %d to come online before power off: status %q running=%t starting=%t stopping=%t", id, status.Status, status.Running, status.Starting, status.Stopping)
+	}
+	return fmt.Errorf("timed out waiting for tenant %d to go offline: status %q running=%t starting=%t stopping=%t", id, status.Status, status.Running, status.Starting, status.Stopping)
+}
+
+func accTenantStatus(ctx context.Context, client *vergeos.Client, id int) (*vergeos.TenantStatus, error) {
+	status, err := client.TenantStatus.Get(ctx, id)
+	if vergeos.IsNotFoundError(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return status, nil
+}
+
+func accTenantPoweredOff(status *vergeos.TenantStatus) bool {
+	if status == nil {
+		return true
+	}
+	if status.Running || status.Starting {
+		return false
+	}
+	if status.Status == "offline" {
+		return true
+	}
+	if status.Stopping {
+		return false
+	}
+	switch status.Status {
+	case "starting", "stopping", "provisioning", "online", "migrating", "restarting", "reduced":
+		return false
+	default:
+		return true
+	}
+}
+
+func accTenantStarting(status *vergeos.TenantStatus) bool {
+	if status == nil {
+		return false
+	}
+	if status.Starting {
+		return true
+	}
+	return status.Status == "starting" || status.Status == "provisioning"
+}
+
+func accTenantStopping(status *vergeos.TenantStatus) bool {
+	if status == nil {
+		return false
+	}
+	if status.Stopping {
+		return true
+	}
+	return status.Status == "stopping"
+}
+
+func stopAccTenantVNet(ctx context.Context, client *vergeos.Client, id int) error {
+	tenant, err := client.Tenants.Get(ctx, id)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil
+		}
+		return err
+	}
+	vnetID := tenant.VNet.Int()
+	if vnetID <= 0 {
+		return nil
+	}
+	deadline := time.Now().Add(2 * time.Minute)
+	killed := false
+	for {
+		network, err := client.Networks.Get(ctx, vnetID)
+		if err != nil {
+			if vergeos.IsNotFoundError(err) {
+				return nil
+			}
+			return err
+		}
+		if !network.Running {
+			return nil
+		}
+		if !killed {
+			if err := client.Networks.Kill(ctx, vnetID); err != nil && !vergeos.IsNotFoundError(err) {
+				if accVNetNotRunning(err) {
+					return nil
+				}
+				return fmt.Errorf("kill tenant %d network %d: %w", id, vnetID, err)
+			}
+			killed = true
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("timed out waiting for tenant %d network %d to stop", id, vnetID)
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func accVNetNotRunning(err error) bool {
+	var apiErr *vergeos.APIError
+	if !errors.As(err, &apiErr) || apiErr == nil {
+		return false
+	}
+	return apiErr.StatusCode == 422 && strings.Contains(strings.ToLower(apiErr.Message), "not running")
 }
 
 func accStateID(s *terraform.State, resourceName string) (int, error) {
