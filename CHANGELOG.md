@@ -1,4 +1,4 @@
-## Unreleased
+## v3.1.1 - 2026-11-25
 
 ### Bug fixes
 
