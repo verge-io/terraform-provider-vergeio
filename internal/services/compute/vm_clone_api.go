@@ -23,6 +23,14 @@ var (
 	vmCloneTimeout = 2 * time.Minute
 )
 
+// vmCloneCreatedSkew is how far behind this process a VergeOS clock can be
+// and still count as the copy Clone just stored.
+const vmCloneCreatedSkew = 2 * time.Minute
+
+// vmCloneLookupTimeout bounds the read after a wait failure. The caller
+// context may already be canceled.
+const vmCloneLookupTimeout = 30 * time.Second
+
 func (va *VMApi) createVMClone(ctx context.Context, data *VMCloneResourceModel) error {
 	if va == nil || va.sdk == nil {
 		return fmt.Errorf("VM client is not configured")
@@ -64,6 +72,7 @@ func (va *VMApi) createVMClone(ctx context.Context, data *VMCloneResourceModel) 
 	if existing != nil && existing.Key.Int() > 0 {
 		return fmt.Errorf("VM %q already exists", name)
 	}
+	started := time.Now()
 	if err := va.sdk.VMs.Clone(ctx, snapVM.Key.Int(), &vergeos.VMCloneOptions{
 		Name:         name,
 		PreserveMACs: false,
@@ -72,25 +81,95 @@ func (va *VMApi) createVMClone(ctx context.Context, data *VMCloneResourceModel) 
 	}
 	clone, err := waitVMByName(ctx, va.sdk, name)
 	if err != nil {
+		found, findErr := va.lookupVMByName(ctx, name)
+		if findErr != nil {
+			return fmt.Errorf("%w; looking up VM %q: %v", err, name, findErr)
+		}
+		if !vmCloneIsNew(found, name, started, snapVM.Key.Int(), liveVMKey(live)) {
+			return err
+		}
+		assignVMClone(data, found, live)
 		return err
 	}
-	if clone.Key.Int() == snapVM.Key.Int() || (live != nil && clone.Key.Int() == live.Key.Int()) || clone.IsSnapshot {
+	if !vmCloneIsCopy(clone, name, snapVM.Key.Int(), liveVMKey(live)) {
 		return fmt.Errorf("clone %q resolved to VM %d, which is not a new copy", name, clone.Key.Int())
 	}
 	if err := va.attachCloneNetwork(ctx, clone.Key.Int(), networkID); err != nil {
-		cleanupErr := va.deleteVMClone(ctx, clone.Key.Int(), liveVMKey(live))
+		cleanup := *data
+		assignVMClone(&cleanup, clone, live)
+		cleanup.Name = types.StringValue(clone.Name)
+		cleanupErr := va.deleteVMClone(ctx, &cleanup)
 		if cleanupErr != nil {
 			return fmt.Errorf("attach clone %d to network %d: %w; delete clone: %v", clone.Key.Int(), networkID, err, cleanupErr)
 		}
 		return fmt.Errorf("attach clone %d to network %d: %w", clone.Key.Int(), networkID, err)
 	}
-	data.Id = types.StringValue(fmt.Sprintf("%d", clone.Key.Int()))
-	data.SourceVMID = types.StringValue(fmt.Sprintf("%d", liveVMKey(live)))
-	if liveVMKey(live) == 0 {
-		data.SourceVMID = types.StringNull()
-	}
+	assignVMClone(data, clone, live)
 	tflog.Debug(ctx, fmt.Sprintf("cloned snapshot VM %d as VM %d on network %d", snapVM.Key.Int(), clone.Key.Int(), networkID))
 	return nil
+}
+
+func assignVMClone(data *VMCloneResourceModel, clone *vergeos.VM, live *vergeos.VM) {
+	data.Id = types.StringValue(strconv.Itoa(clone.Key.Int()))
+	data.Created = vmCloneCreated(clone.Created)
+	if liveVMKey(live) == 0 {
+		data.SourceVMID = types.StringNull()
+		return
+	}
+	data.SourceVMID = types.StringValue(strconv.Itoa(liveVMKey(live)))
+}
+
+func vmCloneCreated(v int64) types.Int64 {
+	if v == 0 {
+		return types.Int64Null()
+	}
+	return types.Int64Value(v)
+}
+
+// vmCloneIsCopy reports that vm is a new VM with the requested name.
+// A snapshot, the snapshot VM, and the live VM are not.
+func vmCloneIsCopy(vm *vergeos.VM, name string, deny ...int) bool {
+	if vm == nil || vm.Key.Int() <= 0 || vm.IsSnapshot || vm.Name != name {
+		return false
+	}
+	for _, id := range deny {
+		if id > 0 && vm.Key.Int() == id {
+			return false
+		}
+	}
+	return true
+}
+
+// vmCloneIsNew is vmCloneIsCopy plus the created time. A row that VergeOS
+// stored before this clone is not the copy the wait missed.
+func vmCloneIsNew(vm *vergeos.VM, name string, started time.Time, deny ...int) bool {
+	if !vmCloneIsCopy(vm, name, deny...) {
+		return false
+	}
+	if vm.Created > 0 && vm.Created < started.Add(-vmCloneCreatedSkew).Unix() {
+		return false
+	}
+	return true
+}
+
+func (va *VMApi) lookupVMByName(ctx context.Context, name string) (*vergeos.VM, error) {
+	lookupCtx, cancel := vmCloneLookupContext(ctx)
+	defer cancel()
+	vm, err := va.sdk.VMs.GetByName(lookupCtx, name)
+	if err != nil {
+		if vergeos.IsNotFoundError(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return vm, nil
+}
+
+func vmCloneLookupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(ctx), vmCloneLookupTimeout)
 }
 
 func liveVMKey(vm *vergeos.VM) int {
@@ -148,11 +227,8 @@ func (va *VMApi) readVMClone(ctx context.Context, data *VMCloneResourceModel) er
 	if err != nil {
 		return err
 	}
-	if vm.IsSnapshot {
-		return &vergeos.NotFoundError{Resource: "VM", ID: id}
-	}
-	if !data.Name.IsNull() && !data.Name.IsUnknown() && vm.Name != strings.TrimSpace(data.Name.ValueString()) {
-		return &vergeos.NotFoundError{Resource: "VM", ID: id}
+	if err := ensureVMCloneOwned(data, vm); err != nil {
+		return err
 	}
 	sourceID, err := optionalPositiveID(data.SourceVMID)
 	if err != nil {
@@ -161,30 +237,79 @@ func (va *VMApi) readVMClone(ctx context.Context, data *VMCloneResourceModel) er
 	if sourceID > 0 && sourceID == id {
 		return fmt.Errorf("clone id %d is the source VM", id)
 	}
-	data.Id = types.StringValue(fmt.Sprintf("%d", vm.Key.Int()))
+	data.Id = types.StringValue(strconv.Itoa(vm.Key.Int()))
 	data.Name = types.StringValue(vm.Name)
+	data.Created = vmCloneCreated(vm.Created)
 	return nil
 }
 
-func (va *VMApi) deleteVMClone(ctx context.Context, id, sourceID int) error {
+// ensureVMCloneOwned returns NotFound when the stored key now points at
+// another VM. Name and created are both checked when state has them.
+// Created is skipped when it was not stored (import, or state from before
+// that attribute existed). A snapshot row is not the copy.
+func ensureVMCloneOwned(data *VMCloneResourceModel, vm *vergeos.VM) error {
+	if data == nil || vm == nil {
+		return fmt.Errorf("VM clone read returned no row")
+	}
+	if vm.IsSnapshot {
+		return &vergeos.NotFoundError{Resource: "VM", ID: vm.Key.Int()}
+	}
+	if nameKnown(data.Name) && vm.Name != strings.TrimSpace(data.Name.ValueString()) {
+		return &vergeos.NotFoundError{Resource: "VM", ID: vm.Key.Int()}
+	}
+	if createdKnown(data.Created) && vm.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "VM", ID: vm.Key.Int()}
+	}
+	return nil
+}
+
+func nameKnown(value types.String) bool {
+	return !value.IsNull() && !value.IsUnknown() && strings.TrimSpace(value.ValueString()) != ""
+}
+
+func createdKnown(value types.Int64) bool {
+	return !value.IsNull() && !value.IsUnknown() && value.ValueInt64() != 0
+}
+
+func (va *VMApi) deleteVMClone(ctx context.Context, data *VMCloneResourceModel) error {
 	if va == nil || va.sdk == nil {
 		return fmt.Errorf("VM client is not configured")
 	}
-	if id <= 0 {
+	if data == nil {
 		return fmt.Errorf("clone id is required")
+	}
+	id, err := positiveID(data.Id, "id")
+	if err != nil {
+		return err
+	}
+	sourceID, err := optionalPositiveID(data.SourceVMID)
+	if err != nil {
+		return err
 	}
 	if sourceID > 0 && id == sourceID {
 		return fmt.Errorf("refusing to delete source VM %d", sourceID)
 	}
-	vm, err := va.sdk.VMs.Get(ctx, id)
-	if err != nil {
-		if vergeos.IsNotFoundError(err) {
+	vm, getErr := va.sdk.VMs.Get(ctx, id)
+	if getErr != nil {
+		if vergeos.IsNotFoundError(getErr) {
 			return nil
 		}
-		return err
+		return getErr
 	}
 	if vm.IsSnapshot {
 		return fmt.Errorf("refusing to delete snapshot VM %d", id)
+	}
+	foreign, err := shared.ForeignRow(nil, ensureVMCloneOwned(data, vm))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		label := ""
+		if nameKnown(data.Name) {
+			label = strings.TrimSpace(data.Name.ValueString())
+		}
+		tflog.Debug(ctx, fmt.Sprintf("VM %d is not clone %q; leaving it in place", id, label))
+		return nil
 	}
 	// Same stop as vergeio_vm destroy: one ACPI poweroff, then kill if the
 	// guest is still running. VMService.PowerOff is not used here.

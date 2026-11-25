@@ -14,6 +14,8 @@ Create clones the snapshot VM: the `vms` row whose `machine` is `snap_machine` a
 
 `network_id` is the network key, the same value as `vergeio_network.id`. Changing `snapshot_id`, `name`, or `network_id` replaces the copy.
 
+An apply that is interrupted after VergeOS stores the copy keeps that key in state and returns the error. The next apply destroys the copy instead of failing because the name already exists. `created` is the time VergeOS stored the copy. Refresh drops this resource when the key's name or `created` time differs. Destroy without a refresh leaves that other VM.
+
 ## Example Usage
 
 {{ tffile "examples/resources/vergeio_vm_clone/resource.tf" }}
@@ -29,6 +31,7 @@ Create clones the snapshot VM: the `vms` row whose `machine` is `snap_machine` a
 
 ### Read-Only
 
+- `created` (Number) Unix time when VergeOS created the copy. Distinct from `id`, which VergeOS can reuse. A different name or created time means the key now points at another VM, and refresh drops this resource. Destroy without a refresh leaves the other VM. Import leaves this empty, and the first read stores it.
 - `id` (String) VM $key of the copy.
 - `source_vm_id` (String) VM $key of the live VM the snapshot belongs to. Null when that VM is gone. Destroy does not delete this VM.
 
