@@ -32,7 +32,11 @@ Every list accepts the same `config` arguments.
 
 `tag` is a tag name, or `category/name` when that name exists in more than one category. Only objects assigned that tag are listed. VergeOS stores the assignment as `collection/key`. The collections for these lists are `vms`, `vnets`, `tenants`, `users`, `groups`, `tags`, and `snapshot_profiles`.
 
-`tenant` is a tenant key or a tenant name. It is sent as `tenant eq` for `vergeio_vm` and `vergeio_network`. The other lists reject it. Objects inside a tenant are on that tenant's API. Point `host` at the tenant UI and query again.
+`tenant` is a tenant key or a tenant name. The other lists reject it.
+
+`vergeio_network` sends `owner eq 'tenants/<key>'`. The `vnets` table has no `tenant` column. VergeOS stores the tenant on `owner`, including the network it creates for that tenant. A filter on a column the table does not have comes back as status 200 and an empty list.
+
+`vergeio_vm` sends `owner eq 'tenants/<key>'` on `vms.owner`. The `vms` table has no `tenant` column. `owner` is the column that exists, and the client reads it on every VM list. A VM is included when that reference is the tenant. Tenant nodes are not VMs, and `vms.cluster` is the host cluster, so neither is used as the filter. Guest VMs that exist only inside the tenant are on that tenant's API. Point `host` at the tenant UI and leave `tenant` unset.
 
 `limit` on the list block caps how many results Terraform asks for. The CLI default is 100.
 
@@ -67,11 +71,11 @@ list "vergeio_vm" "web" {
   }
 }
 
-list "vergeio_network" "web" {
+list "vergeio_network" "customer" {
   provider = vergeio
 
   config {
-    name_pattern = "web-*"
+    tenant = "customer-a"
   }
 }
 ```

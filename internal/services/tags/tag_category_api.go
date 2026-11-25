@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -68,10 +69,27 @@ func tagCategoryUpdateRequest(plan, state *TagCategoryResourceModel) *vergeos.Ta
 	return req
 }
 
+// ensureTagCategoryOwned returns NotFound when the stored key now points at
+// another category (created mismatch). Skip the check when created is unset
+// (import, or state written before this field existed).
+func ensureTagCategoryOwned(data *TagCategoryResourceModel, category *vergeos.TagCategory) error {
+	if data == nil || category == nil {
+		return fmt.Errorf("tag category read returned no row")
+	}
+	if data.Created.IsNull() || data.Created.IsUnknown() || data.Created.ValueInt64() == 0 {
+		return nil
+	}
+	if category.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "TagCategory", ID: category.Key.Int()}
+	}
+	return nil
+}
+
 func applyTagCategory(data *TagCategoryResourceModel, category *vergeos.TagCategory) {
 	data.Id = idString(category.Key.Int())
 	data.Name = types.StringValue(category.Name)
 	data.Description = types.StringValue(category.Description)
+	data.Created = types.Int64Value(category.Created)
 	data.SingleTagSelection = types.BoolValue(category.SingleTagSelection)
 	data.TaggableVolumes = types.BoolValue(category.TaggableVolumes)
 	data.TaggableVNets = types.BoolValue(category.TaggableVNets)
@@ -106,6 +124,9 @@ func (ta *TagsApi) readTagCategory(ctx context.Context, data *TagCategoryResourc
 	if err != nil {
 		return err
 	}
+	if err := ensureTagCategoryOwned(data, category); err != nil {
+		return err
+	}
 	applyTagCategory(data, category)
 	tflog.Debug(ctx, fmt.Sprintf("read tag category %d", id))
 	return nil
@@ -114,6 +135,13 @@ func (ta *TagsApi) readTagCategory(ctx context.Context, data *TagCategoryResourc
 func (ta *TagsApi) updateTagCategory(ctx context.Context, plan, state *TagCategoryResourceModel) error {
 	id, err := parseID(state.Id, "tag category")
 	if err != nil {
+		return err
+	}
+	current, err := ta.sdk.TagCategories.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureTagCategoryOwned(state, current); err != nil {
 		return err
 	}
 	plan.Id = state.Id
@@ -135,6 +163,14 @@ func (ta *TagsApi) deleteTagCategory(ctx context.Context, data *TagCategoryResou
 	id, err := parseID(data.Id, "tag category")
 	if err != nil {
 		return err
+	}
+	current, getErr := ta.sdk.TagCategories.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureTagCategoryOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	if err := ta.sdk.TagCategories.Delete(ctx, id); err != nil {
 		if vergeos.IsNotFoundError(err) {

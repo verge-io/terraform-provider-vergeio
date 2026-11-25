@@ -18,6 +18,33 @@ import (
 	"terraform-provider-vergeio/internal/client"
 )
 
+func TestRememberGroupAfterCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	group := &GroupResource{}
+	schemaResp := &fwresource.SchemaResponse{}
+	group.Schema(context.Background(), fwresource.SchemaRequest{}, schemaResp)
+	resp := &fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	group.rememberGroup(ctx, resp, &GroupResourceModel{
+		Id:      types.StringValue("3"),
+		Name:    types.StringValue("ops"),
+		Enabled: types.BoolUnknown(),
+	})
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got GroupResourceModel
+	if diags := resp.State.Get(context.Background(), &got); diags.HasError() {
+		t.Fatal(diags)
+	}
+	if got.Id.ValueString() != "3" {
+		t.Fatalf("id = %q", got.Id.ValueString())
+	}
+	if !got.Enabled.IsNull() || got.Enabled.IsUnknown() {
+		t.Fatalf("enabled = %#v, want null", got.Enabled)
+	}
+}
+
 func TestGroupResourceMetadata(t *testing.T) {
 	resp := &fwresource.MetadataResponse{}
 	NewGroupResource().Metadata(context.Background(), fwresource.MetadataRequest{ProviderTypeName: "vergeio"}, resp)

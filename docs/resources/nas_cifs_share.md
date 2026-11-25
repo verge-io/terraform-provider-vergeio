@@ -88,7 +88,7 @@ resource "vergeio_nas_cifs_share" "example" {
 ### Read-Only
 
 - `created` (Number) Time the share was created, as seconds since the epoch.
-- `id` (String) Share id.
+- `id` (String) Share id, a 40 character SHA1 hex string.
 - `modified` (Number) Last modification time, as seconds since the epoch.
 - `status` (Number) Share status id reported by VergeOS.
 

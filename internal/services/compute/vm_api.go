@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -149,47 +151,17 @@ func (va *VMApi) GetMachineTypesFromAPI(ctx context.Context) ([]string, error) {
 	return machineTypes, nil
 }
 
-type VMAPIDataSourceModel struct {
-	Id          int32  `json:"id,omitempty"`
-	Name        string `json:"name,omitempty"`
-	Key         int32  `json:"$key,omitempty"`
-	IsSnapshot  bool   `json:"is_snapshot,omitempty"`
-	CPUType     string `json:"cpu_type,omitempty"`
-	MachineType string `json:"machine_type,omitempty"`
-	OSFamily    string `json:"os_family,omitempty"`
-	UEFI        bool   `json:"uefi,omitempty"`
-	Machine     struct {
-		Drives []*VMDriveAPIDataSourceModel `json:"drives,omitempty"`
-		Nics   []*VMNICAPIDataSourceModel   `json:"nics,omitempty"`
-	} `json:"machine,omitempty"`
-}
+const vmListNICFields = "$key,machine,orderid,name,description,interface,driver,model,vendor,port,enabled,disable_mq,vnet,macaddress,ipaddress,asset,device,status#status as powerState"
 
-type VMDriveAPIDataSourceModel struct {
-	Key           int32                              `json:"$key,omitempty"`
-	Name          string                             `json:"name,omitempty"`
-	Interface     string                             `json:"interface,omitempty"`
-	Media         string                             `json:"media,omitempty"`
-	Description   string                             `json:"description,omitempty"`
-	PreferredTier string                             `json:"preferred_tier,omitempty"`
-	MediaSource   *VMDriveMediaSourceDataSourceModel `json:"media_source,omitempty"`
-}
-
-type VMDriveMediaSourceDataSourceModel struct {
-	Key            int32 `json:"$key,omitempty"`
-	UsedBytes      int64 `json:"used_bytes,omitempty"`
-	AllocatedBytes int64 `json:"allocated_bytes,omitempty"`
-	Filesize       int64 `json:"filesize,omitempty"`
-}
-
-type VMNICAPIDataSourceModel struct {
-	Key        int32            `json:"$key,omitempty"`
-	Name       string           `json:"name,omitempty"`
+type vmListNIC struct {
+	Key        vergeos.FlexInt  `json:"$key,omitempty"`
+	Machine    int              `json:"machine,omitempty"`
+	Name       string           `json:"name"`
 	Interface  string           `json:"interface,omitempty"`
-	Vnet       *vergeos.FlexInt `json:"vnet,omitempty"`
-	Status     string           `json:"status,omitempty"`
-	Ipaddress  string           `json:"ipaddress,omitempty"`
-	MacAddress string           `json:"macaddress,omitempty"`
-	// ExternalIP string `json:"external_ip,omitempty"`
+	VNET       *vergeos.FlexInt `json:"vnet,omitempty"`
+	MAC        string           `json:"macaddress,omitempty"`
+	IPAddress  string           `json:"ipaddress,omitempty"`
+	PowerState string           `json:"powerState,omitempty"`
 }
 
 // CloudInitFile represents a cloud-init file with name and contents.
@@ -238,7 +210,6 @@ type VMAPIResourceModel struct {
 	CPUType              *string            `json:"cpu_type,omitempty"`
 	RAM                  *int32             `json:"ram,omitempty"`
 	Console              *string            `json:"console,omitempty"`
-	Display              *string            `json:"display,omitempty"`
 	Video                *string            `json:"video,omitempty"`
 	Sound                *string            `json:"sound,omitempty"`
 	OSFamily             *string            `json:"os_family,omitempty"`
@@ -318,7 +289,6 @@ func vmCreateModel(data *VMResourceModel) VMAPIResourceModel {
 		CPUType:              vergeio.KnownString(data.CPUType),
 		RAM:                  int32OrDefault(data.RAM, defaultVMRAM),
 		Console:              vergeio.KnownString(data.Console),
-		Display:              vergeio.KnownString(data.Display),
 		Video:                vergeio.KnownString(data.Video),
 		Sound:                vergeio.KnownString(data.Sound),
 		OSFamily:             vergeio.KnownString(data.OSFamily),
@@ -389,7 +359,6 @@ func vmUpdateModel(planData *VMResourceModel, stateData *VMResourceModel) VMAPIR
 		CPUType:              vergeio.ChangedString(planData.CPUType, stateData.CPUType),
 		RAM:                  vergeio.ChangedInt32(planData.RAM, stateData.RAM),
 		Console:              vergeio.ChangedString(planData.Console, stateData.Console),
-		Display:              vergeio.ChangedString(planData.Display, stateData.Display),
 		Video:                vergeio.ChangedString(planData.Video, stateData.Video),
 		Sound:                vergeio.ChangedString(planData.Sound, stateData.Sound),
 		OSFamily:             vergeio.ChangedString(planData.OSFamily, stateData.OSFamily),
@@ -433,6 +402,26 @@ func vmUpdateRequest(planData *VMResourceModel, stateData *VMResourceModel) (*ve
 	return req, vmID, nil
 }
 
+// vmUpdateRequiresStoppedVM reports whether the update body includes a
+// setting VergeOS rejects while the VM is running. Those JSON names are
+// cpu_cores, ram, machine_type, console, video, uefi, secure_boot,
+// nested_virtualization, and disable_hypervisor.
+func vmUpdateRequiresStoppedVM(planData *VMResourceModel, stateData *VMResourceModel) bool {
+	if planData == nil {
+		return false
+	}
+	body := vmUpdateModel(planData, stateData)
+	return body.CPUCores != nil ||
+		body.RAM != nil ||
+		body.MachineType != nil ||
+		body.Console != nil ||
+		body.Video != nil ||
+		body.UEFI != nil ||
+		body.SecureBoot != nil ||
+		body.NestedVirtualization != nil ||
+		body.DisableHypervisor != nil
+}
+
 func decodeVMRequest[T any](apiData VMAPIResourceModel) (*T, error) {
 	encodedBuffer := new(bytes.Buffer)
 	if err := json.NewEncoder(encodedBuffer).Encode(apiData); err != nil {
@@ -453,7 +442,7 @@ func (va *VMApi) CreateVM(ctx context.Context, data *VMResourceModel) error {
 		return err
 	}
 
-	vm, err := va.sdk.VMs.Create(ctx, req)
+	vm, err := va.sdk.VMs.Create(shared.CommitContext(ctx), req)
 	if err != nil {
 		return err
 	}
@@ -515,6 +504,20 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 	}
 
 	tflog.Debug(ctx, "Planned powerstate is off and the VM is running; requesting a graceful poweroff")
+	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
+	if err := va.powerOffFromPlan(ctx, planData); err != nil {
+		return err
+	}
+	stateData.PowerState = types.BoolValue(false)
+	return nil
+}
+
+// powerOffFromPlan sends one ACPI poweroff and waits until the VM stops.
+// VMService.PowerOff sends kill, so this posts poweroff instead.
+func (va *VMApi) powerOffFromPlan(ctx context.Context, planData *VMResourceModel) error {
+	if planData == nil {
+		return fmt.Errorf("VM plan is nil")
+	}
 	timeout, err := shutdownTimeoutFromPlan(planData)
 	if err != nil {
 		return err
@@ -523,12 +526,32 @@ func (va *VMApi) applyPlannedPowerState(ctx context.Context, planData *VMResourc
 	if !planData.ForcePowerOff.IsNull() && !planData.ForcePowerOff.IsUnknown() {
 		force = planData.ForcePowerOff.ValueBool()
 	}
-	// Post poweroff and poll. Do not call VMService.PowerOff: it sends kill.
-	if err := va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force); err != nil {
-		return err
+	return va.gracefulPowerOff(ctx, planData.Id.ValueString(), planData.Name.ValueString(), timeout, force)
+}
+
+// stopForOfflineSettings powers off a running VM before an update VergeOS
+// rejects while the guest is running, and waits until the machine is stopped.
+// A VM that is already stopped is left alone. stopped is true only when this
+// call changed the power.
+func (va *VMApi) stopForOfflineSettings(ctx context.Context, planData *VMResourceModel, stateData *VMResourceModel) (bool, error) {
+	if !vmUpdateRequiresStoppedVM(planData, stateData) {
+		return false, nil
 	}
-	stateData.PowerState = types.BoolValue(false)
-	return nil
+	if planData == nil || planData.Id.IsNull() || planData.Id.IsUnknown() || strings.TrimSpace(planData.Id.ValueString()) == "" {
+		return false, fmt.Errorf("invalid VM ID: empty")
+	}
+	running, err := va.isVMRunning(ctx, planData.Id.ValueString())
+	if err != nil {
+		return false, err
+	}
+	if running == nil || !*running {
+		return false, nil
+	}
+	tflog.Debug(ctx, "Stopping the VM before settings VergeOS rejects while it is running")
+	if err := va.powerOffFromPlan(ctx, planData); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // deviceAttachAttempts is how many times a hotplugged drive or NIC is read.
@@ -1079,7 +1102,6 @@ func (va *VMApi) isVMRunning(ctx context.Context, vmId string) (*bool, error) {
 	return &running, nil
 }
 
-// This function kills the VM
 func (va *VMApi) killVM(ctx context.Context, data *VMResourceModel) error {
 	tflog.Debug(ctx, fmt.Sprintf("Calling the Kill VM API for VM %v", data.Id.ValueString()))
 	return va.changeVMPowerState(ctx, data, "kill")
@@ -1191,7 +1213,10 @@ func applyVM(data *VMResourceModel, vm *vergeos.VM) {
 	data.CPUType = types.StringValue(vm.CPUType)
 	data.RAM = types.Int32Value(int32(vm.RAM))
 	data.Console = types.StringValue(vm.Console)
-	data.Display = types.StringValue(vm.Display)
+	// vms has no display column, so a read cannot replace this value.
+	if data.Display.IsNull() || data.Display.IsUnknown() {
+		data.Display = types.StringValue("")
+	}
 	data.Video = types.StringValue(vm.Video)
 	data.Sound = types.StringValue(vm.Sound)
 	data.OSFamily = types.StringValue(vm.OSFamily)
@@ -1277,6 +1302,10 @@ func (va *VMApi) readVM(ctx context.Context, data *VMResourceModel, expectLiveCl
 	cloudInitLivePresent, err = va.readCloudInitFiles(ctx, data, vmID, expectLiveCloudInit)
 	if err != nil {
 		return false, err
+	}
+	// A zero list has no element type. terraform query rejects that value.
+	if data.GuestAgentIPs.ElementType(ctx) == nil {
+		data.GuestAgentIPs = types.ListNull(types.StringType)
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
@@ -1475,7 +1504,6 @@ func (va *VMApi) readGuestAgentInfo(ctx context.Context, data *VMResourceModel, 
 	return nil
 }
 
-// Read VMs from the API. Used by the data source
 func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 	tflog.Debug(ctx, "Reading the vm data")
@@ -1501,101 +1529,59 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 
 	vms = vergeio.KeepExact(vms, fn, func(vm vergeos.VM) string { return vm.Name })
 
-	// Convert SDK VMs to API model for existing field mapping logic
-	var vmAPIResp []VMAPIDataSourceModel
-	for _, vm := range vms {
-		vmAPIResp = append(vmAPIResp, VMAPIDataSourceModel{
-			Id:          int32(vm.Machine), // Machine reference ID
-			Name:        vm.Name,
-			Key:         int32(vm.Key.Int()), // VM Key (was $key in API)
-			IsSnapshot:  vm.IsSnapshot,
-			CPUType:     vm.CPUType,
-			MachineType: vm.MachineType,
-			OSFamily:    vm.OSFamily,
-			UEFI:        vm.UEFI,
-			// Note: Machine.Drives and Machine.Nics are not available in basic VM list
-			// These would need separate API calls if needed
-		})
-	}
-
-	// Filter the response for snapshots
 	isSnapshotFilterSet := !data.IsSnapshot.IsNull()
 	isSnapshotFilter := data.IsSnapshot.ValueBool()
-
-	for _, vmAPIRespItem := range vmAPIResp {
-
-		if isSnapshotFilterSet {
-			if isSnapshotFilter != vmAPIRespItem.IsSnapshot {
-				continue
+	kept := make([]vergeos.VM, 0, len(vms))
+	for _, vm := range vms {
+		if isSnapshotFilterSet && isSnapshotFilter != vm.IsSnapshot {
+			continue
+		}
+		kept = append(kept, vm)
+	}
+	if tag := strings.TrimSpace(data.Tag.ValueString()); !data.Tag.IsNull() && !data.Tag.IsUnknown() && tag != "" {
+		keys, err := shared.TagMemberKeys(ctx, va.sdk, tag, "vms")
+		if err != nil {
+			return err
+		}
+		matched := make([]vergeos.VM, 0, len(kept))
+		for _, vm := range kept {
+			if _, ok := keys[strconv.Itoa(vm.Key.Int())]; ok {
+				matched = append(matched, vm)
 			}
 		}
+		kept = matched
+	}
+	machineIDs := make([]int, 0, len(kept))
+	for _, vm := range kept {
+		machineIDs = append(machineIDs, vm.Machine)
+	}
 
-		vmModel := VMModel{
-			Id:          types.Int32Value(vmAPIRespItem.Id),
-			Name:        types.StringValue(vmAPIRespItem.Name),
-			Key:         types.Int32Value(vmAPIRespItem.Key),
-			IsSnapshot:  types.BoolValue(vmAPIRespItem.IsSnapshot),
-			CPUType:     types.StringValue(vmAPIRespItem.CPUType),
-			MachineType: types.StringValue(vmAPIRespItem.MachineType),
-			OSFamily:    types.StringValue(vmAPIRespItem.OSFamily),
-			UEFI:        types.BoolValue(vmAPIRespItem.UEFI),
+	drivesByMachine, err := va.drivesByMachine(ctx, machineIDs)
+	if err != nil {
+		return err
+	}
+	nicsByMachine, err := va.nicsByMachine(ctx, machineIDs)
+	if err != nil {
+		return err
+	}
+
+	for _, vm := range kept {
+		drives, err := vmDriveModels(drivesByMachine[vm.Machine])
+		if err != nil {
+			return err
 		}
-
-		if vmAPIRespItem.Machine.Drives != nil {
-			var drives []*VMDriveModel
-
-			for _, vmDrive := range vmAPIRespItem.Machine.Drives {
-				tier, err := preferredTierFromAPI(vmDrive.PreferredTier)
-				if err != nil {
-					return err
-				}
-				drive := &VMDriveModel{
-					Key:           types.Int32Value(vmDrive.Key),
-					Name:          types.StringValue(vmDrive.Name),
-					Interface:     types.StringValue(vmDrive.Interface),
-					Media:         types.StringValue(vmDrive.Media),
-					Description:   types.StringValue(vmDrive.Description),
-					PreferredTier: tier,
-				}
-				if vmDrive.MediaSource != nil {
-					msBlock := vmDrive.MediaSource
-					mediaSource := VMDriveMediasourceModel{
-						Key:            types.Int32Value(msBlock.Key),
-						UsedBytes:      types.Int64Value(vmDrive.MediaSource.UsedBytes),
-						AllocatedBytes: types.Int64Value(vmDrive.MediaSource.AllocatedBytes),
-						Filesize:       types.Int64Value(vmDrive.MediaSource.Filesize),
-					}
-					drive.MediaSource = &mediaSource
-				}
-
-				drives = append(drives, drive)
-			}
-			vmModel.Drives = drives
-		}
-
-		if vmAPIRespItem.Machine.Nics != nil {
-			var nics []*VMNicModel
-
-			for _, vmNic := range vmAPIRespItem.Machine.Nics {
-				vnet := types.Int32Null()
-				if vmNic.Vnet != nil {
-					vnet = types.Int32Value(int32(vmNic.Vnet.Int()))
-				}
-				nic := &VMNicModel{
-					Key:        types.Int32Value(vmNic.Key),
-					Name:       types.StringValue(vmNic.Name),
-					Interface:  types.StringValue(vmNic.Interface),
-					Vnet:       vnet,
-					Status:     types.StringValue(vmNic.Status),
-					Ipaddress:  types.StringValue(vmNic.Ipaddress),
-					MacAddress: types.StringValue(vmNic.MacAddress),
-				}
-				nics = append(nics, nic)
-			}
-			vmModel.Nics = nics
-		}
-
-		data.Vms = append(data.Vms, &vmModel)
+		data.Vms = append(data.Vms, &VMModel{
+			Id:          types.Int32Value(int32(vm.Machine)),
+			Name:        types.StringValue(vm.Name),
+			Key:         types.Int32Value(int32(vm.Key.Int())),
+			IsSnapshot:  types.BoolValue(vm.IsSnapshot),
+			CPUType:     types.StringValue(vm.CPUType),
+			MachineType: types.StringValue(vm.MachineType),
+			OSFamily:    types.StringValue(vm.OSFamily),
+			UEFI:        types.BoolValue(vm.UEFI),
+			Drives:      drives,
+			Nics:        vmNICModels(nicsByMachine[vm.Machine]),
+		})
 	}
 	// A nil slice is stored as null. Zero rows are an empty list so length() and for expressions can run.
 	if data.Vms == nil {
@@ -1605,6 +1591,182 @@ func (va *VMApi) readVMs(ctx context.Context, data *VMDataSourceModel) error {
 	tflog.Debug(ctx, "Data was successfully converted to a resource")
 
 	return nil
+}
+
+const maxMachineFilterLen = 1200
+
+func machineIDFilter(ids []int) string {
+	filters := machineIDFilters(ids)
+	if len(filters) == 0 {
+		return ""
+	}
+	return filters[0]
+}
+
+func machineIDFilters(ids []int) []string {
+	seen := make(map[int]struct{}, len(ids))
+	unique := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	sort.Ints(unique)
+	if len(unique) == 0 {
+		return nil
+	}
+	var filters []string
+	start := 0
+	for start < len(unique) {
+		end := start + 1
+		for end < len(unique) && len(joinMachineFilter(unique[start:end+1])) <= maxMachineFilterLen {
+			end++
+		}
+		filters = append(filters, joinMachineFilter(unique[start:end]))
+		start = end
+	}
+	return filters
+}
+
+func joinMachineFilter(ids []int) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("machine eq %d", id)
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return "(" + strings.Join(parts, " or ") + ")"
+}
+
+func (va *VMApi) drivesByMachine(ctx context.Context, machineIDs []int) (map[int][]vergeos.VMDrive, error) {
+	grouped := map[int][]vergeos.VMDrive{}
+	for _, filter := range machineIDFilters(machineIDs) {
+		drives, err := va.sdk.VMDrives.ListAll(ctx, vergeos.WithFilter(filter))
+		if err != nil {
+			return nil, fmt.Errorf("listing drives: %w", err)
+		}
+		for _, drive := range drives {
+			grouped[drive.Machine] = append(grouped[drive.Machine], drive)
+		}
+	}
+	return grouped, nil
+}
+
+func (va *VMApi) nicsByMachine(ctx context.Context, machineIDs []int) (map[int][]vmListNIC, error) {
+	grouped := map[int][]vmListNIC{}
+	for _, filter := range machineIDFilters(machineIDs) {
+		nics, err := va.listNICs(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+		for _, nic := range nics {
+			grouped[nic.Machine] = append(grouped[nic.Machine], nic)
+		}
+	}
+	return grouped, nil
+}
+
+func (va *VMApi) listNICs(ctx context.Context, filter string) ([]vmListNIC, error) {
+	apiResp, err := va.client.Get(ctx, vergeio.NICEndpoint, &vergeio.Options{
+		Fields: vmListNICFields,
+		Filter: filter,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing NICs: %w", err)
+	}
+	if apiResp == nil {
+		return nil, errors.New("listing NICs: missing response")
+	}
+	body, readErr := io.ReadAll(apiResp.Body)
+	closeErr := apiResp.Body.Close()
+	if readErr != nil {
+		return nil, fmt.Errorf("listing NICs: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("listing NICs: %w", closeErr)
+	}
+	var nics []vmListNIC
+	if err := json.Unmarshal(body, &nics); err != nil {
+		return nil, fmt.Errorf("listing NICs: %w", err)
+	}
+	return nics, nil
+}
+
+func vmDriveModels(drives []vergeos.VMDrive) ([]*VMDriveModel, error) {
+	if len(drives) > 1 {
+		sortDrivesForState(drives)
+	}
+	out := make([]*VMDriveModel, 0, len(drives))
+	for _, drive := range drives {
+		tier, err := preferredTierFromAPI(drive.PreferredTier)
+		if err != nil {
+			return nil, err
+		}
+		model := &VMDriveModel{
+			Key:           types.Int32Value(int32(drive.Key.Int())),
+			Name:          types.StringValue(drive.Name),
+			Interface:     types.StringValue(drive.Interface),
+			Media:         types.StringValue(drive.Media),
+			Description:   types.StringValue(drive.Description),
+			PreferredTier: tier,
+		}
+		if source := driveMediaSource(drive); source != nil {
+			model.MediaSource = source
+		}
+		out = append(out, model)
+	}
+	return out, nil
+}
+
+func driveMediaSource(drive vergeos.VMDrive) *VMDriveMediasourceModel {
+	fileKey := drive.File.Int()
+	if fileKey == 0 && drive.UsedBytes == 0 {
+		return nil
+	}
+	source := &VMDriveMediasourceModel{
+		Key:            types.Int32Null(),
+		UsedBytes:      types.Int64Value(drive.UsedBytes),
+		AllocatedBytes: types.Int64Null(),
+		Filesize:       types.Int64Null(),
+	}
+	if fileKey != 0 {
+		source.Key = types.Int32Value(int32(fileKey))
+	}
+	return source
+}
+
+func vmNICModels(nics []vmListNIC) []*VMNicModel {
+	if len(nics) > 1 {
+		sort.SliceStable(nics, func(i, j int) bool {
+			if nics[i].Name != nics[j].Name {
+				return nics[i].Name < nics[j].Name
+			}
+			return nics[i].Key.Int() < nics[j].Key.Int()
+		})
+	}
+	out := make([]*VMNicModel, 0, len(nics))
+	for _, nic := range nics {
+		vnet := types.Int32Null()
+		if nic.VNET != nil {
+			vnet = types.Int32Value(int32(nic.VNET.Int()))
+		}
+		out = append(out, &VMNicModel{
+			Key:        types.Int32Value(int32(nic.Key.Int())),
+			Name:       types.StringValue(nic.Name),
+			Interface:  types.StringValue(nic.Interface),
+			Vnet:       vnet,
+			Status:     types.StringValue(nic.PowerState),
+			Ipaddress:  types.StringValue(nic.IPAddress),
+			MacAddress: types.StringValue(nic.MAC),
+		})
+	}
+	return out
 }
 
 func isIPInCIDR(ipStr *string, cidrStr string) bool {

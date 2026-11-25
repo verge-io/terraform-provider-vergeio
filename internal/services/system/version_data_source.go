@@ -43,15 +43,15 @@ func (d *VersionDataSource) Schema(ctx context.Context, req datasource.SchemaReq
 
 		Attributes: map[string]schema.Attribute{
 			"name": schema.StringAttribute{
-				MarkdownDescription: "Name",
+				MarkdownDescription: "Short API name reported by VergeOS at /version.json.",
 				Computed:            true,
 			},
 			"version": schema.StringAttribute{
-				MarkdownDescription: "Version",
+				MarkdownDescription: "VergeOS version string reported at /version.json.",
 				Computed:            true,
 			},
 			"hash": schema.StringAttribute{
-				MarkdownDescription: "Hash",
+				MarkdownDescription: "Forty-character git commit hash of the running VergeOS build, from /version.json.",
 				Computed:            true,
 			},
 		},

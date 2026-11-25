@@ -30,6 +30,11 @@ func TestCreateNetworkPowersOnWhenRequested(t *testing.T) {
 			if _, err := w.Write([]byte(`{"$key":12}`)); err != nil {
 				t.Errorf("write response: %v", err)
 			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`[]`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
 			writeNetworkPower(t, w, powered)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
@@ -80,6 +85,11 @@ func TestCreateNetworkLeavesStoppedWhenPowerStateIsFalse(t *testing.T) {
 			if _, err := w.Write([]byte(`{"$key":12}`)); err != nil {
 				t.Errorf("write response: %v", err)
 			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`[]`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
 			writeNetworkPower(t, w, false)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnet_actions":
@@ -115,6 +125,11 @@ func TestCreateNetworkOmitsPowerWhenUnset(t *testing.T) {
 			if _, err := w.Write([]byte(`{"$key":12}`)); err != nil {
 				t.Errorf("write response: %v", err)
 			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`[]`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/12":
 			writeNetworkPower(t, w, false)
 		case r.Method == http.MethodPost:
@@ -132,6 +147,133 @@ func TestCreateNetworkOmitsPowerWhenUnset(t *testing.T) {
 	}
 	if err := api.createNetwork(t.Context(), data); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCreateNetworkDeletesStaleIPSec(t *testing.T) {
+	var calls []string
+	phase1Gone := map[string]bool{}
+	phase2Gone := map[string]bool{}
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			calls = append(calls, r.URL.Path)
+			if strings.Contains(r.URL.Path, "phase1s") {
+				phase1Gone[r.URL.Path] = true
+			}
+			if strings.Contains(r.URL.Path, "phase2s") {
+				phase2Gone[r.URL.Path] = true
+			}
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnets":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":18}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/18":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`{"$key":18,"name":"lan","running":false}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`[{"$key":1,"vnet":18},{"$key":2,"vnet":18}]`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			w.Header().Set("Content-Type", "application/json")
+			filter := r.URL.Query().Get("filter")
+			body := `[]`
+			switch {
+			case strings.Contains(filter, "ipsec eq 1") && !phase1Gone["/api/v4/vnet_ipsec_phase1s/1"]:
+				body = `[{"$key":1,"ipsec":1,"name":"old"}]`
+			case strings.Contains(filter, "ipsec eq 2") && !phase1Gone["/api/v4/vnet_ipsec_phase1s/3"]:
+				body = `[{"$key":3,"ipsec":2,"name":"other"}]`
+			}
+			if _, err := w.Write([]byte(body)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase2s":
+			w.Header().Set("Content-Type", "application/json")
+			filter := r.URL.Query().Get("filter")
+			body := `[]`
+			switch {
+			case strings.Contains(filter, "phase1 eq 1") && !phase2Gone["/api/v4/vnet_ipsec_phase2s/1"]:
+				body = `[{"$key":1,"phase1":1,"name":"lan-to-lan"}]`
+			case strings.Contains(filter, "phase1 eq 3") && !phase2Gone["/api/v4/vnet_ipsec_phase2s/4"]:
+				body = `[{"$key":4,"phase1":3,"name":"extra"}]`
+			}
+			if _, err := w.Write([]byte(body)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api/v4/vnet_ipsec"):
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`{}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	})
+
+	data := &NetworkResourceModel{
+		Name:       types.StringValue("lan"),
+		PowerState: types.BoolValue(false),
+	}
+	if err := api.createNetwork(t.Context(), data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Id.ValueString() != "18" {
+		t.Fatalf("id = %s", data.Id.ValueString())
+	}
+	want := []string{
+		"/api/v4/vnet_ipsec_phase2s/1",
+		"/api/v4/vnet_ipsec_phase1s/1",
+		"/api/v4/vnet_ipsecs/1",
+		"/api/v4/vnet_ipsec_phase2s/4",
+		"/api/v4/vnet_ipsec_phase1s/3",
+		"/api/v4/vnet_ipsecs/2",
+	}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("deletes = %v, want both stale IPsec trees removed", calls)
+	}
+}
+
+func TestCreateNetworkReportsStaleIPSecDeleteFailure(t *testing.T) {
+	api := newRestartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/vnets":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			if _, err := w.Write([]byte(`{"$key":18}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnets/18":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`{"$key":18,"name":"lan","running":false}`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsecs":
+			w.Header().Set("Content-Type", "application/json")
+			if _, err := w.Write([]byte(`[{"$key":1,"vnet":18}]`)); err != nil {
+				t.Errorf("write response: %v", err)
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/vnet_ipsec_phase1s":
+			http.Error(w, "list failed", http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.RequestURI())
+			http.Error(w, "unexpected", http.StatusInternalServerError)
+		}
+	})
+
+	err := api.createNetwork(t.Context(), &NetworkResourceModel{
+		Name:       types.StringValue("lan"),
+		PowerState: types.BoolValue(false),
+	})
+	if err == nil || !strings.Contains(err.Error(), "network 18") || !strings.Contains(err.Error(), "key 18") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

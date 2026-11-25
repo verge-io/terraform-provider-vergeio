@@ -270,7 +270,10 @@ func (a *vpnAPI) createWireGuardPeer(ctx context.Context, data *wireGuardPeerMod
 }
 
 func dropCreatedWireGuardPeer(ctx context.Context, sdk *vergeos.Client, id int, cause error) error {
-	if err := sdk.VNetWireGuardPeers.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	if err := confirmDeleted(sdk.VNetWireGuardPeers.Delete(ctx, id), namedRow("WireGuard peer", id, ""), func() error {
+		_, getErr := sdk.VNetWireGuardPeers.Get(ctx, id)
+		return getErr
+	}); err != nil {
 		return fmt.Errorf("WireGuard peer %d was created but not stored in state: %w (delete failed: %v)", id, cause, err)
 	}
 	return fmt.Errorf("WireGuard peer %d was created but not stored in state, and the row was removed: %w", id, cause)
@@ -356,7 +359,14 @@ func (a *vpnAPI) deleteWireGuardPeer(ctx context.Context, data *wireGuardPeerMod
 	if row.WireGuard.Int() > 0 {
 		wireguardID = row.WireGuard.Int()
 	}
-	if err := a.sdk.VNetWireGuardPeers.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	name := row.Name
+	if strings.TrimSpace(name) == "" {
+		name = stringOrEmpty(data.Name)
+	}
+	if err := confirmDeleted(a.sdk.VNetWireGuardPeers.Delete(ctx, id), namedRow("WireGuard peer", id, name), func() error {
+		_, getErr := a.sdk.VNetWireGuardPeers.Get(ctx, id)
+		return getErr
+	}); err != nil {
 		return nil, err
 	}
 	return a.applyPeerFirewall(ctx, wireguardID, applyEnabled(data.Apply))

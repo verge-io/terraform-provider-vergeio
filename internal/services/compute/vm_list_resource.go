@@ -23,7 +23,7 @@ var (
 func NewVMListResource() list.ListResource {
 	r := &VMListResource{}
 	r.Suffix = "vm"
-	r.Description = "VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, tag, or tenant."
+	r.Description = "VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, tag, or tenant. tenant is sent as `owner eq 'tenants/<key>'` on vms.owner. vms has no tenant column. Guest VMs inside a tenant are not listed."
 	r.Collection = "vms"
 	r.TenantSupported = true
 	r.ListFn = r.list

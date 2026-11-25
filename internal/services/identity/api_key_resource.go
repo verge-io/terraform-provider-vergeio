@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int32planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
@@ -36,14 +37,15 @@ func NewAPIKeyResource() resource.Resource {
 }
 
 // APIKeyResource is the managed vergeio_api_key. It keeps a long-lived user
-// API key. The bearer token is returned by VergeOS only on create and is not
-// stored. ephemeral.vergeio_api_key mints a short-lived token for one run.
+// API key. VergeOS returns the bearer token only on create. The token is
+// stored only when store_token is true. ephemeral.vergeio_api_key mints a
+// short-lived token for one run and deletes it on Close.
 type APIKeyResource struct {
 	api *APIKeyApi
 }
 
 // APIKeyResourceModel is the Terraform model for the managed vergeio_api_key.
-// There is no token attribute. A token attribute would be written to state.
+// Token is null unless store_token is true. The API does not return it again.
 type APIKeyResourceModel struct {
 	Id             types.String `tfsdk:"id"`
 	UserID         types.Int32  `tfsdk:"user_id"`
@@ -52,6 +54,8 @@ type APIKeyResourceModel struct {
 	IPAllowList    types.String `tfsdk:"ip_allow_list"`
 	IPDenyList     types.String `tfsdk:"ip_deny_list"`
 	Expires        types.Int64  `tfsdk:"expires"`
+	StoreToken     types.Bool   `tfsdk:"store_token"`
+	Token          types.String `tfsdk:"token"`
 	Created        types.Int64  `tfsdk:"created"`
 	LastLoginStamp types.Int64  `tfsdk:"lastlogin_stamp"`
 	LastLoginIP    types.String `tfsdk:"lastlogin_ip"`
@@ -63,83 +67,115 @@ func (r *APIKeyResource) Metadata(ctx context.Context, req resource.MetadataRequ
 
 func (r *APIKeyResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Long-lived VergeOS user API key. Sets the name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only when the key is created, and this resource does not store it. Use ephemeral.vergeio_api_key when a run needs a token. Do not reuse a name across the two: the ephemeral resource deletes an existing key of that name for the user.",
-		Attributes: map[string]schema.Attribute{
-			"id": schema.StringAttribute{
-				MarkdownDescription: "API key id assigned by VergeOS.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+		MarkdownDescription: "Long-lived VergeOS user API key. Sets the name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only when the key is created. Leave store_token unset and this resource does not store that token. Set store_token to true to keep it in token. Use ephemeral.vergeio_api_key when a run needs a token that must not be stored. Do not reuse a name across the two: the ephemeral resource deletes an existing key of that name for the user.",
+		Attributes:          apiKeyAttributes(),
+	}
+}
+
+func apiKeyAttributes() map[string]schema.Attribute {
+	attributes := apiKeyFieldAttributes()
+	for name, attribute := range apiKeyRecordAttributes() {
+		attributes[name] = attribute
+	}
+	return attributes
+}
+
+func apiKeyFieldAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"id": schema.StringAttribute{
+			MarkdownDescription: "API key id assigned by VergeOS.",
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
 			},
-			"user_id": schema.Int32Attribute{
-				MarkdownDescription: "Key of the user that owns the API key. A vergeio_user id can be used with tonumber. Changing the user replaces the key.",
-				Required:            true,
-				Validators: []validator.Int32{
-					int32validator.AtLeast(1),
-				},
-				PlanModifiers: []planmodifier.Int32{
-					int32planmodifier.RequiresReplace(),
-				},
+		},
+		"user_id": schema.Int32Attribute{
+			MarkdownDescription: "Key of the user that owns the API key. A vergeio_user id can be used with tonumber. Changing the user replaces the key.",
+			Required:            true,
+			Validators: []validator.Int32{
+				int32validator.AtLeast(1),
 			},
-			"name": schema.StringAttribute{
-				MarkdownDescription: "API key name. Must be unique for the user if you also use ephemeral.vergeio_api_key, because that resource deletes a key of the same name.",
-				Required:            true,
-				Validators: []validator.String{
-					stringvalidator.LengthAtLeast(1),
-				},
+			PlanModifiers: []planmodifier.Int32{
+				int32planmodifier.RequiresReplace(),
 			},
-			"description": schema.StringAttribute{
-				MarkdownDescription: "API key description. Omit to leave an existing description unchanged.",
-				Optional:            true,
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+		},
+		"name": schema.StringAttribute{
+			MarkdownDescription: "API key name. Must be unique for the user if you also use ephemeral.vergeio_api_key, because that resource deletes a key of the same name.",
+			Required:            true,
+			Validators: []validator.String{
+				stringvalidator.LengthAtLeast(1),
 			},
-			"ip_allow_list": schema.StringAttribute{
-				MarkdownDescription: "Comma-separated IP addresses or CIDRs allowed to use the key. Omit to leave the current list unchanged. Set to an empty string to clear it.",
-				Optional:            true,
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+		},
+		"description": schema.StringAttribute{
+			MarkdownDescription: "API key description. Omit to leave an existing description unchanged.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
 			},
-			"ip_deny_list": schema.StringAttribute{
-				MarkdownDescription: "Comma-separated IP addresses or CIDRs denied from using the key. Omit to leave the current list unchanged. Set to an empty string to clear it.",
-				Optional:            true,
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+		},
+		"ip_allow_list": schema.StringAttribute{
+			MarkdownDescription: "Comma-separated IP addresses or CIDRs allowed to use the key. Omit to leave the current list unchanged. Set to an empty string to clear it.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
 			},
-			"expires": schema.Int64Attribute{
-				MarkdownDescription: "Unix time when the key expires. Leave it unset for a key that does not expire. Removing a saved expiry clears it. The configuration is authoritative, so an expiry set in the VergeOS UI is replaced on the next apply.",
-				Optional:            true,
-				Validators: []validator.Int64{
-					int64validator.AtLeast(1),
-				},
+		},
+		"ip_deny_list": schema.StringAttribute{
+			MarkdownDescription: "Comma-separated IP addresses or CIDRs denied from using the key. Omit to leave the current list unchanged. Set to an empty string to clear it.",
+			Optional:            true,
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
 			},
-			"created": schema.Int64Attribute{
-				MarkdownDescription: "Unix time when VergeOS created the key.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.UseStateForUnknown(),
-				},
+		},
+	}
+}
+
+func apiKeyRecordAttributes() map[string]schema.Attribute {
+	return map[string]schema.Attribute{
+		"expires": schema.Int64Attribute{
+			MarkdownDescription: "Unix time when the key expires. Leave it unset for a key that does not expire. Removing a saved expiry clears it. The configuration is authoritative, so an expiry set in the VergeOS UI is replaced on the next apply.",
+			Optional:            true,
+			Validators: []validator.Int64{
+				int64validator.AtLeast(1),
 			},
-			"lastlogin_stamp": schema.Int64Attribute{
-				MarkdownDescription: "Unix time of the last use. Zero means the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.Int64{
-					int64planmodifier.UseStateForUnknown(),
-				},
+		},
+		"store_token": schema.BoolAttribute{
+			MarkdownDescription: "Store the bearer token VergeOS returns when the key is created. Omit it, or set false, and the token is discarded. true writes it to token. VergeOS does not return the token on a later read. Changing this replaces the key. Import cannot recover a token.",
+			Optional:            true,
+			PlanModifiers: []planmodifier.Bool{
+				boolplanmodifier.RequiresReplace(),
 			},
-			"lastlogin_ip": schema.StringAttribute{
-				MarkdownDescription: "IP address of the last use. Empty when the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.",
-				Computed:            true,
-				PlanModifiers: []planmodifier.String{
-					stringplanmodifier.UseStateForUnknown(),
-				},
+		},
+		"token": schema.StringAttribute{
+			MarkdownDescription: "Bearer token returned when the key is created. Null unless store_token is true. Refresh keeps the stored value. A create response with no secret leaves this null and returns an error after the key id is stored.",
+			Computed:            true,
+			Sensitive:           true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
+		},
+		"created": schema.Int64Attribute{
+			MarkdownDescription: "Unix time when VergeOS created the key. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another API key, including one for the same user, and refresh drops this resource. Destroy without a refresh leaves the other row. A name change on the same key still updates in place.",
+			Computed:            true,
+			PlanModifiers: []planmodifier.Int64{
+				int64planmodifier.UseStateForUnknown(),
+			},
+		},
+		"lastlogin_stamp": schema.Int64Attribute{
+			MarkdownDescription: "Unix time of the last use. Zero means the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.",
+			Computed:            true,
+			PlanModifiers: []planmodifier.Int64{
+				int64planmodifier.UseStateForUnknown(),
+			},
+		},
+		"lastlogin_ip": schema.StringAttribute{
+			MarkdownDescription: "IP address of the last use. Empty when the key has not been used. Refresh reads a new value. The plan keeps the refreshed value.",
+			Computed:            true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
 			},
 		},
 	}
@@ -216,6 +252,15 @@ func (r *APIKeyResource) Update(ctx context.Context, req resource.UpdateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if plan.Created.IsNull() || plan.Created.IsUnknown() {
+		plan.Created = state.Created
+	}
+	if plan.StoreToken.IsUnknown() {
+		plan.StoreToken = state.StoreToken
+	}
+	if plan.Token.IsNull() || plan.Token.IsUnknown() {
+		plan.Token = state.Token
+	}
 	if err := r.api.updateAPIKey(ctx, &plan, &state); err != nil {
 		resp.Diagnostics.AddError("Error updating API key", err.Error())
 		return
@@ -276,6 +321,8 @@ func apiKeyForState(data *APIKeyResourceModel) APIKeyResourceModel {
 	stored.IPAllowList = knownString(data.IPAllowList)
 	stored.IPDenyList = knownString(data.IPDenyList)
 	stored.Expires = knownInt64(data.Expires)
+	stored.StoreToken = knownBool(data.StoreToken)
+	stored.Token = knownString(data.Token)
 	stored.Created = knownInt64(data.Created)
 	stored.LastLoginStamp = knownInt64(data.LastLoginStamp)
 	stored.LastLoginIP = knownString(data.LastLoginIP)

@@ -77,9 +77,13 @@ Actions require Terraform 1.14. OpenTofu does not implement them. Nothing a reso
 
 ## Query
 
-`terraform query` lists VMs, networks, tenants, users, groups, tags, and snapshot profiles that already exist. Filter with `name_pattern`, `tag`, and, for VMs and networks, `tenant`. The identity `id` is the import id. OpenTofu uses that same id in an `import` block. See [Adopt an existing VergeOS system](docs/guides/adopt-system.md).
+`terraform query` lists VMs, networks, tenants, users, groups, tags, and snapshot profiles that already exist. Filter with `name_pattern`, `tag`, and, for VMs and networks, `tenant`. `tenant` is a key or a name. Networks match `vnets.owner`. VMs match `vms.owner`. Neither table has a `tenant` column. The identity `id` is the import id. OpenTofu uses that same id in an `import` block. See [Adopt an existing VergeOS system](docs/guides/adopt-system.md).
 
-Terraform keeps tenants, networks, firewall policy, VM configuration, identity, and snapshot profiles. Ansible runs procedures and configures the guest. See [Terraform and Ansible](docs/guides/terraform-ansible.md).
+Terraform keeps tenants, networks, firewall policy, VM configuration, identity, and snapshot profiles. Ansible runs procedures and configures the guest. See [Terraform and Ansible](docs/guides/terraform-ansible.md). An OVA or disk image the configuration depends on is `vergeio_vm_import`. `vergeio_vm_export` keeps the volume export settings and does not start a run. See [VM import and migration](docs/guides/vm-import.md).
+
+## Modules
+
+`modules/tenant`, `modules/network_segment`, `modules/vm`, `modules/baseline`, `modules/fleet`, `modules/vergeos_lab`, `modules/sandbox`, and `modules/kubernetes_cluster` are the patterns published in this repository. `modules/kubernetes_cluster` creates the node VMs, the cluster network, the firewall rules, and the API user the VergeOS CSI driver and cloud controller use. `modules/sandbox` copies a tenant or the VMs that carry one tag and deletes that copy on destroy. A VM copy comes from a snapshot onto an internal network with no gateway unless `allow_external` is set. A tenant copy is the current tenant: the pinned client has no snapshot argument on tenant clone. The module does no data masking. Each module pins `verge-io/vergeio` `~> 3.0`. Runnable examples are under `examples/modules/`. `terraform test` in a module directory plans with a mocked provider. Lab apply tests are in `tests/lab` and are not part of CI.
 
 ## Resources
 
@@ -109,6 +113,7 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_tag_category
 - vergeio_tag_member
 - vergeio_tenant
+- vergeio_tenant_copy
 - vergeio_tenant_external_ip
 - vergeio_tenant_layer2_network
 - vergeio_tenant_network_block
@@ -118,7 +123,10 @@ Terraform keeps tenants, networks, firewall policy, VM configuration, identity, 
 - vergeio_tenant_storage
 - vergeio_user
 - vergeio_vm
+- vergeio_vm_clone
 - vergeio_vm_drive
+- vergeio_vm_export
+- vergeio_vm_import
 - vergeio_vm_nic
 - vergeio_vm_recipe_instance
 - vergeio_webhook
@@ -132,6 +140,8 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_vm_recipe_instance` deploys a VM from a catalog recipe. `vergeio_catalogs` and `vergeio_vm_recipes` look the recipe up by name. `answers` is a map of strings. A disk size is bytes, so 50 GB is `53687091200`. A bool answer is `true`, `false`, `yes`, `no`, `on`, `off`, `1`, or `0`. The resource deploys the VM. It has no simulate argument.
 
+`vergeio_vm_import` brings in an OVA or OVF as a VM, or a disk image as a media-catalog file. `data.vergeio_vm_import` waits for an import that is already running. `vergeio_vm_export` keeps the export configuration for one NAS volume and does not start a run. Destroy of an import removes the VM it created unless that VM already existed. Destroy of an export leaves files already written on the volume.
+
 `vergeio_group` creates a group. `vergeio_permission` grants a user or a group list, read, create, modify, and delete on a table or one object. `vergeio_member` adds a user or another object to a group. `vergeio_users` lists users the same way `vergeio_groups` lists groups.
 
 `vergeio_api_key` manages a long-lived user API key. It sets the name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only when the key is created, and the resource does not store it. The ephemeral `vergeio_api_key` above is the short-lived token for one run. Do not reuse a name across the two.
@@ -142,7 +152,7 @@ Devices stay nested on `vergeio_vm`.
 
 `vergeio_site` is a remote VergeOS system. `name` and `url` are required. Create does not ask VergeOS to build syncs. `vergeio_site_sync_incoming` and `vergeio_site_sync_outgoing` are the syncs. An outgoing `period` points at a snapshot profile period and sets how long the remote copy is kept. `auth_password_wo` is sent when stated. `registration_code_wo` is required on an outgoing sync. VergeOS rejects a create that omits it. Terraform stores the version, not the secret. `vergeio_site_sync_incoming_status` and `vergeio_site_sync_outgoing_status` read one sync. `max_lag_seconds` fails the plan when replication has not run, or when the last activity is older than that many seconds.
 
-`vergeio_certificate` is a TLS certificate for the UI and API. `type` is `manual`, `letsencrypt`, or `self_signed`. Changing `type` replaces the certificate. Changing a configured `domain_name` replaces it too. Leaving `domain_name` out keeps the stored name. `private_key_wo` and `eab_hmac_key_wo` are sent when the certificate is created and when their version changes. Terraform stores the version, not the secret. `vergeio_webhook_url` is a destination for an event notification. `authorization_value_wo` is the credential and is not stored. `vergeio_webhook` is one message queued to that destination. VergeOS does not edit a delivery, so changing `message` or `webhook_url_id` sends a new message. `vergeio_setting` is one existing system setting, such as `max_connections`. Update writes only that key's value. Destroy sets the key back to `default_value` and leaves every other setting alone. It does not delete the settings row.
+`vergeio_certificate` is a TLS certificate for the UI and API. `type` is `manual`, `letsencrypt`, or `self_signed`. Changing `type` replaces the certificate. Changing a configured `domain_name` replaces it too. Changing `domain_list`, `key_type`, or `rsa_key_size` on a `self_signed` certificate replaces it, because VergeOS issues that certificate when the row is created and does not reissue it on update. Leaving `domain_name` out keeps the stored name. A configured `domain_name` is sent as the first `domain_list` entry, because the `domainname` column is read-only. `private_key_wo` and `eab_hmac_key_wo` are sent when the certificate is created and when their version changes. Terraform stores the version, not the secret. `vergeio_webhook_url` is a destination for an event notification. `authorization_value_wo` is the credential and is not stored. `vergeio_webhook` is one message queued to that destination. VergeOS does not edit a delivery, so changing `message` or `webhook_url_id` sends a new message. `vergeio_setting` is one existing system setting, such as `max_connections`. Update writes only that key's value. Destroy sets the key back to `default_value` and leaves every other setting alone. It does not delete the settings row.
 
 `vergeio_tag_category` creates a tag category and chooses which object types can use it. `vergeio_tag` creates a tag in that category. Deleting a category deletes every tag in it and every assignment of those tags, with no confirmation from VergeOS. Omit a `taggable_*` flag to leave that object type unchanged; an omitted flag is not sent as false.
 
@@ -168,7 +178,9 @@ Assigning an external IP or a network block can leave `need_fw_apply` set on the
 - vergeio_tenants
 - vergeio_users
 - vergeio_version
+- vergeio_vm_import
 - vergeio_vm_recipes
+- vergeio_vm_snapshots
 - vergeio_vms
 
 # Building Provider From Source

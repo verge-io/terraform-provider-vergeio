@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -144,10 +145,28 @@ func apiKeyReused(data *APIKeyResourceModel, key *vergeos.UserAPIKey) bool {
 	return int(data.UserID.ValueInt32()) != got
 }
 
+// ensureAPIKeyOwned returns NotFound when the stored key now points at
+// another API key. A different user is another key. The same user with a
+// different created time is another key. Skip the created check when created
+// is unset (import, or state written before this check existed).
+func ensureAPIKeyOwned(data *APIKeyResourceModel, key *vergeos.UserAPIKey) error {
+	if data == nil || key == nil {
+		return fmt.Errorf("API key read returned no row")
+	}
+	if apiKeyReused(data, key) {
+		return &vergeos.NotFoundError{Resource: "UserAPIKey", ID: key.Key.Int()}
+	}
+	if data.Created.IsNull() || data.Created.IsUnknown() || data.Created.ValueInt64() == 0 {
+		return nil
+	}
+	if key.Created != data.Created.ValueInt64() {
+		return &vergeos.NotFoundError{Resource: "UserAPIKey", ID: key.Key.Int()}
+	}
+	return nil
+}
+
 func (api *APIKeyApi) createAPIKey(ctx context.Context, data *APIKeyResourceModel) error {
-	// The token is returned only here. It is discarded. The managed resource
-	// does not store it. Ephemeral vergeio_api_key is the token used in a run.
-	created, _, err := api.sdk.UserAPIKeys.Create(ctx, apiKeyCreateRequest(data))
+	created, token, err := api.sdk.UserAPIKeys.Create(ctx, apiKeyCreateRequest(data))
 	if err != nil {
 		return err
 	}
@@ -155,6 +174,15 @@ func (api *APIKeyApi) createAPIKey(ctx context.Context, data *APIKeyResourceMode
 		return fmt.Errorf("VergeOS did not return an API key id")
 	}
 	applyAPIKey(data, created)
+	if !storeAPIKeyToken(data.StoreToken) {
+		data.Token = types.StringNull()
+		tflog.Debug(ctx, fmt.Sprintf("created API key %s", data.Id.ValueString()))
+		return nil
+	}
+	if token == "" {
+		return fmt.Errorf("VergeOS did not return an API key token")
+	}
+	data.Token = types.StringValue(token)
 	tflog.Debug(ctx, fmt.Sprintf("created API key %s", data.Id.ValueString()))
 	return nil
 }
@@ -164,21 +192,44 @@ func (api *APIKeyApi) readAPIKey(ctx context.Context, data *APIKeyResourceModel)
 	if err != nil {
 		return err
 	}
+	previousToken := data.Token
 	key, err := api.sdk.UserAPIKeys.Get(ctx, id)
 	if err != nil {
 		return err
 	}
-	if apiKeyReused(data, key) {
-		return errStaleIdentity
+	if err := ensureAPIKeyOwned(data, key); err != nil {
+		return err
 	}
 	applyAPIKey(data, key)
+	data.Token = preservedAPIKeyToken(data.StoreToken, previousToken)
 	tflog.Debug(ctx, fmt.Sprintf("read API key %d", id))
 	return nil
+}
+
+func storeAPIKeyToken(store types.Bool) bool {
+	return !store.IsNull() && !store.IsUnknown() && store.ValueBool()
+}
+
+func preservedAPIKeyToken(store types.Bool, previous types.String) types.String {
+	if !storeAPIKeyToken(store) {
+		return types.StringNull()
+	}
+	if previous.IsNull() || previous.IsUnknown() || previous.ValueString() == "" {
+		return types.StringNull()
+	}
+	return previous
 }
 
 func (api *APIKeyApi) updateAPIKey(ctx context.Context, plan, state *APIKeyResourceModel) error {
 	id, err := parseID(state.Id, "API key")
 	if err != nil {
+		return err
+	}
+	current, err := api.sdk.UserAPIKeys.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := ensureAPIKeyOwned(state, current); err != nil {
 		return err
 	}
 	plan.Id = state.Id
@@ -200,6 +251,14 @@ func (api *APIKeyApi) deleteAPIKey(ctx context.Context, data *APIKeyResourceMode
 	id, err := parseID(data.Id, "API key")
 	if err != nil {
 		return err
+	}
+	current, getErr := api.sdk.UserAPIKeys.Get(ctx, id)
+	foreign, err := shared.ForeignRow(getErr, ensureAPIKeyOwned(data, current))
+	if err != nil {
+		return err
+	}
+	if foreign {
+		return nil
 	}
 	if err := api.sdk.UserAPIKeys.Delete(ctx, id); err != nil {
 		if vergeos.IsNotFoundError(err) {

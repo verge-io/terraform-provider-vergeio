@@ -78,8 +78,7 @@ func (r *NetworkResource) Metadata(ctx context.Context, req resource.MetadataReq
 
 func (r *NetworkResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		// This description is used by the documentation generator and the language server.
-		MarkdownDescription: "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network.",
+		MarkdownDescription: "Network or Vnet resource in VergeIO. Destroy is refused while IPsec or WireGuard rows remain, because VergeOS does not delete them with the network. Create deletes IPsec rows that already point at the new key, so a reused network key does not keep an IPsec configuration from a network that was deleted. An apply that is interrupted after VergeOS stores the row keeps that key in state. A later create adopts an existing network with the same name when the configured fields match. A different network is left in place, and the error includes its key and an import command.",
 		// Version 1 stores powerstate as a bool. Version 0 stored the
 		// strings "true" and "false".
 		Version: 1,
@@ -292,22 +291,54 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 		return
 	}
 
-	// Call the API to create the network
+	// Call the API to create the network. A name collision means a previous
+	// create left the network in VergeOS without writing state.
+	adopted := false
 	if err := r.networkApi.createNetwork(ctx, &data); err != nil {
-		resp.Diagnostics.AddError(
-			"Error Creating Network",
-			err.Error(),
-		)
-		return
+		if shared.NameConflict(err) {
+			if adoptErr := r.adoptOrphanNetwork(ctx, &data); adoptErr != nil {
+				// The existing row is not stored. An error plus state would
+				// taint it, and the next apply would destroy that network.
+				resp.Diagnostics.AddError("Error Creating Network", adoptErr.Error())
+				return
+			}
+			adopted = true
+		} else {
+			// The row exists once its key is known. Keep that key so a
+			// later power-on or read failure does not leave it out of state.
+			r.keepNetwork(ctx, resp, &data)
+			if shared.InterruptAfterCreate(err, networkIDSet(&data)) {
+				return
+			}
+			resp.Diagnostics.AddError("Error Creating Network", err.Error())
+			return
+		}
 	}
 
 	// Write logs using the tflog package
 	tflog.Debug(ctx, fmt.Sprintf("created a resource %v", data))
 
+	// A network this apply created is stored before the follow-up read.
+	// An adopted network is stored only after that read succeeds. A later
+	// error must not taint a row that already existed.
+	if !adopted {
+		r.keepNetwork(ctx, resp, &data)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	// Read data into the model to get all the attributes
 	readDataError := r.networkApi.readNetwork(ctx, &data)
 
 	if readDataError != nil {
+		if adopted {
+			resp.Diagnostics.AddError("Error Creating Network", adoptedNetworkNotStored(&data, readDataError))
+			return
+		}
+		if shared.InterruptAfterCreate(readDataError, networkIDSet(&data)) {
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Error Fetching Data",
 			readDataError.Error(),
@@ -316,8 +347,9 @@ func (r *NetworkResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 
 	// Save data into Terraform state
-	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
-	shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.Id)
+	writeCtx := shared.WritableContext(ctx)
+	resp.Diagnostics.Append(resp.State.Set(writeCtx, &data)...)
+	shared.RememberIdentity(writeCtx, &resp.Diagnostics, resp.Identity, data.Id)
 }
 
 func (r *NetworkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

@@ -48,7 +48,7 @@ func (api *PermissionApi) Name() string {
 	return api.name
 }
 
-func permissionCreateRequest(data *PermissionResourceModel, identity int, row int64) *vergeos.PermissionCreateRequest {
+func permissionCreateRequest(data *PermissionResourceModel, identity vergeos.IdentityKey, row int64) *vergeos.PermissionCreateRequest {
 	return &vergeos.PermissionCreateRequest{
 		Identity: identity,
 		Table:    data.Table.ValueString(),
@@ -114,9 +114,7 @@ func (api *PermissionApi) createPermission(ctx context.Context, data *Permission
 
 	var perm *vergeos.Permission
 	if row <= 0 {
-		// PermissionService.Create rejects row <= 0. VergeOS uses row 0 for a
-		// grant on the whole table, so that grant is posted here and then
-		// read back through PermissionService.
+		// Row 0 covers the whole table. Post it here and read the row back.
 		perm, err = api.createTablePermission(ctx, data, req)
 	} else {
 		perm, err = api.sdk.Permissions.Create(ctx, req)
@@ -204,7 +202,7 @@ func (api *PermissionApi) deletePermission(ctx context.Context, data *Permission
 	return nil
 }
 
-func (api *PermissionApi) identityFor(ctx context.Context, data *PermissionResourceModel) (int, error) {
+func (api *PermissionApi) identityFor(ctx context.Context, data *PermissionResourceModel) (vergeos.IdentityKey, error) {
 	userSet := !data.UserID.IsNull() && !data.UserID.IsUnknown() && strings.TrimSpace(data.UserID.ValueString()) != ""
 	groupSet := !data.GroupID.IsNull() && !data.GroupID.IsUnknown() && strings.TrimSpace(data.GroupID.ValueString()) != ""
 	if userSet == groupSet {
@@ -224,10 +222,10 @@ func (api *PermissionApi) identityFor(ctx context.Context, data *PermissionResou
 	return api.identityOf(ctx, "groups", key)
 }
 
-// identityOf reads the identity key VergeOS stores on a user or group.
-// UserService and GroupService do not expose that field. When it is missing,
-// the row key is the identity, which is what PermissionService documents.
-func (api *PermissionApi) identityOf(ctx context.Context, kind string, key int) (int, error) {
+// identityOf reads the identity column on a user or group.
+// The result is the identities-table key a permission is stored against.
+// A row that has no identity uses its row key.
+func (api *PermissionApi) identityOf(ctx context.Context, kind string, key int) (vergeos.IdentityKey, error) {
 	endpoint, err := identityCollection(kind)
 	if err != nil {
 		return 0, err
@@ -241,15 +239,15 @@ func (api *PermissionApi) identityOf(ctx context.Context, kind string, key int) 
 		return 0, err
 	}
 	if len(rows) == 0 {
-		return key, nil
+		return vergeos.IdentityKey(key), nil
 	}
 	if id, ok := flexInt(rows[0].Identity); ok && id > 0 {
-		return id, nil
+		return vergeos.IdentityKey(id), nil
 	}
 	if rowKey, ok := flexInt(rows[0].Key); ok && rowKey > 0 {
-		return rowKey, nil
+		return vergeos.IdentityKey(rowKey), nil
 	}
-	return key, nil
+	return vergeos.IdentityKey(key), nil
 }
 
 // assignGrantee stores the user or group row key that owns this permission.
@@ -261,7 +259,7 @@ func (api *PermissionApi) assignGrantee(ctx context.Context, data *PermissionRes
 		if err != nil && !notFound(err) {
 			return err
 		}
-		if err == nil && got == identity {
+		if err == nil && got.Int() == identity {
 			data.UserID = idString(key)
 			data.GroupID = types.StringNull()
 			return nil
@@ -272,7 +270,7 @@ func (api *PermissionApi) assignGrantee(ctx context.Context, data *PermissionRes
 		if err != nil && !notFound(err) {
 			return err
 		}
-		if err == nil && got == identity {
+		if err == nil && got.Int() == identity {
 			data.GroupID = idString(key)
 			data.UserID = types.StringNull()
 			return nil

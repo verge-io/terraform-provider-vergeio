@@ -6,7 +6,6 @@ package nas
 import (
 	"context"
 	"regexp"
-	"strings"
 
 	"terraform-provider-vergeio/internal/shared"
 
@@ -91,7 +90,7 @@ func (r *volumeResource) Schema(ctx context.Context, req resource.SchemaRequest,
 	resp.Schema = schema.Schema{
 		MarkdownDescription: volumeDescription,
 		Attributes: map[string]schema.Attribute{
-			"id": idAttr("Volume id."),
+			"id": idAttr("Volume id, a 40 character SHA1 hex string."),
 			"service_id": schema.StringAttribute{
 				MarkdownDescription: "NAS service id, the same value as vergeio_nas_service.id. Changing it replaces the volume.",
 				Required:            true,
@@ -224,6 +223,10 @@ func (r *volumeResource) Read(ctx context.Context, req resource.ReadRequest, res
 	}
 	if err := r.api.readVolume(ctx, &data); err != nil {
 		if missing(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -262,13 +265,9 @@ func (r *volumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 }
 
 func (r *volumeResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
-	resp.IdentitySchema = shared.KeyIdentitySchema("Volume id. Import vergeio_nas_volume with this value.")
+	resp.IdentitySchema = shared.KeyIdentitySchema("Volume id, a 40 character SHA1 hex string. Import vergeio_nas_volume with this value.")
 }
 
 func (r *volumeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	if strings.TrimSpace(req.ID) == "" && req.Identity == nil {
-		resp.Diagnostics.AddError("Invalid NAS Volume Import ID", "Import vergeio_nas_volume with the volume id.")
-		return
-	}
-	shared.ImportByID(ctx, req, resp, "Invalid NAS Volume Import ID", "Import vergeio_nas_volume with the volume id.")
+	importObjectID(ctx, req, resp, "Invalid NAS Volume Import ID", "Import vergeio_nas_volume with the volume id, a 40 character SHA1 hex string.")
 }

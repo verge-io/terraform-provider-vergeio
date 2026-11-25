@@ -6,6 +6,7 @@ package identity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -252,15 +253,8 @@ func openAPIKey(ctx context.Context, sdk *vergeos.Client, data apiKeyModel) (api
 		ExpiresType: vergeos.APIKeyExpiresDate,
 		Expires:     &expires,
 	})
-	if err != nil {
-		return data, apiKeyPrivateState{}, time.Time{}, err
-	}
-	if created == nil || created.Key.Int() <= 0 {
-		return data, apiKeyPrivateState{}, time.Time{}, fmt.Errorf("VergeOS did not return an API key id")
-	}
-	if token == "" {
-		_ = sdk.UserAPIKeys.Delete(ctx, created.Key.Int())
-		return data, apiKeyPrivateState{}, time.Time{}, fmt.Errorf("VergeOS did not return an API key token")
+	if err != nil || created == nil || created.Key.Int() <= 0 || token == "" {
+		return data, apiKeyPrivateState{}, time.Time{}, failOpenAPIKey(ctx, sdk, userID, name, created, err)
 	}
 
 	private := apiKeyPrivateState{ID: created.Key.Int(), TTLSeconds: ttl}
@@ -269,6 +263,55 @@ func openAPIKey(ctx context.Context, sdk *vergeos.Client, data apiKeyModel) (api
 	data.Expires = types.Int64Value(expires)
 	tflog.Debug(ctx, fmt.Sprintf("opened API key %d for user %d", private.ID, userID))
 	return data, private, renewAt(time.Now(), time.Duration(ttl)*time.Second), nil
+}
+
+// failOpenAPIKey deletes the key a failed open created. Create reports that
+// the row exists without returning it when the response has no secret.
+func failOpenAPIKey(ctx context.Context, sdk *vergeos.Client, userID int, name string, created *vergeos.UserAPIKey, err error) error {
+	id := 0
+	if created != nil {
+		id = created.Key.Int()
+	}
+	delErr := deleteMintedAPIKey(ctx, sdk, userID, name, id)
+	if err != nil {
+		if delErr != nil {
+			return fmt.Errorf("%w; deleting the API key failed: %v", err, delErr)
+		}
+		return err
+	}
+	msg := "VergeOS did not return an API key token"
+	if created == nil || created.Key.Int() <= 0 {
+		msg = "VergeOS did not return an API key id"
+	}
+	if delErr != nil {
+		return fmt.Errorf("%s: %w", msg, delErr)
+	}
+	return errors.New(msg)
+}
+
+// deleteMintedAPIKey removes the key this open created. id 0 means Create did
+// not return the row, so the key is found by the name just submitted.
+func deleteMintedAPIKey(ctx context.Context, sdk *vergeos.Client, userID int, name string, id int) error {
+	if id <= 0 {
+		existing, err := sdk.UserAPIKeys.GetByName(ctx, userID, name)
+		if err != nil {
+			if vergeos.IsNotFoundError(err) {
+				return nil
+			}
+			return err
+		}
+		if existing == nil {
+			return nil
+		}
+		id = existing.Key.Int()
+	}
+	if id <= 0 {
+		return nil
+	}
+	if err := sdk.UserAPIKeys.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		return err
+	}
+	return nil
 }
 
 func renewAPIKey(ctx context.Context, sdk *vergeos.Client, private apiKeyPrivateState) (time.Time, error) {

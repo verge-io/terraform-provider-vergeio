@@ -3,6 +3,7 @@ package network_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -63,6 +64,18 @@ func TestAccNetworkWireGuard_peer(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"preshared_key", "peer_config"},
+			},
+			{
+				ResourceName:  "vergeio_network_wireguard.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_network_wireguard_peer.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
 			},
 		},
 	})

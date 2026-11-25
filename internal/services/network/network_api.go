@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -92,13 +94,19 @@ func (nc *NetworkApi) createNetwork(ctx context.Context, data *NetworkResourceMo
 		return err
 	}
 
-	network, err := nc.sdk.Networks.Create(ctx, req)
+	network, err := nc.sdk.Networks.Create(shared.CommitContext(ctx), req)
 	if err != nil {
 		return err
 	}
 
 	data.Id = types.StringValue(fmt.Sprintf("%d", network.Key.Int()))
 	tflog.Debug(ctx, fmt.Sprintf("Created a network with Id %v", data.Id.ValueString()))
+
+	// VergeOS can hand this key to a network that was deleted with IPsec
+	// rows still pointing at it. Those rows can be deleted once the key exists.
+	if err := deleteIPSecRows(ctx, nc.sdk, network.Key.Int()); err != nil {
+		return fmt.Errorf("network %s was created, but IPsec rows that already pointed at key %d were not removed: %w", data.Id.ValueString(), network.Key.Int(), err)
+	}
 
 	if _, on := networkPowerRequested(data.PowerState); on {
 		tflog.Debug(ctx, fmt.Sprintf("Powering on network %s after create", data.Id.ValueString()))
@@ -433,6 +441,25 @@ func unsetInterfaceVnetZero(v types.Int32) types.Int32 {
 	return types.Int32Null()
 }
 
+// bondInterfacesList stores vnets.bond_interfaces_args. An empty value is null.
+func bondInterfacesList(ctx context.Context, ids []int) (types.List, error) {
+	if len(ids) == 0 {
+		return types.ListNull(types.Int32Type), nil
+	}
+	values := make([]int32, len(ids))
+	for i, id := range ids {
+		if id > math.MaxInt32 || id < math.MinInt32 {
+			return types.List{}, fmt.Errorf("bond_interfaces_args[%d] = %d is outside the range of an int32", i, id)
+		}
+		values[i] = int32(id)
+	}
+	list, diags := types.ListValueFrom(ctx, types.Int32Type, values)
+	if diags.HasError() {
+		return types.List{}, fmt.Errorf("bond_interfaces_args: %v", diags)
+	}
+	return list, nil
+}
+
 // interfaceVnetFromAPI stores the physical network id reported by VergeOS.
 // A missing or null interface is 0 on the SDK type. State stores 0 so a
 // configuration of 0 is equal after refresh and does not rewrite the plan.
@@ -496,6 +523,14 @@ func (nc *NetworkApi) readNetwork(ctx context.Context, data *NetworkResourceMode
 	// fill the default when state has never stored one, such as after import.
 	if data.RestartOnChange.IsNull() || data.RestartOnChange.IsUnknown() {
 		data.RestartOnChange = types.BoolValue(true)
+	}
+	// A zero list has no element type. terraform query rejects that value.
+	if data.Bond_Interfaces_Args.ElementType(ctx) == nil {
+		bondArgs, err := bondInterfacesList(ctx, network.BondInterfacesArgs)
+		if err != nil {
+			return err
+		}
+		data.Bond_Interfaces_Args = bondArgs
 	}
 
 	tflog.Debug(ctx, "Data was successfully converted to a resource")

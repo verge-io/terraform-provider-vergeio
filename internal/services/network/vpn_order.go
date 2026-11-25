@@ -148,8 +148,11 @@ func deleteAppliedWireGuard(ctx context.Context, sdk *vergeos.Client, id, networ
 				return fmt.Errorf("apply network %d before deleting WireGuard interface %d: %w", networkID, id, err)
 			}
 		}
-		last = sdk.VNetWireGuards.Delete(ctx, id)
-		if last == nil || vergeos.IsNotFoundError(last) {
+		last = confirmDeleted(sdk.VNetWireGuards.Delete(ctx, id), namedRow("WireGuard interface", id, ""), func() error {
+			_, getErr := sdk.VNetWireGuards.Get(ctx, id)
+			return getErr
+		})
+		if last == nil {
 			return nil
 		}
 		if !wireGuardDeletePending(last) {
@@ -161,7 +164,11 @@ func deleteAppliedWireGuard(ctx context.Context, sdk *vergeos.Client, id, networ
 }
 
 func deleteWireGuardOnce(ctx context.Context, sdk *vergeos.Client, id int) error {
-	if err := sdk.VNetWireGuards.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+	err := confirmDeleted(sdk.VNetWireGuards.Delete(ctx, id), namedRow("WireGuard interface", id, ""), func() error {
+		_, getErr := sdk.VNetWireGuards.Get(ctx, id)
+		return getErr
+	})
+	if err != nil {
 		return fmt.Errorf("delete WireGuard interface %d: %w", id, err)
 	}
 	return nil
@@ -189,7 +196,11 @@ func deleteWireGuardPeerRows(ctx context.Context, sdk *vergeos.Client, wireguard
 	var errs []error
 	for _, peer := range peers {
 		id := peer.Key.Int()
-		if err := sdk.VNetWireGuardPeers.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		err := confirmDeleted(sdk.VNetWireGuardPeers.Delete(ctx, id), namedRow("WireGuard peer", id, peer.Name), func() error {
+			_, getErr := sdk.VNetWireGuardPeers.Get(ctx, id)
+			return getErr
+		})
+		if err != nil {
 			errs = append(errs, fmt.Errorf("delete WireGuard peer %d: %w", id, err))
 		}
 	}
@@ -197,14 +208,20 @@ func deleteWireGuardPeerRows(ctx context.Context, sdk *vergeos.Client, wireguard
 }
 
 func deleteIPSecRows(ctx context.Context, sdk *vergeos.Client, networkID int) error {
-	ipsec, err := sdk.VNetIPSecs.GetByNetwork(ctx, networkID)
+	rows, err := sdk.VNetIPSecs.List(ctx, vergeos.WithFilter(fmt.Sprintf("vnet eq %d", networkID)))
 	if err != nil {
-		if vergeos.IsNotFoundError(err) {
-			return nil
-		}
-		return fmt.Errorf("read IPsec configuration for network %d: %w", networkID, err)
+		return fmt.Errorf("list IPsec configurations for network %d: %w", networkID, err)
 	}
-	ipsecID := ipsec.Key.Int()
+	var errs []error
+	for _, row := range rows {
+		if err := deleteOneIPSec(ctx, sdk, row.Key.Int()); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func deleteOneIPSec(ctx context.Context, sdk *vergeos.Client, ipsecID int) error {
 	phase1s, err := sdk.VNetIPSecPhase1s.ListByIPSec(ctx, ipsecID)
 	if err != nil {
 		return fmt.Errorf("list IPsec phase 1 for configuration %d: %w", ipsecID, err)
@@ -225,27 +242,40 @@ func deleteIPSecRows(ctx context.Context, sdk *vergeos.Client, networkID int) er
 	if len(remaining) > 0 {
 		return fmt.Errorf("IPsec configuration %d still has phase 1 rows, so it was not deleted. %s", ipsecID, vpnDeleteOrder)
 	}
-	if err := sdk.VNetIPSecs.Delete(ctx, ipsecID); err != nil && !vergeos.IsNotFoundError(err) {
+	if err := confirmDeleted(sdk.VNetIPSecs.Delete(ctx, ipsecID), namedRow("IPsec configuration", ipsecID, ""), func() error {
+		_, getErr := sdk.VNetIPSecs.Get(ctx, ipsecID)
+		return getErr
+	}); err != nil {
 		return fmt.Errorf("delete IPsec configuration %d: %w", ipsecID, err)
 	}
 	return nil
 }
 
-// deletePhase1AfterPhase2 deletes every phase 2 under phase1ID, then the
-// phase 1. A phase 2 delete error returns before the phase 1 delete. That
-// delete is what leaves the phase 1 trigger failing on later attempts.
-func deletePhase1AfterPhase2(ctx context.Context, sdk *vergeos.Client, phase1ID int) error {
+func deletePhase2Rows(ctx context.Context, sdk *vergeos.Client, phase1ID int) error {
 	phase2s, err := sdk.VNetIPSecPhase2s.ListByPhase1(ctx, phase1ID)
 	if err != nil {
 		return fmt.Errorf("list IPsec phase 2 for phase 1 %d failed, so phase 1 was not deleted: %w", phase1ID, err)
 	}
 	for _, phase2 := range phase2s {
 		id := phase2.Key.Int()
-		if err := sdk.VNetIPSecPhase2s.Delete(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
+		if err := confirmDeleted(sdk.VNetIPSecPhase2s.Delete(ctx, id), namedRow("IPsec phase 2", id, phase2.Name), func() error {
+			_, getErr := sdk.VNetIPSecPhase2s.Get(ctx, id)
+			return getErr
+		}); err != nil {
 			return fmt.Errorf("IPsec phase 2 %d was not deleted, so phase 1 %d was left in place: %w", id, phase1ID, err)
 		}
 	}
-	if err := sdk.VNetIPSecPhase1s.Delete(ctx, phase1ID); err != nil && !vergeos.IsNotFoundError(err) {
+	return nil
+}
+
+func deletePhase1AfterPhase2(ctx context.Context, sdk *vergeos.Client, phase1ID int) error {
+	if err := deletePhase2Rows(ctx, sdk, phase1ID); err != nil {
+		return err
+	}
+	if err := confirmDeleted(sdk.VNetIPSecPhase1s.Delete(ctx, phase1ID), namedRow("IPsec phase 1", phase1ID, ""), func() error {
+		_, getErr := sdk.VNetIPSecPhase1s.Get(ctx, phase1ID)
+		return getErr
+	}); err != nil {
 		return fmt.Errorf("delete IPsec phase 1 %d: %w", phase1ID, err)
 	}
 	return nil
@@ -272,28 +302,27 @@ func networkVPNBlockers(ctx context.Context, sdk *vergeos.Client, networkID int)
 		blockers = append(blockers, fmt.Sprintf("WireGuard interface %d (%s)", iface.Key.Int(), iface.Name))
 	}
 
-	ipsec, err := sdk.VNetIPSecs.GetByNetwork(ctx, networkID)
+	ipsecs, err := sdk.VNetIPSecs.List(ctx, vergeos.WithFilter(fmt.Sprintf("vnet eq %d", networkID)))
 	if err != nil {
-		if vergeos.IsNotFoundError(err) {
-			return blockers, nil
-		}
-		return nil, fmt.Errorf("read IPsec configuration for network %d: %w", networkID, err)
+		return nil, fmt.Errorf("list IPsec configurations for network %d: %w", networkID, err)
 	}
-	phase1s, err := sdk.VNetIPSecPhase1s.ListByIPSec(ctx, ipsec.Key.Int())
-	if err != nil {
-		return nil, fmt.Errorf("list IPsec phase 1 for configuration %d: %w", ipsec.Key.Int(), err)
-	}
-	for _, phase1 := range phase1s {
-		phase2s, err := sdk.VNetIPSecPhase2s.ListByPhase1(ctx, phase1.Key.Int())
+	for _, ipsec := range ipsecs {
+		phase1s, err := sdk.VNetIPSecPhase1s.ListByIPSec(ctx, ipsec.Key.Int())
 		if err != nil {
-			return nil, fmt.Errorf("list IPsec phase 2 for phase 1 %d: %w", phase1.Key.Int(), err)
+			return nil, fmt.Errorf("list IPsec phase 1 for configuration %d: %w", ipsec.Key.Int(), err)
 		}
-		for _, phase2 := range phase2s {
-			blockers = append(blockers, fmt.Sprintf("IPsec phase 2 %d (%s)", phase2.Key.Int(), phase2.Name))
+		for _, phase1 := range phase1s {
+			phase2s, err := sdk.VNetIPSecPhase2s.ListByPhase1(ctx, phase1.Key.Int())
+			if err != nil {
+				return nil, fmt.Errorf("list IPsec phase 2 for phase 1 %d: %w", phase1.Key.Int(), err)
+			}
+			for _, phase2 := range phase2s {
+				blockers = append(blockers, fmt.Sprintf("IPsec phase 2 %d (%s)", phase2.Key.Int(), phase2.Name))
+			}
+			blockers = append(blockers, fmt.Sprintf("IPsec phase 1 %d (%s)", phase1.Key.Int(), phase1.Name))
 		}
-		blockers = append(blockers, fmt.Sprintf("IPsec phase 1 %d (%s)", phase1.Key.Int(), phase1.Name))
+		blockers = append(blockers, fmt.Sprintf("IPsec configuration %d", ipsec.Key.Int()))
 	}
-	blockers = append(blockers, fmt.Sprintf("IPsec configuration %d", ipsec.Key.Int()))
 	return blockers, nil
 }
 

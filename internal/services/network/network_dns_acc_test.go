@@ -6,6 +6,7 @@ package network_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"testing"
 	"time"
 
@@ -88,6 +89,24 @@ func TestAccNetworkDNS_ViewZoneRecord(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"modified"},
+			},
+			{
+				ResourceName:  "vergeio_network_dns_view.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_network_dns_zone.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_network_dns_record.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
 			},
 		},
 	})

@@ -26,7 +26,7 @@ type ListQuery struct {
 }
 
 // ListQueryAttributes returns the list config attributes.
-// tenant is present on every list resource. BuildSelection rejects it when the table has no tenant column.
+// tenant is present on every list resource. BuildSelection accepts it for vms and vnets.
 func ListQueryAttributes() map[string]schema.Attribute {
 	return map[string]schema.Attribute{
 		"name_pattern": schema.StringAttribute{
@@ -39,7 +39,7 @@ func ListQueryAttributes() map[string]schema.Attribute {
 		},
 		"tenant": schema.StringAttribute{
 			Optional:            true,
-			MarkdownDescription: "Tenant key, or tenant name. Sent as `tenant eq` for VMs and networks. Other list resources reject it.",
+			MarkdownDescription: "Tenant key, or tenant name. `vergeio_network` sends `owner eq 'tenants/<key>'` (`vnets.owner`). `vergeio_vm` sends `owner eq 'tenants/<key>'` (`vms.owner`). Neither table has a `tenant` column. Other list resources reject it. Guest VMs inside a tenant are on that tenant's API.",
 		},
 	}
 }
@@ -201,7 +201,9 @@ func ListOptions(filter string) []vergeos.ListOption {
 	return []vergeos.ListOption{vergeos.WithFilter(filter)}
 }
 
-// TenantClause resolves tenant to `tenant eq <key>`.
+// TenantClause resolves tenant to owner eq 'tenants/<key>'.
+// vms and vnets have no tenant column. A filter on a missing column returns an empty list.
+// owner is present on both tables. A tenant reference is tenants/<key>.
 // A positive integer is a key. Anything else is a tenant name.
 func TenantClause(ctx context.Context, sdk *vergeos.Client, tenant string) (string, error) {
 	tenant = strings.TrimSpace(tenant)
@@ -212,7 +214,7 @@ func TenantClause(ctx context.Context, sdk *vergeos.Client, tenant string) (stri
 		if n <= 0 {
 			return "", fmt.Errorf("tenant %q is not a positive integer", tenant)
 		}
-		return fmt.Sprintf("tenant eq %d", n), nil
+		return tenantOwnerClause(n), nil
 	}
 	if sdk == nil || sdk.Tenants == nil {
 		return "", fmt.Errorf("tenant client is not configured")
@@ -224,7 +226,12 @@ func TenantClause(ctx context.Context, sdk *vergeos.Client, tenant string) (stri
 	if row == nil || row.Key.Int() <= 0 {
 		return "", fmt.Errorf("tenant %q was not found", tenant)
 	}
-	return fmt.Sprintf("tenant eq %d", row.Key.Int()), nil
+	return tenantOwnerClause(row.Key.Int()), nil
+}
+
+func tenantOwnerClause(key int) string {
+	ref := fmt.Sprintf("tenants/%d", key)
+	return fmt.Sprintf("owner eq '%s'", vergeio.EscapeFilterValue(ref))
 }
 
 // TagMemberKeys returns the object keys assigned tag in collection.

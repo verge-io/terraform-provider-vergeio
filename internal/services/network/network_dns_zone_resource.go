@@ -248,6 +248,10 @@ func (r *NetworkDNSZoneResource) Read(ctx context.Context, req resource.ReadRequ
 	}
 	if err := r.api.readZone(ctx, &data); err != nil {
 		if dnsMissing(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}

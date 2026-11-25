@@ -12,6 +12,10 @@ description: |-
 
 VergeOS does not delete IPsec rows when the network is deleted. Destroy of this resource is refused while a phase 1 row remains. [`vergeio_network_ipsec_connection`](network_ipsec_connection.md) deletes phase 2, then phase 1. Deleting phase 1 while a phase 2 row remains fails, and that failure sticks. With the references in the example, Terraform destroys the connection, then this configuration, then the network.
 
+When the network is deleted outside Terraform, VergeOS leaves the IPsec configuration and its phase 1 and phase 2 rows in place. It refuses to delete those rows until a network with that key exists again. Refresh removes this resource and `vergeio_network_ipsec_connection` from state. The next apply creates the network, then this configuration, then the connection. Creating the network deletes IPsec rows that already point at the new key, so the recreated network does not keep the old configuration. Creating this configuration deletes phase 1 rows that already point at the new key. If those leftover rows cannot be deleted, this configuration stays in state so the next apply does not create a second one. Delete phase 2, then phase 1, before destroying it. The error names the configuration id to import if state was not saved.
+
+The pinned govergeos client does not return `created` on `vnet_ipsecs`, `vnet_ipsec_phase1s`, or `vnet_ipsec_phase2s`. A reused key on a different network, or a phase 1 on a different IPsec configuration, is left alone. A reused key that keeps the same parent cannot be told apart from the managed row. `terraform destroy -refresh=false` cannot delete these rows while the parent network is gone. Refresh first, or apply so the network is created and the leftover rows are removed, then destroy.
+
 `mode = "advanced"` sends `strongswan_conf`, `ipsec_conf`, and `ipsec_secrets`. The read used by this provider does not return those files, so Terraform keeps the configured text.
 
 ## Example Usage

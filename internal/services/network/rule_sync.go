@@ -347,6 +347,40 @@ func planSingleRule(vnetID int, current []vergeos.VNetRule, existingKey int, des
 	return nil, nil
 }
 
+type ruleOrderError struct {
+	Name string
+	Want int
+	Span int
+}
+
+func (e *ruleOrderError) Error() string {
+	span := e.Span
+	if span < 1 {
+		span = 1
+	}
+	return fmt.Sprintf(
+		"orderid %d on %q is outside 1 through %d; VergeOS renumbers rules from 1 through the number of non-system rules on the network and does not keep a gap; leave orderid unset, or use vergeio_network_rules to own the order",
+		e.Want, e.Name, span,
+	)
+}
+
+func rejectRuleOrder(name string, want, span int) error {
+	if want >= 1 && span >= 1 && want <= span {
+		return nil
+	}
+	return &ruleOrderError{Name: name, Want: want, Span: span}
+}
+
+func nonSystemCount(rules []vergeos.VNetRule) int {
+	n := 0
+	for _, rule := range rules {
+		if !rule.SystemRule {
+			n++
+		}
+	}
+	return n
+}
+
 func createRequest(vnetID int, rule firewallRule) *vergeos.VNetRuleCreateRequest {
 	rule = normalizeRuleDefaults(rule)
 	req := &vergeos.VNetRuleCreateRequest{

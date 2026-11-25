@@ -5,6 +5,7 @@ package nas
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/verge-io/govergeos"
 )
+
+var sha1IDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
 
 func missing(err error) bool {
 	return vergeos.IsNotFoundError(err)
@@ -42,6 +45,17 @@ func parseObjectID(v types.String, kind string) (string, error) {
 	text := strings.TrimSpace(stringOrEmpty(v))
 	if text == "" {
 		return "", fmt.Errorf("%s id is empty", kind)
+	}
+	return text, nil
+}
+
+func parseSHA1ID(id, kind string) (string, error) {
+	text := strings.TrimSpace(id)
+	if text == "" {
+		return "", fmt.Errorf("%s id is empty", kind)
+	}
+	if !sha1IDPattern.MatchString(text) {
+		return "", fmt.Errorf("%s id %q is not a 40 character SHA1 hex string", kind, text)
 	}
 	return text, nil
 }

@@ -16,6 +16,8 @@ System rules cannot be changed or deleted. A stopped network is not refreshed; i
 
 An omitted optional attribute, such as `source_ip` or `orderid`, is left as it is on the network. `direction`, `action`, `protocol`, `interface`, and the boolean flags have defaults and are always written.
 
+VergeOS keeps a rule's position as `orderid` on the `vnet_rules` row and renumbers rules from 1 through the number of non-system rules. There is no separate move action. A configured `orderid` in that range is written on the row, including after create, and the rule ends up there. Create order decides which positions exist: the first rule can only take position 1, and each later rule can take a position only as far as the rules already created. Several rules with a configured `orderid` on one network should be chained with `depends_on`, or managed with [`vergeio_network_rules`](network_rules.md). A value outside the range, such as 10 when the network has 3 rules, fails the apply. The error names the range. Leave `orderid` unset to keep the position VergeOS assigns. Refresh reads the position VergeOS has. A configured `orderid` that no longer matches, because another rule moved, is a normal plan diff. An omitted `orderid` stays as stored when nothing else on the rule changes, and is left unknown for that apply when the rule itself changes, because other rules applied at the same time can renumber it. `pin` `top` or `bottom` also asks VergeOS to reorder. The stored position still has to match a configured `orderid`.
+
 ## Example Usage
 
 Allow SSH from a management subnet.

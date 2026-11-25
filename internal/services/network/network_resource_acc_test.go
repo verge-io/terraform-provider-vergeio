@@ -3,8 +3,11 @@ package network_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"testing"
+
+	"github.com/verge-io/govergeos"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
@@ -357,6 +360,116 @@ resource "vergeio_network" "test" {
   mtu        = %d
 }
 `, networkName, mtu))
+}
+
+func TestAccNetwork_AdoptMatchingRow(t *testing.T) {
+	name := acctest.Name("net-adopt")
+	var key int
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || key <= 0 {
+			return
+		}
+		_ = client.Networks.Delete(context.Background(), key)
+	})
+	enabled := true
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckNetworkDestroy,
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					created, err := client.Networks.Create(context.Background(), &vergeos.NetworkCreateRequest{
+						Name:      name,
+						Type:      "internal",
+						Network:   "10.251.40.0/24",
+						IPAddress: "10.251.40.1",
+						Enabled:   &enabled,
+					})
+					if err != nil {
+						t.Fatalf("create network: %v", err)
+					}
+					key = created.Key.Int()
+				},
+				Config: testAccNetworkAdoptConfig(name, "10.251.40.0/24", "10.251.40.1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("vergeio_network.test", "name", name),
+					resource.TestCheckResourceAttr("vergeio_network.test", "network", "10.251.40.0/24"),
+					func(s *terraform.State) error {
+						id, err := acctest.ResourceID(s, "vergeio_network.test")
+						if err != nil {
+							return err
+						}
+						if id != key {
+							return fmt.Errorf("id = %d, want existing network %d", id, key)
+						}
+						return nil
+					},
+				),
+			},
+		},
+	})
+}
+
+func TestAccNetwork_RejectDifferentCIDR(t *testing.T) {
+	name := acctest.Name("net-adopt-diff")
+	var key int
+	t.Cleanup(func() {
+		client, err := acctest.SDKClient()
+		if err != nil || key <= 0 {
+			return
+		}
+		_ = client.Networks.Delete(context.Background(), key)
+	})
+	enabled := true
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { acctest.PreCheck(t) },
+		ProtoV6ProviderFactories: acctest.ProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				PreConfig: func() {
+					client, err := acctest.SDKClient()
+					if err != nil {
+						t.Fatalf("sdk client: %v", err)
+					}
+					created, err := client.Networks.Create(context.Background(), &vergeos.NetworkCreateRequest{
+						Name:      name,
+						Type:      "internal",
+						Network:   "10.251.41.0/24",
+						IPAddress: "10.251.41.1",
+						Enabled:   &enabled,
+					})
+					if err != nil {
+						t.Fatalf("create network: %v", err)
+					}
+					key = created.Key.Int()
+				},
+				Config:      testAccNetworkAdoptConfig(name, "10.251.42.0/24", "10.251.42.1"),
+				ExpectError: regexp.MustCompile(`terraform import vergeio_network`),
+			},
+		},
+	})
+}
+
+func testAccNetworkAdoptConfig(name, cidr, ip string) string {
+	if err := acctest.RequirePrefix(name); err != nil {
+		panic(err)
+	}
+	return acctest.Config(fmt.Sprintf(`
+resource "vergeio_network" "test" {
+  name       = %q
+  type       = "internal"
+  network    = %q
+  ipaddress  = %q
+  enabled    = true
+  powerstate = false
+}
+`, name, cidr, ip))
 }
 
 func testAccNetworkResourceConfig(networkName, extra string) string {

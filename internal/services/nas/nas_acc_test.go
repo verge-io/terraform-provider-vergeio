@@ -6,6 +6,7 @@ package nas_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"testing"
 
@@ -107,6 +108,30 @@ func TestAccNAS_ServiceVolumeShares(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"modified", "status"},
+			},
+			{
+				ResourceName:  "vergeio_nas_service.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_nas_volume.test",
+				ImportState:   true,
+				ImportStateId: "0123456789abcdef0123456789abcdef01234567",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_nas_cifs_share.test",
+				ImportState:   true,
+				ImportStateId: "0123456789abcdef0123456789abcdef01234567",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_nas_nfs_share.test",
+				ImportState:   true,
+				ImportStateId: "0123456789abcdef0123456789abcdef01234567",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
 			},
 		},
 	})

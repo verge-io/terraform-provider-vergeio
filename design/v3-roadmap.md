@@ -96,6 +96,8 @@ Changing `group` or `member` on `vergeio_member`, or `tag_id` or `member` on `ve
 
 * #79 is closed. The Terraform and Ansible guide says which tool owns which object, how a `vergeio_tag_member` on a VM becomes a group in `vergeio.vergeos.vergeos_vms`, and which `VERGEOS_*` variables both tools read.
 
+* #80. `modules/sandbox` copies a tenant, or the VMs that carry one tag, and deletes that copy when the module is destroyed. VM copies come from `machine_snapshots` through `vergeio_vm_clone`, on an internal network with no gateway unless `allow_external` is set. A tenant copy uses `Tenants.Clone` and is the tenant's current state. That call has no snapshot argument. Restoring a tenant snapshot overwrites the source, and the module does not do that. A snapshot tenant copy needs `cloud_snapshot_tenant_actions` `recover`, which the pinned govergeos client does not expose. The module does no data masking.
+
 The remaining issues in this section are open.
 
 * #70. `vergeio_api_key` manages a long-lived user API key: name, description, expiry, and IP allow and deny lists. VergeOS returns the bearer token only on create. The resource does not store it. `ephemeral.vergeio_api_key` remains the short-lived token for one run, and Open still deletes an existing key of that name. Do not reuse a managed key's name there. `vergeio_auth_source` manages an external identity provider. `driver` is fixed at creation. `settings` is the non-secret JSON document. `client_secret_wo` is sent on create and when `client_secret_wo_version` changes, and it is not stored. An update merges settings into the stored document so a partial change does not wipe `client_secret` or other omitted keys. A key removed from `settings` stays on the auth source. Replace the auth source to drop it.
@@ -106,13 +108,11 @@ The remaining issues in this section are open.
 
 These stay open and keep the `deferred` label. They are not part of the 3.0 release.
 
-* #80. A sandbox per pull request, cloned from a tenant or from an application's VMs, destroyed on merge.
 * #81. DR orchestration, with a rehearsed test failover and a gated real failover.
 * #82. A compliance baseline module.
 * #83. Fleet management across many systems and tenants.
-* #84. A Kubernetes cluster module on the VergeOS CSI driver, cloud controller manager, and Rancher integration.
 * #85. A nested lab module, for training labs and for disposable clusters that run acceptance tests.
-* #86. VM import, export, and migration. Also labelled `blocked`, waiting on govergeos support.
+* #86. VM import, export, and migration. `vergeio_vm_import` declares an OVA as a VM or a disk image as a media file. `data.vergeio_vm_import` waits for an import started elsewhere. `vergeio_vm_export` keeps the volume export configuration. An export run and the image pipeline stay in the Ansible collection. The govergeos client at `4986437a` already has `VMImports` and `VMExports`.
 
 ## Open decisions
 
