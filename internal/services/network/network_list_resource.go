@@ -23,7 +23,7 @@ var (
 func NewNetworkListResource() list.ListResource {
 	r := &NetworkListResource{}
 	r.Suffix = "network"
-	r.Description = "Networks on this VergeOS system. Filter with name_pattern, tag, or tenant."
+	r.Description = "Networks on this VergeOS system. Filter with name_pattern, tag, or tenant. tenant is sent as `owner eq 'tenants/<key>'` on vnets.owner. vnets has no tenant column."
 	r.Collection = "vnets"
 	r.TenantSupported = true
 	r.ListFn = r.list

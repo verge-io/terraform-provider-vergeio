@@ -206,6 +206,26 @@ func TestCreateRequestSendsDisabledRule(t *testing.T) {
 	}
 }
 
+func TestRejectRuleOrder(t *testing.T) {
+	if err := rejectRuleOrder("allow-ssh", 2, 3); err != nil {
+		t.Fatal(err)
+	}
+	err := rejectRuleOrder("allow-ssh", 10, 3)
+	var orderErr *ruleOrderError
+	if !errors.As(err, &orderErr) {
+		t.Fatalf("err = %v", err)
+	}
+	text := err.Error()
+	for _, part := range []string{"orderid 10", "allow-ssh", "1 through 3", "leave orderid unset", "vergeio_network_rules"} {
+		if !strings.Contains(text, part) {
+			t.Fatalf("error %q does not contain %q", text, part)
+		}
+	}
+	if rejectRuleOrder("allow-ssh", 0, 3) == nil {
+		t.Fatal("orderid 0 was accepted")
+	}
+}
+
 func apiRule(key int, name string, order int) vergeos.VNetRule {
 	return vergeos.VNetRule{
 		Key:       vergeos.FlexInt(key),

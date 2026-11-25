@@ -5,19 +5,34 @@ package vergeio
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/verge-io/govergeos"
 )
 
 // SDKOptions returns govergeos client options for this client.
 // An API key is sent as a bearer token and takes precedence over username
-// and password. TLS verification and the HTTP timeout are passed explicitly.
+// and password. The HTTP timeout is passed explicitly. TLS settings stay
+// on this client's transport, which the govergeos client shares.
 // The provider reads the environment itself. govergeos WithEnvConfig rejects
 // a host without a scheme and ignores VERGEOS_INSECURE.
 func (c *Client) SDKOptions() []vergeos.ClientOption {
 	opts := []vergeos.ClientOption{
 		vergeos.WithBaseURL(EnsureHTTPSPrefix(c.Host)),
-		vergeos.WithInsecureTLS(c.Insecure),
+	}
+	if c != nil && c.httpClient != nil {
+		opts = append(opts, vergeos.WithHTTPClient(&http.Client{
+			Timeout: c.httpClient.Timeout,
+			Transport: &mutationRoundTripper{
+				base:   c.httpClient.Transport,
+				client: c,
+			},
+		}))
+		// TLS is already on the shared transport. WithInsecureTLS(true)
+		// rejects the gate transport because it is not *http.Transport.
+		opts = append(opts, vergeos.WithInsecureTLS(false))
+	} else if c != nil {
+		opts = append(opts, vergeos.WithInsecureTLS(c.Insecure))
 	}
 	if c.APIKey != "" {
 		opts = append(opts, vergeos.WithAPIKey(c.APIKey))

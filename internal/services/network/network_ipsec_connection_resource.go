@@ -43,7 +43,7 @@ func (r *NetworkIPSecConnectionResource) Metadata(ctx context.Context, req resou
 
 func (r *NetworkIPSecConnectionResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "One IPsec tunnel: a phase 1 (IKE) and one phase 2 (IPsec SA). Set ipsec_id to vergeio_network_ipsec.id. Destroy deletes every phase 2 under that phase 1, then the phase 1. Phase 2 goes first because a phase 1 delete while a phase 2 row remains fails and then keeps failing. Live security-association status is read from vnet_ipsec_connections and is not stored, because it changes while the tunnel is up. " + vpnDeleteOrder,
+		MarkdownDescription: "One IPsec tunnel: a phase 1 (IKE) and one phase 2 (IPsec SA). Set ipsec_id to vergeio_network_ipsec.id. Destroy deletes every phase 2 under that phase 1, then the phase 1. Phase 2 goes first because a phase 1 delete while a phase 2 row remains fails and then keeps failing. Live security-association status is read from vnet_ipsec_connections and is not stored, because it changes while the tunnel is up. When the network or the IPsec configuration is deleted outside Terraform, refresh removes this resource from state and the next apply creates it again. Creating the IPsec configuration deletes phase 1 rows that already point at the new key, and creating this connection deletes phase 2 rows that already point at the new phase 1. The pinned govergeos client does not return created on vnet_ipsec_phase1s, so a reused key on a different IPsec configuration is left alone and a reused key that keeps the same configuration cannot be told apart. " + vpnDeleteOrder,
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				MarkdownDescription: "Phase 1 id. Import vergeio_network_ipsec_connection with this value.",
@@ -296,6 +296,11 @@ func (r *NetworkIPSecConnectionResource) Create(ctx context.Context, req resourc
 		return
 	}
 	if err := r.api.createIPSecConnection(ctx, &data); err != nil {
+		if createdWasLeft(err) {
+			nullUnknownConnection(&data)
+			resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+		}
 		resp.Diagnostics.AddError("Error Creating Network IPsec Connection", err.Error())
 		return
 	}
@@ -311,6 +316,13 @@ func (r *NetworkIPSecConnectionResource) Read(ctx context.Context, req resource.
 	}
 	if err := r.api.readIPSecConnection(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			if summary, detail, ok := parentMissingDetail(err); ok {
+				resp.Diagnostics.AddWarning(summary, detail)
+			}
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}

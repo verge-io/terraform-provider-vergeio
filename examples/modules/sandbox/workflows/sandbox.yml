@@ -1,0 +1,76 @@
+name: sandbox
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+# Apply and destroy share one queue per pull request. A new apply cancels an
+# in-progress apply. A close runs destroy with cancel-in-progress false, so
+# it waits for a queued apply and is not cancelled itself.
+concurrency:
+  group: sandbox-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
+
+jobs:
+  apply:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    env:
+      VERGEOS_HOST: ${{ secrets.VERGEOS_HOST }}
+      VERGEOS_API_KEY: ${{ secrets.VERGEOS_API_KEY }}
+      TF_VAR_name: pr-${{ github.event.pull_request.number }}
+      TF_VAR_source_type: vm
+      TF_VAR_tag: app/billing
+      TF_VAR_cidr: 192.168.91.0/24
+      TF_HTTP_ADDRESS: ${{ secrets.TF_HTTP_ADDRESS }}
+      TF_HTTP_USERNAME: ${{ secrets.TF_HTTP_USERNAME }}
+      TF_HTTP_PASSWORD: ${{ secrets.TF_HTTP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+      - name: Init remote state
+        run: |
+          terraform -chdir=examples/modules/sandbox init \
+            -backend-config="address=${TF_HTTP_ADDRESS}/pr-${{ github.event.pull_request.number }}" \
+            -backend-config="lock_address=${TF_HTTP_ADDRESS}/pr-${{ github.event.pull_request.number }}" \
+            -backend-config="unlock_address=${TF_HTTP_ADDRESS}/pr-${{ github.event.pull_request.number }}" \
+            -backend-config="username=${TF_HTTP_USERNAME}" \
+            -backend-config="password=${TF_HTTP_PASSWORD}"
+      - run: terraform -chdir=examples/modules/sandbox apply -auto-approve
+
+  destroy:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    env:
+      VERGEOS_HOST: ${{ secrets.VERGEOS_HOST }}
+      VERGEOS_API_KEY: ${{ secrets.VERGEOS_API_KEY }}
+      TF_VAR_name: pr-${{ github.event.pull_request.number }}
+      TF_VAR_source_type: vm
+      TF_VAR_tag: app/billing
+      TF_VAR_cidr: 192.168.91.0/24
+      TF_HTTP_ADDRESS: ${{ secrets.TF_HTTP_ADDRESS }}
+      TF_HTTP_USERNAME: ${{ secrets.TF_HTTP_USERNAME }}
+      TF_HTTP_PASSWORD: ${{ secrets.TF_HTTP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_wrapper: false
+      - name: Init remote state
+        run: |
+          terraform -chdir=examples/modules/sandbox init \
+            -backend-config="address=${TF_HTTP_ADDRESS}/pr-${{ github.event.pull_request.number }}" \
+            -backend-config="lock_address=${TF_HTTP_ADDRESS}/pr-${{ github.event.pull_request.number }}" \
+            -backend-config="unlock_address=${TF_HTTP_ADDRESS}/pr-${{ github.event.pull_request.number }}" \
+            -backend-config="username=${TF_HTTP_USERNAME}" \
+            -backend-config="password=${TF_HTTP_PASSWORD}"
+      - run: terraform -chdir=examples/modules/sandbox destroy -auto-approve

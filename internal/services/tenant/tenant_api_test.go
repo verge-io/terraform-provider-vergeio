@@ -34,7 +34,9 @@ func TestTenantPoweredOn(t *testing.T) {
 		off    bool
 	}{
 		{name: "offline", status: &vergeos.TenantStatus{Status: "offline"}, on: false, off: true},
-		{name: "stopping", status: &vergeos.TenantStatus{Status: "stopping", Stopping: true, Running: true}, on: false, off: false},
+		{name: "stuck stopping while offline", status: &vergeos.TenantStatus{Status: "offline", State: "offline", Stopping: true}, on: false, off: true},
+		{name: "stopping while online", status: &vergeos.TenantStatus{Status: "stopping", State: "online", Stopping: true, Running: true}, on: false, off: false},
+		{name: "stopping status while online", status: &vergeos.TenantStatus{Status: "stopping", State: "online", Stopping: true}, on: false, off: false},
 		{name: "running", status: &vergeos.TenantStatus{Running: true, Status: "online"}, on: true, off: false},
 		{name: "starting", status: &vergeos.TenantStatus{Starting: true, Status: "starting"}, on: false, off: false},
 		{name: "provisioning", status: &vergeos.TenantStatus{Status: "provisioning"}, on: false, off: false},

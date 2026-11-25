@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"terraform-provider-vergeio/internal/client"
+	"terraform-provider-vergeio/internal/shared"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -68,7 +69,7 @@ func applyGroup(data *GroupResourceModel, group *vergeos.Group) {
 }
 
 func (api *GroupApi) createGroup(ctx context.Context, data *GroupResourceModel) error {
-	created, err := api.sdk.Groups.Create(ctx, groupCreateRequest(data))
+	created, err := api.sdk.Groups.Create(shared.CommitContext(ctx), groupCreateRequest(data))
 	if err != nil {
 		return err
 	}

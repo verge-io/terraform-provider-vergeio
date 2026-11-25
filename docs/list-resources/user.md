@@ -19,4 +19,4 @@ Users on this VergeOS system. Filter with name_pattern or tag. tenant is rejecte
 
 - `name_pattern` (String) Name glob. `*` matches any run of characters and `?` matches one. A value with no glob is an exact name.
 - `tag` (String) Tag name, or `category/name` when the same tag name exists in more than one category. Only objects assigned that tag are listed.
-- `tenant` (String) Tenant key, or tenant name. Sent as `tenant eq` for VMs and networks. Other list resources reject it.
+- `tenant` (String) Tenant key, or tenant name. `vergeio_network` sends `owner eq 'tenants/<key>'` (`vnets.owner`). `vergeio_vm` sends `owner eq 'tenants/<key>'` (`vms.owner`). Neither table has a `tenant` column. Other list resources reject it. Guest VMs inside a tenant are on that tenant's API.

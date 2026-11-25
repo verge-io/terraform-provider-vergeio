@@ -1,0 +1,36 @@
+---
+page_title: "VM import and migration"
+description: |-
+  Where Terraform declares an imported image, and where the Ansible migration tooling takes over.
+---
+
+# VM import and migration
+
+A migration is a procedure: copy the image, wait, fix the guest, and often repeat that for a fleet. Terraform's piece is the image a configuration depends on, and a way to wait for an import that was started somewhere else.
+
+## What Terraform declares
+
+`vergeio_vm_import` with `target = "vm"` (the default) imports an OVA or OVF and waits until VergeOS finishes. The VM name is `name`. Other resources can use `vm_id`. A disk image uses `target = "media"`, and `boot_disk.source` is that file's id.
+
+{{ tffile "examples/guides/vm-import/import.tf" }}
+
+`target = "media"` is the disk-image path. VergeOS rejects `qcow2`, `vmdk`, `vhd`, `vhdx`, `raw`, `img`, `vdi`, and `iso` on `vm_imports`. The resource downloads that file into the media catalog. `vergeio_vm_drive` then attaches it with `media = "import"` and `media_source` set to `file_id`. `vergeio_mediasources` lists the same files.
+
+`data.vergeio_vm_import` reads an import that is already running. Omit `wait` and the read blocks until the row is `complete` or `warning`. A failed import returns as soon as VergeOS reports it. Set `id` or `name`, not both. A name that matches two import rows is an error, because VergeOS does not require those names to be unique.
+
+`vergeio_vm_export` stores the export configuration for one NAS volume: whether guests are quiesced, whether a current folder is kept, and how many generations to keep. It does not start a run. Destroy removes that row and leaves files that were already written.
+
+Destroy of a VM import removes the import row and the VM the import created, unless `delete_vm` is false. An import that adopted a VM which already existed deletes neither the VM nor the `vm_imports` row. The resource that created the VM still tracks that row. A catalog file this resource downloaded is removed when `delete_file` is true. A media import is the file, and destroy always removes it.
+
+`terraform import vergeio_vm_import.example <vm_imports_key>` reads the source from that row. A media import uses the file id. `file`, `volume`, `volume_path`, and `shared_object` are columns. `url` is not, and `files.url` is not returned. A download this resource started stores the address on the next line of the catalog file description, and import reads it from there. Create stores each option VergeOS saved, including a platform default the configuration left out. An omitted option keeps that stored value. Setting the configuration to the stored value does not replace the VM. Changing a stored value replaces the import.
+
+## Where Ansible takes over
+
+The Ansible collection `vergeio.vergeos` owns the migration procedure.
+
+* `vergeio.vergeos.vm_import` imports an OVA that is already in the catalog and waits. Use it inside a play that uploads the file, checks the guest, and moves on to the next machine. Terraform does not upload a local file from the machine running the plan.
+* `vergeio.vergeos.vm_export` starts an export onto a NAS volume and waits. `vergeio_vm_export` only keeps the configuration that run uses.
+* The `image_pipeline` role is the multi-step path: fetch, import, and hand the image on. A fleet cutover, a hypervisor migration with several ordered steps, and a guest fixup after the import stay in that role.
+* Guest packages, services, and files stay on the play that configures the guest. The [Terraform and Ansible](terraform-ansible.html) guide is the rest of that split, including how a tag becomes an inventory group.
+
+Packer still builds a golden image with the `vergeio` builder. Leave that VM out of Terraform. `vergeio_vm_import` is how a configuration names the OVA or the disk image it deploys from. It is not a replacement for the pipeline role.

@@ -30,8 +30,13 @@ func TestAPIKeyResourceMetadataAndSchema(t *testing.T) {
 
 	resp := &fwresource.SchemaResponse{}
 	resource.Schema(context.Background(), fwresource.SchemaRequest{}, resp)
-	if _, ok := resp.Schema.Attributes["token"]; ok {
-		t.Fatal("managed API key schema must not include token")
+	token, ok := resp.Schema.Attributes["token"].(resschema.StringAttribute)
+	if !ok || !token.Computed || !token.Sensitive || token.Optional || token.Required {
+		t.Fatal("token should be a computed sensitive string")
+	}
+	storeToken, ok := resp.Schema.Attributes["store_token"].(resschema.BoolAttribute)
+	if !ok || !storeToken.Optional || storeToken.Computed || len(storeToken.PlanModifiers) == 0 {
+		t.Fatal("store_token should be optional and replace the key when it changes")
 	}
 	for _, name := range []string{"user_id", "name"} {
 		if !resp.Schema.Attributes[name].IsRequired() {
@@ -146,6 +151,150 @@ func TestAPIKeyCreateDoesNotStoreToken(t *testing.T) {
 	}
 	if got.Id.ValueString() != "5" || got.Expires.ValueInt64() != 1893456000 || got.IPAllowList.ValueString() != "192.0.2.0/24" {
 		t.Fatalf("state = id %s expires %s allow %s", got.Id, got.Expires, got.IPAllowList)
+	}
+	if !got.Token.IsNull() {
+		t.Fatal("token was stored when store_token was unset")
+	}
+}
+
+func TestAPIKeyCreateStoresTokenWhenRequested(t *testing.T) {
+	const token = "secret-token-456"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v4/user_api_keys":
+			_, _ = fmt.Fprintf(w, `{"$key":5,"response":{"private_key":%q}}`, token)
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/user_api_keys/5":
+			_, _ = w.Write([]byte(`{"$key":5,"user":10,"name":"ci","description":"","ip_allow_list":"","ip_deny_list":"","created":1700000000,"expires":0,"lastlogin_stamp":0,"lastlogin_ip":""}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := context.Background()
+	resource := &APIKeyResource{}
+	configure := &fwresource.ConfigureResponse{}
+	resource.Configure(ctx, fwresource.ConfigureRequest{
+		ProviderData: vergeio.NewClient(server.URL, "user", "pass", true),
+	}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	plan := tfsdk.Plan{Schema: schemaResp.Schema}
+	diags := plan.Set(ctx, &APIKeyResourceModel{
+		UserID:     types.Int32Value(10),
+		Name:       types.StringValue("ci"),
+		StoreToken: types.BoolValue(true),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &fwresource.CreateResponse{State: tfsdk.State{Schema: schemaResp.Schema}}
+	resource.Create(ctx, fwresource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got APIKeyResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if !got.StoreToken.ValueBool() || got.Token.ValueString() != token || got.Id.ValueString() != "5" {
+		t.Fatal("stored token was not kept after create and read")
+	}
+}
+
+func TestAPIKeyReadKeepsStoredToken(t *testing.T) {
+	const token = "secret-token-789"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if vergeio.AnswerCredentialCheck(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/version.json":
+			_, _ = w.Write([]byte(`{"version":"26.0.0"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v4/user_api_keys/5":
+			body := `{"$key":5,"user":10,"name":"ci","description":"","ip_allow_list":"","ip_deny_list":"","created":1700000000,"expires":0,"lastlogin_stamp":0,"lastlogin_ip":""}`
+			if strings.Contains(body, token) {
+				t.Errorf("read fixture contains the token")
+			}
+			_, _ = w.Write([]byte(body))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected", http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	ctx := context.Background()
+	resource := &APIKeyResource{}
+	configure := &fwresource.ConfigureResponse{}
+	resource.Configure(ctx, fwresource.ConfigureRequest{
+		ProviderData: vergeio.NewClient(server.URL, "user", "pass", true),
+	}, configure)
+	if configure.Diagnostics.HasError() {
+		t.Fatal(configure.Diagnostics)
+	}
+	schemaResp := &fwresource.SchemaResponse{}
+	resource.Schema(ctx, fwresource.SchemaRequest{}, schemaResp)
+	state := tfsdk.State{Schema: schemaResp.Schema}
+	diags := state.Set(ctx, &APIKeyResourceModel{
+		Id:         types.StringValue("5"),
+		UserID:     types.Int32Value(10),
+		Name:       types.StringValue("ci"),
+		StoreToken: types.BoolValue(true),
+		Token:      types.StringValue(token),
+		Created:    types.Int64Value(1700000000),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp := &fwresource.ReadResponse{State: state}
+	resource.Read(ctx, fwresource.ReadRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	var got APIKeyResourceModel
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if got.Token.ValueString() != token {
+		t.Fatal("refresh dropped the stored token")
+	}
+
+	diags = state.Set(ctx, &APIKeyResourceModel{
+		Id:         types.StringValue("5"),
+		UserID:     types.Int32Value(10),
+		Name:       types.StringValue("ci"),
+		StoreToken: types.BoolValue(false),
+		Token:      types.StringValue(token),
+		Created:    types.Int64Value(1700000000),
+	})
+	if diags.HasError() {
+		t.Fatal(diags)
+	}
+	resp = &fwresource.ReadResponse{State: state}
+	resource.Read(ctx, fwresource.ReadRequest{State: state}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	resp.Diagnostics.Append(resp.State.Get(ctx, &got)...)
+	if resp.Diagnostics.HasError() {
+		t.Fatal(resp.Diagnostics)
+	}
+	if !got.Token.IsNull() {
+		t.Fatal("token was kept when store_token is false")
 	}
 }
 

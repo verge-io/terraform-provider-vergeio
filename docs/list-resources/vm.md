@@ -3,12 +3,12 @@
 page_title: "vergeio_vm List Resource - vergeio"
 subcategory: ""
 description: |-
-  VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, tag, or tenant.
+  VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, tag, or tenant. tenant is sent as owner eq 'tenants/<key>' on vms.owner. vms has no tenant column. Guest VMs inside a tenant are not listed.
 ---
 
 # vergeio_vm (List Resource)
 
-VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, tag, or tenant.
+VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, tag, or tenant. tenant is sent as `owner eq 'tenants/<key>'` on vms.owner. vms has no tenant column. Guest VMs inside a tenant are not listed.
 
 
 
@@ -19,4 +19,4 @@ VMs on this VergeOS system. Snapshot VMs are omitted. Filter with name_pattern, 
 
 - `name_pattern` (String) Name glob. `*` matches any run of characters and `?` matches one. A value with no glob is an exact name.
 - `tag` (String) Tag name, or `category/name` when the same tag name exists in more than one category. Only objects assigned that tag are listed.
-- `tenant` (String) Tenant key, or tenant name. Sent as `tenant eq` for VMs and networks. Other list resources reject it.
+- `tenant` (String) Tenant key, or tenant name. `vergeio_network` sends `owner eq 'tenants/<key>'` (`vnets.owner`). `vergeio_vm` sends `owner eq 'tenants/<key>'` (`vms.owner`). Neither table has a `tenant` column. Other list resources reject it. Guest VMs inside a tenant are on that tenant's API.

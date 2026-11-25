@@ -118,18 +118,34 @@ func TestTenantClauseAndTagMembers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if clause != "tenant eq 9" {
+	if clause != "owner eq 'tenants/9'" {
 		t.Fatalf("clause = %q", clause)
 	}
 	named, err := TenantClause(ctx, sdk, "customer-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if named != "tenant eq 9" {
+	if named != "owner eq 'tenants/9'" {
 		t.Fatalf("named clause = %q", named)
 	}
 	if _, err := TenantClause(ctx, sdk, "0"); err == nil {
 		t.Fatal("tenant 0 should be rejected")
+	}
+	if _, err := TenantClause(ctx, sdk, "-3"); err == nil {
+		t.Fatal("a negative tenant key should be rejected")
+	}
+
+	for _, collection := range []string{"vms", "vnets"} {
+		filter, _, diags := BuildSelection(ctx, sdk, ListQuery{
+			NamePattern: types.StringValue("web"),
+			Tenant:      types.StringValue("customer-a"),
+		}, collection, true)
+		if diags.HasError() {
+			t.Fatal(diags)
+		}
+		if filter != "name eq 'web' and owner eq 'tenants/9'" {
+			t.Fatalf("%s filter = %q", collection, filter)
+		}
 	}
 
 	keys, err := TagMemberKeys(ctx, sdk, "prod", "vms")

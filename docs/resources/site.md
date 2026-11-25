@@ -71,7 +71,7 @@ resource "vergeio_site" "example" {
 ### Read-Only
 
 - `authentication_status` (String) Whether the site is authenticated.
-- `created` (Number) Time the site was created, as seconds since the epoch.
+- `created` (Number) Unix time when VergeOS created the site. Distinct from id, which VergeOS can reuse. A different created time means the key now points at another site, and refresh drops this resource. Destroy without a refresh leaves the other row. A name change on the same site still updates in place.
 - `creator` (String) User that created the site.
 - `id` (String) Site key assigned by VergeOS.
 - `incoming_management_enabled` (Boolean) Whether the remote system can manage this system.

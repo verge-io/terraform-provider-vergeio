@@ -68,7 +68,7 @@ func (r *nfsResource) Schema(ctx context.Context, req resource.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		MarkdownDescription: nfsDescription,
 		Attributes: map[string]schema.Attribute{
-			"id": idAttr("Share id."),
+			"id": idAttr("Share id, a 40 character SHA1 hex string."),
 			"volume_id": schema.StringAttribute{
 				MarkdownDescription: "Volume id, the same value as vergeio_nas_volume.id. Changing it replaces the share.",
 				Required:            true,
@@ -131,6 +131,10 @@ func (r *nfsResource) Read(ctx context.Context, req resource.ReadRequest, resp *
 	}
 	if err := r.api.readNFS(ctx, &data); err != nil {
 		if missing(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
@@ -168,9 +172,9 @@ func (r *nfsResource) Delete(ctx context.Context, req resource.DeleteRequest, re
 }
 
 func (r *nfsResource) IdentitySchema(ctx context.Context, req resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
-	resp.IdentitySchema = shared.KeyIdentitySchema("NFS share id. Import vergeio_nas_nfs_share with this value.")
+	resp.IdentitySchema = shared.KeyIdentitySchema("NFS share id, a 40 character SHA1 hex string. Import vergeio_nas_nfs_share with this value.")
 }
 
 func (r *nfsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	importObjectID(ctx, req, resp, "Invalid NAS NFS Share Import ID", "Import vergeio_nas_nfs_share with the share id.")
+	importObjectID(ctx, req, resp, "Invalid NAS NFS Share Import ID", "Import vergeio_nas_nfs_share with the share id, a 40 character SHA1 hex string.")
 }

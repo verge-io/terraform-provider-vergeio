@@ -11,10 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -453,6 +455,7 @@ type ruleFixture struct {
 	applies        int
 	action         string
 	actionVNet     int
+	onApply        func()
 }
 
 func newRuleFixture(t *testing.T, running bool) *ruleFixture {
@@ -563,6 +566,7 @@ func (f *ruleFixture) createRule(w http.ResponseWriter, r *http.Request) {
 	f.next++
 	body["$key"] = f.next
 	f.rules[f.next] = body
+	f.reorder(f.next, optionalOrder(body))
 	f.needFW = true
 	writeJSON(f.t, w, http.StatusOK, map[string]any{"$key": f.next})
 }
@@ -592,8 +596,13 @@ func (f *ruleFixture) updateRule(w http.ResponseWriter, r *http.Request) {
 		writeJSON(f.t, w, http.StatusNotFound, map[string]any{"err": "not found"})
 		return
 	}
-	for k, v := range readMap(f.t, r) {
+	body := readMap(f.t, r)
+	requested := optionalOrder(body)
+	for k, v := range body {
 		rule[k] = v
+	}
+	if requested != nil {
+		f.reorder(key, requested)
 	}
 	f.needFW = true
 	writeJSON(f.t, w, http.StatusOK, map[string]any{})
@@ -610,6 +619,7 @@ func (f *ruleFixture) deleteRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	delete(f.rules, key)
+	f.compactOrders()
 	f.needFW = true
 	w.WriteHeader(http.StatusOK)
 }
@@ -635,6 +645,11 @@ func (f *ruleFixture) getNetwork(w http.ResponseWriter) {
 func (f *ruleFixture) apply(w http.ResponseWriter, r *http.Request) {
 	if vergeio.AnswerCredentialCheck(w, r) {
 		return
+	}
+	if f.onApply != nil {
+		f.mu.Unlock()
+		f.onApply()
+		f.mu.Lock()
 	}
 
 	body := readMap(f.t, r)
@@ -708,6 +723,101 @@ func (f *ruleFixture) deleteAlias(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (f *ruleFixture) compactOrders() {
+	type slot struct {
+		key   int
+		order int
+	}
+	var slots []slot
+	for id, rule := range f.rules {
+		system, _ := rule["system_rule"].(bool)
+		if system {
+			continue
+		}
+		slots = append(slots, slot{key: id, order: intFrom(rule["orderid"])})
+	}
+	sort.Slice(slots, func(i, j int) bool {
+		if slots[i].order != slots[j].order {
+			return slots[i].order < slots[j].order
+		}
+		return slots[i].key < slots[j].key
+	})
+	for i, item := range slots {
+		f.rules[item.key]["orderid"] = i + 1
+	}
+}
+
+func (f *ruleFixture) reorder(key int, requested *int) {
+	type slot struct {
+		key   int
+		order int
+	}
+	var slots []slot
+	for id, rule := range f.rules {
+		system, _ := rule["system_rule"].(bool)
+		if system {
+			continue
+		}
+		slots = append(slots, slot{key: id, order: intFrom(rule["orderid"])})
+	}
+	sort.Slice(slots, func(i, j int) bool {
+		if slots[i].order != slots[j].order {
+			return slots[i].order < slots[j].order
+		}
+		return slots[i].key < slots[j].key
+	})
+	rest := make([]slot, 0, len(slots))
+	for _, item := range slots {
+		if item.key == key {
+			continue
+		}
+		rest = append(rest, item)
+	}
+	pos := len(rest) + 1
+	if requested != nil {
+		pos = *requested
+	}
+	if pos < 1 {
+		pos = 1
+	}
+	if pos > len(rest)+1 {
+		pos = len(rest) + 1
+	}
+	placed := make([]slot, 0, len(rest)+1)
+	placed = append(placed, rest[:pos-1]...)
+	placed = append(placed, slot{key: key})
+	placed = append(placed, rest[pos-1:]...)
+	for i, item := range placed {
+		rule := f.rules[item.key]
+		if rule == nil {
+			continue
+		}
+		rule["orderid"] = i + 1
+	}
+}
+
+func optionalOrder(body map[string]any) *int {
+	raw, ok := body["orderid"]
+	if !ok {
+		return nil
+	}
+	order := intFrom(raw)
+	return &order
+}
+
+func intFrom(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int32:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
 func pathKey(path string) int {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	id, _ := strconv.Atoi(parts[len(parts)-1])
@@ -758,4 +868,312 @@ func singleRule(name string) firewallRule {
 	rule := baseRule(name)
 	rule.Optional = &optionalRuleFields{}
 	return rule
+}
+
+func orderedRule(name string, order int) firewallRule {
+	rule := baseRule(name)
+	rule.OrderID = order
+	rule.Optional = &optionalRuleFields{Order: true}
+	return rule
+}
+
+func TestSyncRuleOrderCreateAndMove(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	fix.seed(apiRule(12, "allow-ssh", 1))
+	api := newRuleTestAPI(t, fix.serve)
+	got, _, err := api.syncRule(t.Context(), 3, 0, orderedRule("allow-https", 1), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.OrderID != 1 || got.Name != "allow-https" {
+		t.Fatalf("rule = %+v", got)
+	}
+	moved, _, err := api.syncRule(t.Context(), 3, got.Key, orderedRule("allow-https", 2), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moved.OrderID != 2 || moved.Key != got.Key {
+		t.Fatalf("moved = %+v", moved)
+	}
+}
+
+func TestSyncRuleOrderRejectsGap(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	fix.seed(apiRule(12, "allow-ssh", 1), apiRule(13, "allow-https", 2), apiRule(14, "allow-dns", 3))
+	api := newRuleTestAPI(t, fix.serve)
+	_, _, err := api.syncRule(t.Context(), 3, 12, orderedRule("allow-ssh", 10), true)
+	if err == nil || !strings.Contains(err.Error(), "1 through 3") || !strings.Contains(err.Error(), "vergeio_network_rules") {
+		t.Fatalf("err = %v", err)
+	}
+	rule, ok := fix.rule(12)
+	if !ok {
+		t.Fatal("rule was deleted")
+	}
+	if intFrom(rule["orderid"]) != 1 {
+		t.Fatalf("orderid = %v, want 1", rule["orderid"])
+	}
+}
+
+func TestSyncRuleOrderRejectsUnreachableCreate(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	fix.seed(systemRule(1, "builtin"))
+	api := newRuleTestAPI(t, fix.serve)
+	_, _, err := api.syncRule(t.Context(), 3, 0, orderedRule("allow-ssh", 2), true)
+	if err == nil || !strings.Contains(err.Error(), "1 through 1") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(fix.ruleList()) != 1 {
+		t.Fatalf("rules = %v", fix.ruleList())
+	}
+}
+
+func TestSyncRuleOrderParallelCreate(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	rules := []struct {
+		name  string
+		order int
+	}{
+		{name: "tf-acc-c", order: 3},
+		{name: "tf-acc-a", order: 1},
+		{name: "tf-acc-b", order: 2},
+	}
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(rules))
+	for _, rule := range rules {
+		wg.Add(1)
+		go func(name string, order int) {
+			defer wg.Done()
+			got, _, err := api.syncRule(t.Context(), 3, 0, orderedRule(name, order), true)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if got.OrderID != order {
+				errCh <- fmt.Errorf("%s orderid = %d, want %d", name, got.OrderID, order)
+			}
+		}(rule.name, rule.order)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+	got, err := api.managedRules(t.Context(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Name != "tf-acc-a" || got[0].OrderID != 1 || got[1].Name != "tf-acc-b" || got[1].OrderID != 2 || got[2].Name != "tf-acc-c" || got[2].OrderID != 3 {
+		t.Fatalf("rules = %+v", got)
+	}
+}
+
+func TestSyncRuleOrderParallelMove(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	fix.seed(apiRule(12, "tf-acc-a", 1), apiRule(13, "tf-acc-b", 2), apiRule(14, "tf-acc-c", 3))
+	api := newRuleTestAPI(t, fix.serve)
+	moves := []struct {
+		key   int
+		name  string
+		order int
+	}{
+		{key: 12, name: "tf-acc-a", order: 3},
+		{key: 13, name: "tf-acc-b", order: 1},
+		{key: 14, name: "tf-acc-c", order: 2},
+	}
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(moves))
+	for _, move := range moves {
+		wg.Add(1)
+		go func(key int, name string, order int) {
+			defer wg.Done()
+			got, _, err := api.syncRule(t.Context(), 3, key, orderedRule(name, order), true)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if got.OrderID != order || got.Key != key {
+				errCh <- fmt.Errorf("%s orderid = %d key = %d", name, got.OrderID, got.Key)
+			}
+		}(move.key, move.name, move.order)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+	if t.Failed() {
+		return
+	}
+	got, err := api.managedRules(t.Context(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Name != "tf-acc-b" || got[0].OrderID != 1 || got[1].Name != "tf-acc-c" || got[1].OrderID != 2 || got[2].Name != "tf-acc-a" || got[2].OrderID != 3 {
+		t.Fatalf("rules = %+v", got)
+	}
+}
+
+func TestOrderRoomSkipsUnreachableWaiters(t *testing.T) {
+	const vnetID = 3371
+	t.Cleanup(func() { networkRuleOrderGates.Delete(vnetID) })
+	gate := networkRuleOrderGate(vnetID)
+	first := gate.join(true, 2)
+	second := gate.join(true, 2)
+	defer gate.leave(first)
+	defer gate.leave(second)
+	if room := gate.room(first, 0); room != 0 {
+		t.Fatalf("room = %d, want 0", room)
+	}
+	reachable := gate.join(true, 1)
+	defer gate.leave(reachable)
+	if room := gate.room(reachable, 0); room != 0 {
+		t.Fatalf("room = %d, want 0", room)
+	}
+	if room := gate.room(first, 0); room != 2 {
+		t.Fatalf("room = %d, want 2", room)
+	}
+}
+
+func TestSyncRuleOrderDuplicateCreateRejects(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	start := time.Now()
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
+	for _, name := range []string{"tf-acc-a", "tf-acc-b"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			_, _, err := api.syncRule(t.Context(), 91, 0, orderedRule(name, 2), true)
+			if err == nil || !strings.Contains(err.Error(), "1 through 1") {
+				errCh <- fmt.Errorf("%s: %v", name, err)
+			}
+		}(name)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("unreachable creates took %s", time.Since(start))
+	}
+}
+
+func TestSyncRuleOrderDeleteKeepsReachablePosition(t *testing.T) {
+	for range 20 {
+		fix := newRuleFixture(t, true)
+		fix.seed(apiRule(12, "tf-acc-a", 1), apiRule(13, "tf-acc-b", 2), apiRule(14, "tf-acc-c", 3))
+		api := newRuleTestAPI(t, fix.serve)
+		var wg sync.WaitGroup
+		errCh := make(chan error, 2)
+		var got firewallRule
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if _, err := api.deleteRule(t.Context(), 92, 14, true); err != nil {
+				errCh <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			rule, _, err := api.syncRule(t.Context(), 92, 12, orderedRule("tf-acc-a", 2), true)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			got = rule
+		}()
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			t.Error(err)
+		}
+		if t.Failed() {
+			return
+		}
+		if got.Key != 12 || got.OrderID != 2 {
+			t.Fatalf("moved = %+v", got)
+		}
+		if _, ok := fix.rule(14); ok {
+			t.Fatal("deleted rule still exists")
+		}
+	}
+}
+
+func TestSyncRuleOrderProceedsWhileDeleteApplies(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	fix.seed(apiRule(12, "tf-acc-a", 1), apiRule(13, "tf-acc-b", 2), apiRule(14, "tf-acc-c", 3))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	var hold sync.Mutex
+	firstApply := true
+	fix.onApply = func() {
+		hold.Lock()
+		block := firstApply
+		firstApply = false
+		hold.Unlock()
+		if !block {
+			return
+		}
+		close(entered)
+		<-release
+	}
+	api := newRuleTestAPI(t, fix.serve)
+	deleteDone := make(chan error, 1)
+	go func() {
+		_, err := api.deleteRule(t.Context(), 93, 14, true)
+		deleteDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("delete did not reach firewall apply")
+	}
+	syncDone := make(chan error, 1)
+	go func() {
+		rule, _, err := api.syncRule(t.Context(), 93, 12, orderedRule("tf-acc-a", 2), true)
+		if err != nil {
+			syncDone <- err
+			return
+		}
+		if rule.OrderID != 2 {
+			syncDone <- fmt.Errorf("orderid = %d, want 2", rule.OrderID)
+			return
+		}
+		syncDone <- nil
+	}()
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("order move waited for firewall apply")
+	}
+	unblock()
+	if err := <-deleteDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncRuleOrderSequentialCreate(t *testing.T) {
+	fix := newRuleFixture(t, true)
+	api := newRuleTestAPI(t, fix.serve)
+	for i, name := range []string{"tf-acc-a", "tf-acc-b", "tf-acc-c"} {
+		got, _, err := api.syncRule(t.Context(), 3, 0, orderedRule(name, i+1), true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.OrderID != i+1 {
+			t.Fatalf("%s orderid = %d", name, got.OrderID)
+		}
+	}
 }

@@ -7,7 +7,7 @@ description: |-
 ---
 
 # vergeio_version (Data Source)
-Retrieves the version of the system
+Retrieves the running VergeOS build from `/version.json`. `name` is the short API name. `version` is the version string. `hash` is the 40-character git commit hash.
 ## Example Usage
 
 ```terraform
@@ -22,9 +22,9 @@ output "version" {
 # Example Output
 ```
 {
-name    = "26.0.0"
-version = "26.0.0"
-hash    = ""
+name    = "v4"
+version = "26.2.2.1"
+hash    = "0123456789abcdef0123456789abcdef01234567"
 }
 ```
 
@@ -33,6 +33,6 @@ hash    = ""
 
 ### Read-Only
 
-- `name` (String) Name
-- `version` (String) Version
-- `hash` (String) Hash
+- `name` (String) Short API name reported by VergeOS at /version.json.
+- `version` (String) VergeOS version string reported at /version.json.
+- `hash` (String) Forty-character git commit hash of the running VergeOS build, from /version.json.

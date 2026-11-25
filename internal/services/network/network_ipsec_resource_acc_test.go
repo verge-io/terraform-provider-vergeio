@@ -3,6 +3,7 @@ package network_test
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -66,6 +67,18 @@ func TestAccNetworkIPSec_connection(t *testing.T) {
 				ImportState:             true,
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"psk"},
+			},
+			{
+				ResourceName:  "vergeio_network_ipsec.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
+			},
+			{
+				ResourceName:  "vergeio_network_ipsec_connection.test",
+				ImportState:   true,
+				ImportStateId: "987654321",
+				ExpectError:   regexp.MustCompile(`Cannot import non-existent remote object`),
 			},
 		},
 	})

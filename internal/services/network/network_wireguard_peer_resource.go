@@ -171,6 +171,10 @@ func (r *NetworkWireGuardPeerResource) Read(ctx context.Context, req resource.Re
 	}
 	if err := r.api.readWireGuardPeer(ctx, &data); err != nil {
 		if vergeos.IsNotFoundError(err) {
+			shared.RememberIdentity(ctx, &resp.Diagnostics, resp.Identity, data.ID)
+			if resp.Diagnostics.HasError() {
+				return
+			}
 			resp.State.RemoveResource(ctx)
 			return
 		}
