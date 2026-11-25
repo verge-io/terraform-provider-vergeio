@@ -515,31 +515,42 @@ func deleteAccTenant(ctx context.Context, client *vergeos.Client, id int) error 
 }
 
 func waitAccTenantOffline(ctx context.Context, client *vergeos.Client, id int) error {
-	status, err := accTenantStatus(ctx, client, id)
+	status, err := waitAccTenantSettled(ctx, client, id)
 	if err != nil {
 		return err
 	}
 	if accTenantPoweredOff(status) {
 		return nil
 	}
-	if accTenantStarting(status) {
-		if err := waitAccTenantPower(ctx, client, id, true); err != nil {
-			return err
-		}
-		status, err = accTenantStatus(ctx, client, id)
-		if err != nil {
-			return err
-		}
-	}
-	if accTenantPoweredOff(status) {
-		return nil
-	}
-	if !accTenantStopping(status) {
+	if status != nil && (status.Running || tenantStatusOn(status)) {
 		if err := client.Tenants.PowerOff(ctx, id); err != nil && !vergeos.IsNotFoundError(err) {
 			return fmt.Errorf("power off tenant %d: %w", id, err)
 		}
 	}
 	return waitAccTenantPower(ctx, client, id, false)
+}
+
+func waitAccTenantSettled(ctx context.Context, client *vergeos.Client, id int) (*vergeos.TenantStatus, error) {
+	deadline := time.Now().Add(2 * time.Minute)
+	var status *vergeos.TenantStatus
+	for {
+		var err error
+		status, err = accTenantStatus(ctx, client, id)
+		if err != nil {
+			return nil, err
+		}
+		if accTenantPoweredOff(status) || (!accTenantStarting(status) && !accTenantStopping(status)) {
+			return status, nil
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if status == nil {
+		return nil, fmt.Errorf("timed out waiting for tenant %d to leave starting or stopping", id)
+	}
+	return nil, fmt.Errorf("timed out waiting for tenant %d to leave starting or stopping: status %q running=%t starting=%t stopping=%t", id, status.Status, status.Running, status.Starting, status.Stopping)
 }
 
 func waitAccTenantPower(ctx context.Context, client *vergeos.Client, id int, wantOn bool) error {
@@ -653,10 +664,7 @@ func stopAccTenantVNet(ctx context.Context, client *vergeos.Client, id int) erro
 			return nil
 		}
 		if !killed {
-			if err := client.Networks.Kill(ctx, vnetID); err != nil && !vergeos.IsNotFoundError(err) {
-				if accVNetNotRunning(err) {
-					return nil
-				}
+			if err := client.Networks.Kill(ctx, vnetID); err != nil && !vergeos.IsNotFoundError(err) && !accVNetNotRunning(err) {
 				return fmt.Errorf("kill tenant %d network %d: %w", id, vnetID, err)
 			}
 			killed = true
